@@ -9,7 +9,7 @@ import { add, count, createWorld, costOf, TICKS_PER_SECOND, tick, type Buildable
 import { Floor, type Tool } from './view/floor/floor';
 import { openMachineGui, type MachineGui } from './view/ui/gui';
 import { openOverlay, type Overlay } from './view/ui/overlay';
-import { claimable, endHtml, questBookHtml, workbenchHtml } from './view/ui/sheets';
+import { benchView, claimable, endHtml, questBookHtml, workbenchHtml, type BenchView } from './view/ui/sheets';
 
 const AUTOSAVE_MS = 10_000;
 
@@ -23,6 +23,9 @@ try {
 let speed = 1;
 let gui: MachineGui | null = null;
 let sheet: Overlay | null = null; // the workbench or the quest book, when open
+// the workbench's tab and tier sub-tab, remembered between visits (and reloads, when the browser allows)
+let bench: BenchView = { group: 'parts', tier: 'steam' };
+try { bench = benchView({ ...bench, ...JSON.parse(localStorage.getItem('gtjs.bench') ?? '{}') }); } catch { /* keep the default */ }
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
 app.innerHTML = `
@@ -104,7 +107,15 @@ function openSheet(which: 'bench' | 'book') {
   gui?.close();
   sheet?.close();
   sheet = which === 'bench'
-    ? openOverlay('Workbench', () => workbenchHtml(w), (el) => { craft(w, el.dataset.id!, +el.dataset.n!); refresh(); }, () => { sheet = null; })
+    ? openOverlay('Workbench', () => workbenchHtml(w, bench), (el) => {
+      if (el.dataset.act === 'craft') craft(w, el.dataset.id!, +el.dataset.n!);
+      else {
+        // a category keeps the tier you were looking at when it has one; otherwise the first tier it has
+        bench = benchView(el.dataset.act === 'group' ? { ...bench, group: el.dataset.group as BenchView['group'] } : { ...bench, tier: el.dataset.tier as BenchView['tier'] });
+        try { localStorage.setItem('gtjs.bench', JSON.stringify(bench)); } catch { /* not remembered */ }
+      }
+      refresh();
+    }, () => { sheet = null; })
     : openOverlay('Quest book', () => questBookHtml(w), (el) => {
       claimQuest(w, el.dataset.id!);
       refresh();

@@ -140,3 +140,11 @@ button.danger { background: #e2483d; color: #fff; }
 .end dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 18px; margin: 16px 0; }
 .end dt { color: var(--muted); }
 .end dd { margin: 0; font-weight: 700; }
+
+/* workbench tabs: categories, then tiers */
+.tabs { display: flex; gap: 4px; flex-wrap: wrap; margin: 12px 0 0; border-bottom: 1.5px solid var(--ink); }
+.tabs button { border-radius: 10px 10px 0 0; border-bottom: 0; margin-bottom: -1.5px; padding: 6px 14px; font-weight: 700; }
+.tabs button[aria-selected='true'] { background: var(--ink); color: var(--paper); }
+.tabs.sub { margin: 10px 0 4px; border-bottom: 1px solid var(--rule); }
+.tabs.sub button { border-radius: 999px; border-bottom: 1.5px solid var(--ink); margin-bottom: 6px; padding: 2px 12px; font-weight: 600; }
+.tabs .ready { display: inline-block; min-width: 16px; margin-left: 4px; padding: 0 4px; border-radius: 999px; background: #43c25c; color: #fff; font-size: 10.5px; line-height: 16px; text-align: center; }

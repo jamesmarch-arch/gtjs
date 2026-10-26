@@ -53,10 +53,14 @@ export interface ConduitDef {
   maxVoltage?: number; // cables: more than this and it burns out
 }
 
+/** The stage of the game a recipe belongs to, for sorting the workbench: set from the data file it is in. */
+export type CraftTier = 'steam' | 'lv' | 'mv';
+
 /** A workbench recipe: instant, by hand. */
 export interface CraftDef {
   id: string;
   group: 'parts' | 'conduits' | 'machines';
+  tier?: CraftTier;
   inputs: Stack[];
   output: Stack;
   note?: string; // the hand tool it implies

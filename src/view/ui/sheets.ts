@@ -1,34 +1,55 @@
 // The workbench and the quest book, as HTML for openOverlay().
-import { CHAPTERS, CRAFTS, QUESTS, itemName } from '../../sim/data';
-import type { Goal } from '../../sim/data/types';
+import { CHAPTERS, CRAFT_TIERS, CRAFTS, QUESTS, itemName } from '../../sim/data';
+import type { CraftDef, CraftTier, Goal } from '../../sim/data/types';
 import { maxCrafts } from '../../sim/craft';
 import { goalProgress, questState } from '../../sim/quests';
 import { TICKS_PER_SECOND, count, type World } from '../../sim/world';
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
-const GROUPS = [['parts', 'Parts'], ['conduits', 'Pipes and cables'], ['machines', 'Machines']] as const;
 
-export function workbenchHtml(w: World): string {
-  return GROUPS.map(([g, title]) => {
-    const rows = [...CRAFTS.values()].filter((c) => c.group === g).map((c) => {
-      const max = maxCrafts(w, c.id);
-      const inputs = c.inputs.map((s) => {
-        const have = count(w, s.item);
-        return `<span class="${have >= s.count ? 'ok' : 'short'}">${s.count} ${esc(itemName(s.item))} <small>(${have})</small></span>`;
-      }).join(' + ');
-      return `<li class="${max ? '' : 'cant'}">
-          <div class="what"><b>${c.output.count > 1 ? `${c.output.count} × ` : ''}${esc(itemName(c.output.item))}</b>
-            <small class="muted">have ${count(w, c.output.item)}${c.note ? ` · ${esc(c.note)}` : ''}</small></div>
-          <div class="from">${inputs}</div>
-          <div class="row">
-            <button data-act="craft" data-id="${c.id}" data-n="1" ${max >= 1 ? '' : 'disabled'}>Craft</button>
-            <button data-act="craft" data-id="${c.id}" data-n="5" ${max >= 5 ? '' : 'disabled'}>×5</button>
-            <button data-act="craft" data-id="${c.id}" data-n="${max}" ${max >= 2 ? '' : 'disabled'}>All (${max})</button>
-          </div>
-        </li>`;
-    }).join('');
-    return `<section><h3>${title}</h3><ul class="crafts">${rows}</ul></section>`;
+export const BENCH_GROUPS = [{ id: 'parts', name: 'Items' }, { id: 'conduits', name: 'Pipes & cables' }, { id: 'machines', name: 'Machines' }] as const;
+export type BenchGroup = (typeof BENCH_GROUPS)[number]['id'];
+
+/** Which tab and tier sub-tab the workbench shows. */
+export interface BenchView { group: BenchGroup; tier: CraftTier }
+
+const craftsIn = (group: BenchGroup, tier?: CraftTier) => [...CRAFTS.values()].filter((c) => c.group === group && (!tier || c.tier === tier));
+const tiersIn = (group: BenchGroup) => CRAFT_TIERS.filter((t) => craftsIn(group, t.id).length);
+
+/** The view to show: the one asked for, or the nearest tier that has recipes in that tab. */
+export function benchView(v: BenchView): BenchView {
+  const group = BENCH_GROUPS.some((g) => g.id === v.group) ? v.group : BENCH_GROUPS[0].id; // e.g. a stale remembered tab
+  const tiers = tiersIn(group);
+  return { group, tier: tiers.some((t) => t.id === v.tier) ? v.tier : tiers[0].id };
+}
+
+// a count on a tab: how many of its recipes you can craft right now
+const ready = (w: World, list: CraftDef[]) => { const n = list.filter((c) => maxCrafts(w, c.id) > 0).length; return n ? ` <span class="ready">${n}</span>` : ''; };
+
+export function workbenchHtml(w: World, view: BenchView): string {
+  const v = benchView(view);
+  const tabs = BENCH_GROUPS.map((g) => `<button role="tab" data-act="group" data-group="${g.id}" aria-selected="${g.id === v.group}">${g.name}${ready(w, craftsIn(g.id))}</button>`).join('');
+  const subtabs = tiersIn(v.group).map((t) => `<button role="tab" data-act="tier" data-tier="${t.id}" aria-selected="${t.id === v.tier}">${t.name}${ready(w, craftsIn(v.group, t.id))}</button>`).join('');
+  const rows = craftsIn(v.group, v.tier).map((c) => {
+    const max = maxCrafts(w, c.id);
+    const inputs = c.inputs.map((s) => {
+      const have = count(w, s.item);
+      return `<span class="${have >= s.count ? 'ok' : 'short'}">${s.count} ${esc(itemName(s.item))} <small>(${have})</small></span>`;
+    }).join(' + ');
+    return `<li class="${max ? '' : 'cant'}">
+        <div class="what"><b>${c.output.count > 1 ? `${c.output.count} × ` : ''}${esc(itemName(c.output.item))}</b>
+          <small class="muted">have ${count(w, c.output.item)}${c.note ? ` · ${esc(c.note)}` : ''}</small></div>
+        <div class="from">${inputs}</div>
+        <div class="row">
+          <button data-act="craft" data-id="${c.id}" data-n="1" ${max >= 1 ? '' : 'disabled'}>Craft</button>
+          <button data-act="craft" data-id="${c.id}" data-n="5" ${max >= 5 ? '' : 'disabled'}>×5</button>
+          <button data-act="craft" data-id="${c.id}" data-n="${max}" ${max >= 2 ? '' : 'disabled'}>All (${max})</button>
+        </div>
+      </li>`;
   }).join('');
+  return `<div class="tabs" role="tablist" aria-label="Category">${tabs}</div>
+    <div class="tabs sub" role="tablist" aria-label="Tier">${subtabs}</div>
+    <ul class="crafts" role="tabpanel">${rows}</ul>`;
 }
 
 const goalText = (g: Goal) => g.kind === 'made' ? `Make ${itemName(g.item)}` : g.kind === 'have' ? `Have ${itemName(g.item)}`
