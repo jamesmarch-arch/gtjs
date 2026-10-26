@@ -25,6 +25,7 @@ let gui: MachineGui | null = null;
 let sheet: Overlay | null = null; // the workbench or the quest book, when open
 // the workbench's tab and tier sub-tab, remembered between visits (and reloads, when the browser allows)
 let bench: BenchView = { group: 'parts', tier: 'steam' };
+let benchQuery = ''; // the workbench's search; it starts empty each time the workbench opens
 try { bench = benchView({ ...bench, ...JSON.parse(localStorage.getItem('gtjs.bench') ?? '{}') }); } catch { /* keep the default */ }
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
@@ -107,7 +108,7 @@ function openSheet(which: 'bench' | 'book') {
   gui?.close();
   sheet?.close();
   sheet = which === 'bench'
-    ? openOverlay('Workbench', () => workbenchHtml(w, bench), (el) => {
+    ? (benchQuery = '', openOverlay('Workbench', () => workbenchHtml(w, bench, benchQuery), (el) => {
       if (el.dataset.act === 'craft') craft(w, el.dataset.id!, +el.dataset.n!);
       else {
         // a category keeps the tier you were looking at when it has one; otherwise the first tier it has
@@ -115,7 +116,7 @@ function openSheet(which: 'bench' | 'book') {
         try { localStorage.setItem('gtjs.bench', JSON.stringify(bench)); } catch { /* not remembered */ }
       }
       refresh();
-    }, () => { sheet = null; })
+    }, () => { sheet = null; }, { search: { placeholder: 'Search recipes: what they make or use', onInput: (q) => { benchQuery = q; } } }))
     : openOverlay('Quest book', () => questBookHtml(w), (el) => {
       claimQuest(w, el.dataset.id!);
       refresh();

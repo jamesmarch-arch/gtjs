@@ -26,28 +26,53 @@ export function benchView(v: BenchView): BenchView {
 // a count on a tab: how many of its recipes you can craft right now
 const ready = (w: World, list: CraftDef[]) => { const n = list.filter((c) => maxCrafts(w, c.id) > 0).length; return n ? ` <span class="ready">${n}</span>` : ''; };
 
-export function workbenchHtml(w: World, view: BenchView): string {
+// one recipe as a row; `where` labels its tab and tier (search results mix them)
+function craftRow(w: World, c: CraftDef, max: number, where = ''): string {
+  const inputs = c.inputs.map((s) => {
+    const have = count(w, s.item);
+    return `<span class="${have >= s.count ? 'ok' : 'short'}">${s.count} ${esc(itemName(s.item))} <small>(${have})</small></span>`;
+  }).join(' + ');
+  return `<li class="${max ? '' : 'cant'}">
+      <div class="what"><b>${c.output.count > 1 ? `${c.output.count} × ` : ''}${esc(itemName(c.output.item))}</b>
+        <small class="muted">${where ? `${where} · ` : ''}have ${count(w, c.output.item)}${c.note ? ` · ${esc(c.note)}` : ''}</small></div>
+      <div class="from">${inputs}</div>
+      <div class="row">
+        <button data-act="craft" data-id="${c.id}" data-n="1" ${max >= 1 ? '' : 'disabled'}>Craft</button>
+        <button data-act="craft" data-id="${c.id}" data-n="5" ${max >= 5 ? '' : 'disabled'}>×5</button>
+        <button data-act="craft" data-id="${c.id}" data-n="${max}" ${max >= 2 ? '' : 'disabled'}>All (${max})</button>
+      </div>
+    </li>`;
+}
+
+// what you can craft now comes first; the rest keep their order below it
+const craftableFirst = <T extends { max: number }>(list: T[]) => [...list.filter((x) => x.max > 0), ...list.filter((x) => x.max === 0)];
+
+/** Recipes matching a search, from every tab and tier: by what they make first, then by what they use. */
+export function searchCrafts(query: string): { c: CraftDef; byName: boolean }[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+  const hits: { c: CraftDef; byName: boolean }[] = [];
+  for (const c of CRAFTS.values()) {
+    if (itemName(c.output.item).toLowerCase().includes(q)) hits.push({ c, byName: true });
+    else if (c.inputs.some((s) => itemName(s.item).toLowerCase().includes(q))) hits.push({ c, byName: false });
+  }
+  return [...hits.filter((h) => h.byName), ...hits.filter((h) => !h.byName)];
+}
+
+const whereOf = (c: CraftDef) => `${BENCH_GROUPS.find((g) => g.id === c.group)!.name}, ${CRAFT_TIERS.find((t) => t.id === c.tier)?.name ?? ''}`;
+
+export function workbenchHtml(w: World, view: BenchView, query = ''): string {
+  if (query.trim()) {
+    // a search looks through every tab and tier at once, so the tabs step aside
+    const hits = craftableFirst(searchCrafts(query).map((h) => ({ ...h, max: maxCrafts(w, h.c.id) })));
+    const n = hits.length;
+    return `<p class="results muted">${n ? `${n} recipe${n === 1 ? '' : 's'}` : 'No recipes'} for “${esc(query.trim())}”${n ? '' : ': try an item’s name, like copper or circuit.'}</p>
+      <ul class="crafts">${hits.map(({ c, max }) => craftRow(w, c, max, whereOf(c))).join('')}</ul>`;
+  }
   const v = benchView(view);
   const tabs = BENCH_GROUPS.map((g) => `<button role="tab" data-act="group" data-group="${g.id}" aria-selected="${g.id === v.group}">${g.name}${ready(w, craftsIn(g.id))}</button>`).join('');
   const subtabs = tiersIn(v.group).map((t) => `<button role="tab" data-act="tier" data-tier="${t.id}" aria-selected="${t.id === v.tier}">${t.name}${ready(w, craftsIn(v.group, t.id))}</button>`).join('');
-  // what you can craft now comes first; the rest keep their order below it
-  const list = craftsIn(v.group, v.tier).map((c) => ({ c, max: maxCrafts(w, c.id) }));
-  const rows = [...list.filter((x) => x.max > 0), ...list.filter((x) => x.max === 0)].map(({ c, max }) => {
-    const inputs = c.inputs.map((s) => {
-      const have = count(w, s.item);
-      return `<span class="${have >= s.count ? 'ok' : 'short'}">${s.count} ${esc(itemName(s.item))} <small>(${have})</small></span>`;
-    }).join(' + ');
-    return `<li class="${max ? '' : 'cant'}">
-        <div class="what"><b>${c.output.count > 1 ? `${c.output.count} × ` : ''}${esc(itemName(c.output.item))}</b>
-          <small class="muted">have ${count(w, c.output.item)}${c.note ? ` · ${esc(c.note)}` : ''}</small></div>
-        <div class="from">${inputs}</div>
-        <div class="row">
-          <button data-act="craft" data-id="${c.id}" data-n="1" ${max >= 1 ? '' : 'disabled'}>Craft</button>
-          <button data-act="craft" data-id="${c.id}" data-n="5" ${max >= 5 ? '' : 'disabled'}>×5</button>
-          <button data-act="craft" data-id="${c.id}" data-n="${max}" ${max >= 2 ? '' : 'disabled'}>All (${max})</button>
-        </div>
-      </li>`;
-  }).join('');
+  const rows = craftableFirst(craftsIn(v.group, v.tier).map((c) => ({ c, max: maxCrafts(w, c.id) }))).map(({ c, max }) => craftRow(w, c, max)).join('');
   return `<div class="tabs" role="tablist" aria-label="Category">${tabs}</div>
     <div class="tabs sub" role="tablist" aria-label="Tier">${subtabs}</div>
     <ul class="crafts" role="tabpanel">${rows}</ul>`;

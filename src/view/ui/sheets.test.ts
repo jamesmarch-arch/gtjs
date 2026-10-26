@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { CRAFTS, CRAFT_TIERS } from '../../sim/data';
 import { emptyWorld } from '../../sim/world';
-import { BENCH_GROUPS, benchView, workbenchHtml, type BenchView } from './sheets';
+import { BENCH_GROUPS, benchView, searchCrafts, workbenchHtml, type BenchView } from './sheets';
 
 // one id per row: the row's Craft button (its "All" button also says data-n="1" when you can make exactly one)
 const craftIds = (html: string) => [...html.matchAll(/data-act="craft" data-id="([^"]+)" data-n="1"[^>]*>Craft</g)].map((m) => m[1]);
@@ -57,5 +57,37 @@ describe('the workbench list', () => {
     const row = html.slice(html.indexOf('Bronze Dust</b>'));
     expect(row).toMatch(/<span class="ok">3 Copper Dust/);
     expect(row).toMatch(/<span class="short">1 Tin Dust/);
+  });
+});
+
+describe('the workbench search', () => {
+  it('finds recipes in every tab and tier, by what they make first', () => {
+    const hits = searchCrafts('copper wire').map((h) => h.c.id);
+    expect(hits[0]).toBe('copper_wire'); // makes it
+    expect(hits).toContain('lv_motor'); // uses it, from another tab's tier
+    expect(hits).toContain('lv_electric_furnace'); // a machine
+    expect(hits.indexOf('copper_wire')).toBeLessThan(hits.indexOf('lv_motor'));
+  });
+
+  it('ignores case and spaces at the ends, and finds nothing for nothing', () => {
+    expect(searchCrafts('  FURNACE ').map((h) => h.c.id)).toContain('stone_furnace');
+    expect(searchCrafts('')).toEqual([]);
+    expect(searchCrafts('   ')).toEqual([]);
+  });
+
+  it('shows results without the tabs, craftable first, each with its tab and tier', () => {
+    const w = emptyWorld();
+    w.storage = { copper_plate: 1 };
+    const html = workbenchHtml(w, { group: 'parts', tier: 'steam' }, 'copper');
+    expect(html).not.toContain('role="tablist"');
+    expect(craftIds(html)[0]).toBe('copper_wire'); // the one you can make now
+    expect(html).toContain('Items, LV · have 0');
+    expect(html).toMatch(/\d+ recipes for “copper”/);
+  });
+
+  it('says so when nothing matches, and never echoes markup', () => {
+    const html = workbenchHtml(emptyWorld(), { group: 'parts', tier: 'steam' }, '<b>zz');
+    expect(html).toContain('No recipes for “&lt;b&gt;zz”');
+    expect(craftIds(html)).toEqual([]);
   });
 });

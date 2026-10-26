@@ -148,6 +148,12 @@ button.danger { background: #e2483d; color: #fff; }
 .end dt { color: var(--muted); }
 .end dd { margin: 0; font-weight: 700; }
 
+/* workbench search: above the redrawn list, so typing never loses focus */
+.sheet-search { padding: 10px 18px 0; }
+.sheet-search input { width: 100%; font: inherit; color: var(--ink); background: #fbf7ea; border: 1.5px solid var(--ink); border-radius: 999px; padding: 6px 14px; }
+.sheet-search input:focus { outline: 2px solid var(--bronze); outline-offset: 1px; }
+.sheet-body .results { margin: 12px 0 4px; }
+
 /* workbench tabs: categories, then tiers */
 .tabs { display: flex; gap: 4px; flex-wrap: wrap; margin: 12px 0 0; border-bottom: 1.5px solid var(--ink); }
 .tabs button { border-radius: 10px 10px 0 0; border-bottom: 0; margin-bottom: -1.5px; padding: 6px 14px; font-weight: 700; }
