@@ -101,6 +101,11 @@ button[aria-pressed='true'] { background: var(--ink); color: var(--paper); }
 .badge { display: inline-block; min-width: 18px; padding: 0 5px; border-radius: 999px; background: #e2483d; color: #fff; font-size: 11px; line-height: 18px; text-align: center; }
 .hint { margin: 6px 0 0; font-size: 11.5px; }
 .sheet { width: min(860px, 100%); }
+.gui-backdrop.top { align-items: flex-start; padding-top: max(16px, 6vh); }
+.gui-backdrop.top .gui { max-height: calc(100vh - max(16px, 6vh) - 16px); }
+/* the window holds its header still and scrolls only the list inside it */
+.gui-backdrop.top .gui.sheet { display: flex; flex-direction: column; overflow: hidden; }
+.gui-backdrop.top .sheet-body { max-height: none; min-height: 0; flex: 1 1 auto; }
 .sheet-body { padding: 4px 18px 18px; max-height: calc(100vh - 110px); overflow: auto; }
 .sheet-body h3 { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin: 18px 0 8px; }
 .crafts, .quests, .goals { list-style: none; margin: 0; padding: 0; }

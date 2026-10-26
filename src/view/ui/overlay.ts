@@ -5,7 +5,7 @@ export interface Overlay { refresh(): void; close(): void }
 
 export function openOverlay(title: string, render: () => string, onClick: (el: HTMLElement) => void, onClose: () => void): Overlay {
   const back = document.createElement('div');
-  back.className = 'gui-backdrop';
+  back.className = 'gui-backdrop top'; // pinned to the top: switching tabs changes its height, not where it starts
   back.innerHTML = `<div class="gui sheet" role="dialog" aria-label="${title}">
       <header><h2>${title}</h2><button class="close" aria-label="Close">Close</button></header>
       <div class="sheet-body"></div>
