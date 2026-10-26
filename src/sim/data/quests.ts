@@ -14,7 +14,7 @@ export const quests: QuestDef[] = [
   },
   {
     id: 'crush', chapter: 'steam', title: 'Crush some ore', after: ['furnace'],
-    text: 'GregTech furnaces won’t take raw ore. Hammer iron ore into crushed ore at the workbench.',
+    text: 'GregTech furnaces won’t take raw ore. Craft a stone hammer (cobblestone and wood planks), then hammer iron ore into crushed ore at the workbench.',
     goals: [{ kind: 'made', item: 'crushed_iron', count: 4 }], rewards: [{ item: 'iron_ore', count: 4 }],
   },
   {
@@ -29,7 +29,7 @@ export const quests: QuestDef[] = [
   },
   {
     id: 'copper_tin', chapter: 'steam', title: 'Copper and tin dust', after: ['ingots'],
-    text: 'Bronze needs three parts copper to one of tin. Hammer the ores, then grind the crushed ore to dust with a mortar.',
+    text: 'Bronze needs three parts copper to one of tin. Hammer the ores, then grind the crushed ore to dust with a stone mortar (four cobblestone).',
     goals: [{ kind: 'made', item: 'copper_dust', count: 6 }, { kind: 'made', item: 'tin_dust', count: 2 }],
     rewards: [{ item: 'tin_ore', count: 4 }],
   },

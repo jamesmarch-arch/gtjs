@@ -143,7 +143,7 @@ credit them on the game's About screen. Figures may set `credit:false` inside th
 - **M4** Steam age content complete and quest book. Done:
   - Machines and conduits are items: craft them at the workbench (`src/sim/craft.ts`, recipes in `crafts` in
     `src/sim/data/steam.ts`), place them to use one up, remove them to get it back. Hand crafting is instant and
-    takes GT's hand tools as given; by hand a plate costs 2 ingots, the forge hammer makes 2 from 3.
+    takes most of GT's hand tools as given (the hammer and mortar are real items, see Starting empty); by hand a plate costs 2 ingots, the forge hammer makes 2 from 3.
   - New steam machines: forge hammer (plates), extractor (sticky resin -> raw rubber), compressor (raw rubber ->
     rubber sheet). The coke oven is buildable from coke oven bricks (brick, sand, clay) and turns coal into coke,
     which burns twice as long. Clay, sand and sticky resin are gathered by hand (shift-click for 10).
@@ -185,8 +185,9 @@ credit them on the game's About screen. Figures may set `credit:false` inside th
 The slice is complete: steam age, LV and the EBF, from an empty floor to MV.
 
 **Starting empty (after M6).** New games start with an empty floor and empty storage, as GTNH does. The bootstrap is
-by hand and by fire: gather cobblestone for a coal-fired furnace (`stone_furnace`); hammer ore into crushed ore and
-grind it to dust at the workbench; mix bronze dust (3 copper + 1 tin); smelt in the furnace (one coal smelts eight);
+by hand and by fire: gather cobblestone for a coal-fired furnace (`stone_furnace`); craft a stone hammer and a stone
+mortar (`tools` on a recipe: needed in storage, never used up); hammer ore into crushed ore and grind it to dust at
+the workbench; mix bronze dust (3 copper + 1 tin); smelt in the furnace (one coal smelts eight);
 then bronze plates and bricks make the first boiler. The quest book's opening follows that path. A test
 (`src/sim/bootstrap.test.ts`) proves a boiler is reachable with hand crafting and the furnace alone, and every machine
 after it. The old starting kit lives on as a test fixture (`src/sim/fixtures.ts`).

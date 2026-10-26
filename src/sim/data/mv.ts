@@ -1,5 +1,6 @@
 // The end of the slice: the electric blast furnace, steel and aluminium. The EBF is an MV machine: its recipes need
 // 120 EU/t, which only a net at MV voltage (behind a step-up transformer) can give.
+import { HAMMER } from './steam';
 import type { CraftDef, ItemDef, MachineDef, RecipeDef, Stack } from './types';
 
 export const items: ItemDef[] = [
@@ -42,7 +43,7 @@ export const recipes: RecipeDef[] = [
 ];
 
 export const crafts: CraftDef[] = [
-  { id: 'steel_plate', group: 'parts', inputs: [s('steel_ingot', 2)], output: s('steel_plate'), note: 'hammer' },
+  { id: 'steel_plate', group: 'parts', inputs: [s('steel_ingot', 2)], output: s('steel_plate'), tools: [HAMMER] },
   { id: 'lv_casing_steel', group: 'parts', inputs: [s('steel_plate', 8)], output: s('lv_casing'), note: 'wrench (the GTNH recipe)' },
   { id: 'cupronickel_coil', group: 'parts', inputs: [s('cupronickel_wire', 4), s('tin_plate')], output: s('cupronickel_coil'), note: 'wound on a former' },
   { id: 'heat_proof_casing', group: 'parts', inputs: [s('iron_plate', 6), s('brick', 2)], output: s('heat_proof_casing'), note: 'GTNH uses invar' },

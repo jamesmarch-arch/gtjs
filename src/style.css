@@ -115,6 +115,7 @@ button[aria-pressed='true'] { background: var(--ink); color: var(--paper); }
 .crafts .from .short { color: #b8372d; }
 .crafts .from .ok { color: #2e7d3a; }
 .crafts .from .ok small { color: #5f9a68; }
+.crafts .from .tool { margin-left: 6px; padding: 0 6px; border: 1px solid currentColor; border-radius: 9px; font-size: 12px; white-space: nowrap; }
 .crafts small { color: var(--muted); }
 button:disabled { opacity: .4; cursor: default; }
 button:disabled:hover { background: var(--paper); }

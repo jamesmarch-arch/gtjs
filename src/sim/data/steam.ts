@@ -31,6 +31,9 @@ export const items: ItemDef[] = [
   ...METALS.map((m) => ({ id: `${m}_plate`, name: `${cap(m)} Plate` })),
   { id: 'tin_wire', name: 'Tin Wire' },
   { id: 'bronze_dust', name: 'Bronze Dust' },
+  // hand tools: crafted once, needed by recipes but never used up
+  { id: 'stone_hammer', name: 'Stone Hammer' },
+  { id: 'stone_mortar', name: 'Stone Mortar' },
   // other parts
   { id: 'brick', name: 'Brick' },
   { id: 'coke_oven_brick', name: 'Coke Oven Brick' },
@@ -152,21 +155,24 @@ export const recipes: RecipeDef[] = [
 ];
 
 const s = (item: string, count = 1): Stack => ({ item, count });
+export const HAMMER = 'stone_hammer', MORTAR = 'stone_mortar';
 const HULL_AND_PIPES = [s('bronze_hull'), s('bronze_pipe', 2)];
 
 // Crafting at the workbench is instant: GT's hand tools (hammer, wrench, file, cutters) are taken as given.
 export const crafts: CraftDef[] = [
-  // the bootstrap, all by hand: hammer ore into crushed ore, grind it to dust, mix bronze dust
+  // the bootstrap, all by hand: make the tools, hammer ore into crushed ore, grind it to dust, mix bronze dust
+  { id: 'stone_hammer', group: 'parts', inputs: [s('cobblestone', 3), s('wood_planks', 2)], output: s('stone_hammer'), note: 'a tool: never used up' },
+  { id: 'stone_mortar', group: 'parts', inputs: [s('cobblestone', 4)], output: s('stone_mortar'), note: 'a tool: never used up' },
   ...(['iron', 'copper', 'tin'] as const).flatMap((m): CraftDef[] => [
-    { id: `crush_${m}_ore`, group: 'parts', inputs: [s(`${m}_ore`)], output: s(`crushed_${m}`), note: 'hammer' },
-    { id: `grind_crushed_${m}`, group: 'parts', inputs: [s(`crushed_${m}`)], output: s(`${m}_dust`), note: 'mortar' },
+    { id: `crush_${m}_ore`, group: 'parts', inputs: [s(`${m}_ore`)], output: s(`crushed_${m}`), tools: [HAMMER] },
+    { id: `grind_crushed_${m}`, group: 'parts', inputs: [s(`crushed_${m}`)], output: s(`${m}_dust`), tools: [MORTAR] },
   ]),
   { id: 'bronze_dust', group: 'parts', inputs: [s('copper_dust', 3), s('tin_dust')], output: s('bronze_dust', 4), note: 'mixed by hand' },
-  ...METALS.map((m): CraftDef => ({ id: `${m}_plate`, group: 'parts', inputs: [s(`${m}_ingot`, 2)], output: s(`${m}_plate`), note: 'hammer' })),
+  ...METALS.map((m): CraftDef => ({ id: `${m}_plate`, group: 'parts', inputs: [s(`${m}_ingot`, 2)], output: s(`${m}_plate`), tools: [HAMMER] })),
   { id: 'tin_wire', group: 'parts', inputs: [s('tin_plate')], output: s('tin_wire'), note: 'wire cutters' },
   { id: 'bronze_hull', group: 'parts', inputs: [s('bronze_plate', 8)], output: s('bronze_hull'), note: 'wrench' },
   { id: 'coke_oven_brick', group: 'parts', inputs: [s('brick', 2), s('sand', 2), s('clay')], output: s('coke_oven_brick') },
-  { id: 'bronze_pipe', group: 'conduits', inputs: [s('bronze_plate', 3)], output: s('bronze_pipe', 2), note: 'hammer and wrench' },
+  { id: 'bronze_pipe', group: 'conduits', inputs: [s('bronze_plate', 3)], output: s('bronze_pipe', 2), tools: [HAMMER], note: 'wrench' },
   { id: 'tin_cable', group: 'conduits', inputs: [s('tin_wire'), s('rubber_sheet')], output: s('tin_cable') },
   { id: 'bronze_boiler', group: 'machines', inputs: [s('bronze_plate', 4), s('brick', 3)], output: s('bronze_boiler') },
   { id: 'steam_macerator', group: 'machines', inputs: [...HULL_AND_PIPES, s('bronze_plate', 2), s('iron_plate')], output: s('steam_macerator') },

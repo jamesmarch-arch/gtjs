@@ -5,7 +5,7 @@ import { count, emptyWorld, placeMachine, setRecipe, tick } from './world';
 describe('the workbench', () => {
   it('hammers two ingots into a plate and counts it as made', () => {
     const w = emptyWorld();
-    w.storage = { bronze_ingot: 5 };
+    w.storage = { bronze_ingot: 5, stone_hammer: 1 };
     craft(w, 'bronze_plate', 2);
     expect(count(w, 'bronze_ingot')).toBe(1);
     expect(count(w, 'bronze_plate')).toBe(2);
@@ -14,7 +14,7 @@ describe('the workbench', () => {
 
   it('says what is missing and takes nothing', () => {
     const w = emptyWorld();
-    w.storage = { bronze_plate: 2 };
+    w.storage = { bronze_plate: 2, stone_hammer: 1 };
     expect(canCraft(w, 'bronze_pipe')).toBe('Needs 1 more Bronze Plate');
     expect(() => craft(w, 'bronze_pipe')).toThrow();
     expect(count(w, 'bronze_plate')).toBe(2);
@@ -30,7 +30,7 @@ describe('the workbench', () => {
 
   it('builds a steam machine from a hull and pipes', () => {
     const w = emptyWorld();
-    w.storage = { bronze_ingot: 64, iron_ingot: 2 };
+    w.storage = { bronze_ingot: 64, iron_ingot: 2, stone_hammer: 1 };
     craft(w, 'bronze_plate', 16); // 8 for the hull, 3 for two pipes, 2 for the macerator
     craft(w, 'bronze_hull');
     craft(w, 'bronze_pipe');

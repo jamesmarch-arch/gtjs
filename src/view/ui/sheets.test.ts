@@ -32,7 +32,7 @@ describe('the workbench tabs', () => {
 
   it('count what can be crafted on each tab', () => {
     const w = emptyWorld();
-    w.storage = { bronze_ingot: 4 };
+    w.storage = { bronze_ingot: 4, stone_hammer: 1 };
     const html = workbenchHtml(w, { group: 'machines', tier: 'steam' });
     expect(html).toMatch(/data-group="parts"[^>]*>Items <span class="ready">\d+<\/span>/);
     expect(html).toMatch(/data-group="machines"[^>]*>Machines<\/button>/); // nothing ready: no count
@@ -43,7 +43,7 @@ describe('the workbench tabs', () => {
 describe('the workbench list', () => {
   it('puts what you can craft now at the top, the rest in their usual order', () => {
     const w = emptyWorld();
-    w.storage = { tin_ingot: 2, cobblestone: 8 };
+    w.storage = { tin_ingot: 2, stone_hammer: 1 };
     const ids = craftIds(workbenchHtml(w, { group: 'parts', tier: 'steam' }));
     const usual = [...CRAFTS.values()].filter((c) => c.group === 'parts' && c.tier === 'steam').map((c) => c.id);
     expect(ids[0]).toBe('tin_plate');
@@ -57,6 +57,23 @@ describe('the workbench list', () => {
     const row = html.slice(html.indexOf('Bronze Dust</b>'));
     expect(row).toMatch(/<span class="ok">3 Copper Dust/);
     expect(row).toMatch(/<span class="short">1 Tin Dust/);
+  });
+});
+
+describe('hand tools on the workbench', () => {
+  it('shows the tool a recipe uses, green when you have it', () => {
+    const w = emptyWorld();
+    const without = workbenchHtml(w, { group: 'parts', tier: 'steam' });
+    expect(without).toContain('<span class="tool short">uses Stone Hammer</span>');
+    w.storage = { stone_hammer: 1 };
+    expect(workbenchHtml(w, { group: 'parts', tier: 'steam' })).toContain('<span class="tool ok">uses Stone Hammer</span>');
+  });
+
+  it('finds the hammer, and what needs it, when you search for one', () => {
+    const hits = searchCrafts('hammer').map((h) => h.c.id);
+    expect(hits[0]).toBe('stone_hammer');
+    expect(hits).toContain('crush_iron_ore');
+    expect(hits).toContain('bronze_plate');
   });
 });
 

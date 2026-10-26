@@ -7,6 +7,8 @@ export function canCraft(w: World, id: string, times = 1): string | null {
   const c = CRAFTS.get(id);
   if (!c) return `Unknown recipe ${id}`;
   if (!Number.isInteger(times) || times < 1) return 'Craft at least one';
+  const tools = (c.tools ?? []).filter((t) => count(w, t) < 1);
+  if (tools.length) return `Needs a ${tools.map(itemName).join(' and a ')} in storage: craft one, it isn't used up`;
   const short = c.inputs.filter((s) => count(w, s.item) < s.count * times);
   return short.length ? `Needs ${short.map((s) => `${s.count * times - count(w, s.item)} more ${itemName(s.item)}`).join(', ')}` : null;
 }
@@ -14,7 +16,8 @@ export function canCraft(w: World, id: string, times = 1): string | null {
 /** How many times `id` can be crafted from what is in storage. */
 export function maxCrafts(w: World, id: string): number {
   const c = CRAFTS.get(id);
-  return c ? Math.min(...c.inputs.map((s) => Math.floor(count(w, s.item) / s.count))) : 0;
+  if (!c || (c.tools ?? []).some((t) => count(w, t) < 1)) return 0;
+  return Math.min(...c.inputs.map((s) => Math.floor(count(w, s.item) / s.count)));
 }
 
 export function craft(w: World, id: string, times = 1): void {

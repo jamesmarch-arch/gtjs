@@ -31,7 +31,7 @@ function craftRow(w: World, c: CraftDef, max: number, where = ''): string {
   const inputs = c.inputs.map((s) => {
     const have = count(w, s.item);
     return `<span class="${have >= s.count ? 'ok' : 'short'}">${s.count} ${esc(itemName(s.item))} <small>(${have})</small></span>`;
-  }).join(' + ');
+  }).join(' + ') + (c.tools ?? []).map((t) => ` <span class="tool ${count(w, t) ? 'ok' : 'short'}">uses ${esc(itemName(t))}</span>`).join('');
   return `<li class="${max ? '' : 'cant'}">
       <div class="what"><b>${c.output.count > 1 ? `${c.output.count} × ` : ''}${esc(itemName(c.output.item))}</b>
         <small class="muted">${where ? `${where} · ` : ''}have ${count(w, c.output.item)}${c.note ? ` · ${esc(c.note)}` : ''}</small></div>
@@ -54,7 +54,7 @@ export function searchCrafts(query: string): { c: CraftDef; byName: boolean }[] 
   const hits: { c: CraftDef; byName: boolean }[] = [];
   for (const c of CRAFTS.values()) {
     if (itemName(c.output.item).toLowerCase().includes(q)) hits.push({ c, byName: true });
-    else if (c.inputs.some((s) => itemName(s.item).toLowerCase().includes(q))) hits.push({ c, byName: false });
+    else if ([...c.inputs.map((s) => s.item), ...(c.tools ?? [])].some((item) => itemName(item).toLowerCase().includes(q))) hits.push({ c, byName: false });
   }
   return [...hits.filter((h) => h.byName), ...hits.filter((h) => !h.byName)];
 }

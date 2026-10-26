@@ -64,7 +64,8 @@ export interface CraftDef {
   tier?: CraftTier;
   inputs: Stack[];
   output: Stack;
-  note?: string; // the hand tool it implies
+  tools?: string[]; // items it needs in storage but doesn't use up (the stone hammer, the stone mortar)
+  note?: string; // a hand tool it implies but doesn't ask for (the wrench, the wire cutters)
 }
 
 export type Goal =

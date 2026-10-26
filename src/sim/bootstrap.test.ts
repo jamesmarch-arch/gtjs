@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { craft } from './craft';
+import { canCraft, craft, maxCrafts } from './craft';
 import { CRAFTS, GATHERABLE, MACHINES, recipesForMachine } from './data';
 import type { Stack } from './data/types';
 import { count, createWorld, placeMachine, setRecipe, tick, type World } from './world';
@@ -18,7 +18,7 @@ describe('a new game', () => {
     // what you can get: gather by hand, then craft, and run the recipes of machines you could have built
     const have = new Set<string>(GATHERABLE);
     const steps = (allowed: (power: string) => boolean) => [
-      ...[...CRAFTS.values()].map((c) => ({ inputs: c.inputs, outputs: [c.output] as Stack[] })),
+      ...[...CRAFTS.values()].map((c) => ({ inputs: [...c.inputs, ...(c.tools ?? []).map((t) => ({ item: t, count: 1 }))], outputs: [c.output] as Stack[] })),
       ...[...MACHINES.values()].filter((d) => have.has(d.id) && allowed(d.power)).flatMap((d) => recipesForMachine(d)),
     ];
     const grow = (allowed: (power: string) => boolean) => {
@@ -71,7 +71,9 @@ describe('the coal furnace', () => {
 describe('bronze by hand', () => {
   it('goes ore -> crushed -> dust -> bronze dust -> bronze ingot', () => {
     const w = createWorld();
-    w.storage = { copper_ore: 3, tin_ore: 1, coal: 1 };
+    w.storage = { copper_ore: 3, tin_ore: 1, coal: 1, cobblestone: 7, wood_planks: 2 };
+    craft(w, 'stone_hammer');
+    craft(w, 'stone_mortar');
     craft(w, 'crush_copper_ore', 3);
     craft(w, 'crush_tin_ore');
     craft(w, 'grind_crushed_copper', 3);
@@ -82,5 +84,27 @@ describe('bronze by hand', () => {
     f.enabled = true;
     run(w, 4 * 200);
     expect(count(w, 'bronze_ingot')).toBe(4);
+    expect(count(w, 'stone_hammer') + count(w, 'stone_mortar')).toBe(2); // the tools are still there
+  });
+});
+
+describe('hand tools', () => {
+  it('are needed to hammer and grind, and say how to get them', () => {
+    const w = createWorld();
+    w.storage = { iron_ore: 2 };
+    expect(canCraft(w, 'crush_iron_ore')).toBe('Needs a Stone Hammer in storage: craft one, it isn\'t used up');
+    expect(maxCrafts(w, 'crush_iron_ore')).toBe(0);
+    expect(() => craft(w, 'crush_iron_ore')).toThrow(/Stone Hammer/);
+    expect(count(w, 'iron_ore')).toBe(2);
+  });
+
+  it('are made from what you gather, and are never used up', () => {
+    const w = createWorld();
+    w.storage = { cobblestone: 3, wood_planks: 2, iron_ore: 5 };
+    craft(w, 'stone_hammer');
+    craft(w, 'crush_iron_ore', 5);
+    expect(count(w, 'crushed_iron')).toBe(5);
+    expect(count(w, 'stone_hammer')).toBe(1);
+    expect(maxCrafts(w, 'crush_iron_ore')).toBe(0); // no ore left, but not for want of a hammer
   });
 });

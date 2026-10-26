@@ -41,7 +41,7 @@ describe('game data', () => {
     for (let grew = true; grew;) {
       grew = false;
       const steps = [...[...RECIPES.values()].map((r) => ({ inputs: r.inputs, outputs: r.outputs })),
-        ...[...CRAFTS.values()].map((c) => ({ inputs: c.inputs, outputs: [c.output] }))];
+        ...[...CRAFTS.values()].map((c) => ({ inputs: [...c.inputs, ...(c.tools ?? []).map((t) => ({ item: t, count: 1 }))], outputs: [c.output] }))];
       for (const s of steps) if (s.inputs.every((i) => have.has(i.item))) for (const o of s.outputs) if (!have.has(o.item)) { have.add(o.item); grew = true; }
     }
     const unreachable = items.filter((i) => !have.has(i.id) && !['water', 'steam'].includes(i.id)).map((i) => i.id);
