@@ -1,0 +1,397 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Steam Macerator</title>
+<script src="cf-head.js"></script></head><body>
+<script src="core.js"></script>
+<script src="gt-bridge.js"></script>
+<script>
+/* Steam Macerator (gtjs, steam age): a bronze ore crusher driven by its own small steam engine.
+
+   How it works (truth first)
+   1. Steam from the boiler comes up the inlet riser beside the left wall, through the steam valve (red handwheel) and
+      in through the wall to the steam chest on top of the cylinder.
+   2. The slide valve in the chest lets steam push the piston back and forth. Spent steam leaves the chest up the
+      exhaust pipe and out of the vent stack on the roof (GregTech steam machines must vent).
+   3. Piston rod -> crosshead (held straight by its guide bars) -> connecting rod -> crank on the crankshaft. The
+      crankshaft carries a flywheel that smooths the strokes, and a small pinion.
+   4. The pinion turns the big drive gear on roll A's shaft. Roll A's spur gear turns roll B's the other way, so the
+      two toothed crushing rolls turn in toward each other at the nip.
+   5. Ore waits in the hopper on the roof on a feed flap. The flap drops one lump down the throat into the nip; the
+      crushed ore falls onto the chute, slides out of the front spout and lands in the output tray.
+   Where the ore is: hopper -> throat -> nip -> chute -> spout -> tray. Where the steam is: riser -> valve -> chest ->
+   cylinder -> chest -> exhaust -> vent stack -> air.
+
+   x = depth (front at x = W), y = width (+y = viewer-left: the side with the steam inlet), z = up. 1 unit = 1 cm.
+
+   Parts
+   CASE     bronze case on four cast feet . riveted front with name plate . pressure gauge . running lamp . output
+            opening . service hatch on the back . louvres on the right side . hopper with feed flap . vent stack with
+            rain cap on four legs . front spout . output tray
+   STEAM    inlet riser from the floor with its floor flange . steam valve body . stem and handwheel . elbow and wall
+            flange . inlet pipe inside . steam chest . cylinder with two end covers . cradle under the cylinder .
+            exhaust pipe up into the vent stack
+   ENGINE   piston rod . crosshead . two guide bars on a hanger post . connecting rod . crank web and crank pin .
+            crankshaft (in pieces between the parts it carries) . two pedestal bearings . flywheel . pinion
+   CRUSHER  drive gear on roll A . spur gears on roll A and roll B . roll A . roll B . roll shafts (in pieces) . four
+            bearing posts with bearing blocks . throat liner . chute with two side lips on two legs
+
+   Contact checks (numbers)
+   - drive gear r 11 at (32, 62) and pinion r 4 at (32, 47): centres 15 apart = 11 + 4.
+   - spur gears r 6 at x 32 and 44, z 62: 12 apart = 6 + 6, meeting at the nip x 38.
+   - rolls r 5.5 at x 32 and 44: a 1 cm gap at the nip, over the chute (z 41.4 at x 38).
+   - crank r 5, connecting rod 13: the crosshead travels x 40..50, inside the guide bars (x 38..56).
+   - chute z = 50 at x 28 down to 14 at the front wall, which is the bottom of the output opening (z 12..24).
+*/
+const W = 70, D = 84, Z0 = 6, ZT = 76;
+const OUT = rrUV(0, Z0, D, ZT, 5);                                   // case profile in (y, z), swept along x
+const BRZ = PALS.bronze = { l:'#eab36c', m:'#c98a42', d:'#5c3b17' };
+const BRZD = { l:'#cf9149', m:'#a8702f', d:'#4f3212' };
+const IRON = { l:'#a7aeb2', m:'#7d858b', d:'#4a5157' };
+const ROCK = { l:'#a8a297', m:'#878177', d:'#5e5850' };
+const REDW = { l:'#ef6a4c', m:'#cf5038', d:'#4a2219' };
+const RECESS = '#2b2523', CREAM = '#f6ead0';
+const ORE_COL = { iron:'#c98d6b', copper:'#e5874c', tin:'#dcdad0' };
+
+const RA = [32, 62], RB = [44, 62], RR = 5.5, RY0 = 28, RY1 = 52;      // crushing rolls: centres (x, z), radius, span in y
+const CK = [32, 47], CRANK = 5, CONROD = 13;                           // crankshaft centre (x, z)
+const CYL = { x0:56, x1:68, y:72, z:47, r:5.5 };
+const INL = { x:62, z:55 }, RISER_Y = D + 10, STK = [62, 72];          // steam inlet; vent stack (x, y)
+const TRAY = [74, 24, 96, 56], TRAY_H = 8, SPOUT = [W + 9, 11];
+const chuteZ = x => 50 - (x - 28) * 36 / 42;                           // the chute's top surface
+const mcClamp = (v, a = 0, b = 1) => Math.max(a, Math.min(b, v));
+const mcMetal = st => ((st.recipe && st.recipe.id.match(/iron|copper|tin/)) || ['iron'])[0];
+const mcPile = st => 1.2 + 5*mcClamp((st.output || 0) / 24);
+
+/* ---------- where the ore is, from the recipe's progress (0..1) ---------- */
+function mcOre(st){
+  const p = st.progress || 0, o = { lump:null, bits:[] };
+  if (!st.active) return o;
+  if (p < .3) o.lump = { at:[38, 40, 86 - 16*ease(p / .3)], s:1 };
+  else if (p < .55){ const t = (p - .3) / .25; o.lump = { at:[38, 40, 70 - 8*t], s:1 - .65*t }; }
+  else { const t = (p - .55) / .45, pile = mcPile(st);
+    for (let i = 0; i < 4; i++){ const y = 32 + i*5.5, u = mcClamp(t*1.18 - i*.06); let x, z;
+      if (u < .2){ x = 38 + i*.6; z = 56 - (56 - chuteZ(x) - .8)*(u / .2)**2; }
+      else if (u < .85){ const v = (u - .2) / .65; x = 38 + (SPOUT[0] - 38)*v; z = (x <= W ? chuteZ(x) : 14 - (x - W)/9*3) + .8; }
+      else { const v = (u - .85) / .15; x = SPOUT[0] + 5*v; z = SPOUT[1] + .8 - (SPOUT[1] + .8 - pile - .4)*v*v; }
+      o.bits.push([x, y, z]); } }
+  return o;
+}
+const mcLump = ([x, y, z], s, col) => box(x - 2.4*s, y - 2.2*s, z - 2*s, x + 2.4*s, y + 2.2*s, z + 2*s, ROCK, toneI, .8)
+  + fill(pd(on(PZ(z + 2*s + .05), rectUV(x - 1.2*s, y - .4*s, x + .2*s, y + 1*s))), col);
+const mcBit = ([x, y, z], col) => box(x - .9, y - .9, z - .8, x + .9, y + .9, z + .8, matOf(col), toneI, .5);
+
+/* ---------- gears, rolls, flywheel (axes along y) ---------- */
+function mcGear(x, z, y0, y1, r, n, th, m){
+  const yf = facing([0,1,0]) ? y1 + .05 : y0 - .05, w = Math.PI / n * .55, pts = [];
+  for (let i = 0; i < n; i++){ const a = th + i*2*Math.PI/n;
+    for (const [da, rr] of [[-w*1.25, r - 1], [-w*.7, r], [w*.7, r], [w*1.25, r - 1]]) pts.push([x + rr*Math.cos(a + da), yf, z + rr*Math.sin(a + da)]); }
+  return rod([x, y0, z], [x, y1, z], r - 1, m, toneI, .8, r - 1, 24) + shape(pts, m.l, .7)
+    + shape(on(PY(yf), ellUV(x, z, Math.max(1.6, r*.28), Math.max(1.6, r*.28), 14)), m.m, .6)
+    + ink(pd([[x + r*.35*Math.cos(th), yf, z + r*.35*Math.sin(th)], [x + (r - 1.6)*Math.cos(th), yf, z + (r - 1.6)*Math.sin(th)]], false), .9);
+}
+function mcRoll(x, z, th){
+  let s = rod([x, RY0, z], [x, RY1, z], RR, IRON, toneI, 1, RR, 24), d = '';
+  for (let i = 0; i < 10; i++){ const a = th + i*Math.PI/5, c = Math.cos(a), sn = Math.sin(a);
+    if (facing([c, 0, sn])) d += pd([[x + (RR + .05)*c, RY0 + .6, z + (RR + .05)*sn], [x + (RR + .05)*c, RY1 - .6, z + (RR + .05)*sn]], false); }
+  const yc = facing([0,1,0]) ? RY1 + .05 : RY0 - .05;
+  return s + `<path d="${d}" fill="none" stroke="${INK}" stroke-width=".8" opacity=".8"/>`
+    + ink(pd([[x, yc, z], [x + (RR - .8)*Math.cos(th), yc, z + (RR - .8)*Math.sin(th)]], false), .9);
+}
+function mcFlywheel(th){
+  const [x, z] = CK, y0 = 64, y1 = 66, r = 12, yf = facing([0,1,0]) ? y1 + .05 : y0 - .05;
+  let s = rod([x, y0, z], [x, y1, z], r, IRON, toneI, 1.1, r, 32);
+  s += fill(pd(on(PY(yf), ellUV(x, z, r - 2.2, r - 2.2, 28))), mix(IRON.d, IRON.m, .4));
+  let sp = '';
+  for (let i = 0; i < 6; i++){ const a = th + i*Math.PI/3; sp += pd([[x + 2*Math.cos(a), yf, z + 2*Math.sin(a)], [x + (r - 2.2)*Math.cos(a), yf, z + (r - 2.2)*Math.sin(a)]], false); }
+  s += `<path d="${sp}" fill="none" stroke="${INK}" stroke-width="2.6" stroke-linecap="round"/><path d="${sp}" fill="none" stroke="${IRON.m}" stroke-width="1.4" stroke-linecap="round"/>`;
+  return s + shape(on(PY(yf), ellUV(x, z, 2.6, 2.6, 14)), IRON.l, .7) + ink(pd(on(PY(yf), ellUV(x, z, r - 2.2, r - 2.2, 28))), .7);
+}
+
+/* ---------- the case ---------- */
+function mcCase(st, m){
+  const FRONT = facing([1,0,0]), BACK = facing([-1,0,0]), LEFT = facing([0,1,0]), RIGHT = facing([0,-1,0]);
+  const rivets = (plane, pts, col) => fill(pts.map(([u, v]) => pd(on(plane, ellUV(u, v, .75, .75, 8)))).join(''), col);
+  let s = '';
+  if (FRONT) s += fill(pd(on(PX(W), OUT)), tone([1,0,0], m));
+  if (BACK) s += fill(pd(on(PX(0), OUT)), tone([-1,0,0], m));
+  s += extrude(OUT, 0, W, m);
+  if (FRONT){ const fp = uv => on(PX(W + .25), uv), dk = mix(m.d, m.m, .35);
+    s += ink(pd(fp(rrUV(3.5, Z0 + 3.5, D - 3.5, ZT - 3.5, 3))), 1);
+    const rv = []; for (let y = 7; y <= D - 7; y += 7) rv.push([y, Z0 + 1.8], [y, ZT - 1.8]);
+    for (let z = Z0 + 9; z <= ZT - 9; z += 8) rv.push([1.8, z], [D - 1.8, z]);
+    s += rivets(PX(W + .3), rv, dk);
+    s += shape(fp(rrUV(30, 53, 74, 69, 2)), CREAM, 1.1);
+    s += tx(W + .4, 52, 62.6, 'MACERATOR', 5.4, INK, 800) + tx(W + .4, 52, 56.4, 'STEAM AGE', 2.8, mix(m.d, '#000000', .2), 800);
+    s += shape(fp(rrUV(28, 12, 52, 24, 1.5)), RECESS, 1.7);
+  }
+  if (BACK){ const bp = uv => on(PX(-.25), uv);
+    s += shape(bp(rrUV(18, 18, 66, 58, 3)), mix(m.m, m.d, .25), 1.4);
+    s += rivets(PX(-.3), [[21, 21], [63, 21], [21, 55], [63, 55]], m.d); }
+  if (LEFT){ const rv = []; for (let x = 7; x <= W - 7; x += 7) rv.push([x, Z0 + 1.8], [x, ZT - 1.8]);
+    s += rivets(PY(D + .3), rv, mix(m.d, m.m, .35)) + shape(on(PY(D + .25), ellUV(INL.x, INL.z, 5.2, 5.2, 18)), mix(m.d, m.m, .2), .9); }
+  if (RIGHT){ let v = ''; for (let z = 30; z <= 60; z += 5) v += pd([[14, -.25, z], [56, -.25, z]], false);
+    s += `<path d="${v}" fill="none" stroke="${INK}" stroke-width="1.5" opacity=".75"/>`; }
+  if (FRONT) s += ink(pd(on(PX(W), OUT)), 2.2);
+  if (BACK) s += ink(pd(on(PX(0), OUT)), 2.2);
+  return s + hullInk([...on(PX(0), OUT), ...on(PX(W), OUT)], 2.8);
+}
+
+/* ---------- outside parts ---------- */
+function mcHopper(st, m){
+  const A = on(PZ(ZT), rectUV(26, 28, 50, 52)), B = on(PZ(ZT + 18), rectUV(16, 18, 60, 62)), col = ORE_COL[mcMetal(st)];
+  const ore = mcOre(st), open = !!(ore.lump && ore.lump.at[2] > ZT - 2 && st.progress < .3);
+  let inner = fill(pd(on(PZ(ZT + .2), rectUV(26, 28, 50, 52))), RECESS);
+  if (!open) inner += shape(on(PZ(ZT + .4), rectUV(26.5, 28.5, 49.5, 51.5)), BRZD.m, .9) + ink(pd([[26.5, 40, ZT + .45], [49.5, 40, ZT + .45]], false), .6);
+  const rest = [[31, 33, ZT + 2.5], [44, 46, ZT + 2.5], [37, 47, ZT + 3.5], [43, 33, ZT + 3.5]].slice(0, Math.min(4, st.input | 0));
+  const lumps = rest.map(at => ({ at, svg: mcLump(at, .9, col) }));
+  if (ore.lump && ore.lump.at[2] > ZT) lumps.push({ at: ore.lump.at, svg: mcLump(ore.lump.at, ore.lump.s, col) });
+  inner += byDepth(lumps);
+  return openShell(A, B, n => tone(n, m), inner) + ink(pd(B), 1.6) + hullInk([...A, ...B], 2.4);
+}
+function mcStack(st){
+  const [x, y] = STK, z1 = ZT + 22;
+  const legs = [[3.2, 0], [-3.2, 0], [0, 3.2], [0, -3.2]].map(([dx, dy]) => ({ box:[[x + dx - .5, y + dy - .5, z1], [x + dx + .5, y + dy + .5, z1 + 3]],
+    svg: rod([x + dx, y + dy, z1], [x + dx, y + dy, z1 + 3], .45, BRZD, toneI, .6) }));
+  return byDepth([
+    { box:[[x - 5, y - 5, ZT], [x + 5, y + 5, ZT + 2]], svg: cyl(x, y, ZT, ZT + 2, 5, BRZD, toneI, 1.1) },
+    { box:[[x - 3.5, y - 3.5, ZT + 2], [x + 3.5, y + 3.5, z1]], svg: cyl(x, y, ZT + 2, z1, 3.5, BRZD, toneI, 1.2) + fill(pd(on(PZ(z1 + .05), ellUV(x, y, 2.5, 2.5, 16))), RECESS) },
+    ...legs,
+    { box:[[x - 6.5, y - 6.5, z1 + 3], [x + 6.5, y + 6.5, z1 + 4.5]], svg: cyl(x, y, z1 + 3, z1 + 4.5, 6.5, BRZD, toneI, 1.1) } ]);
+}
+function mcGauge(st){
+  const gy = 16, gz = 62, R = 6.5, gx = W + 3.05;
+  let s = cylX(W, W + 3, gy, gz, R, BRZD, toneI, 1.1, 24);
+  if (!facing([1,0,0])) return s;
+  const at = (a, r) => [gx, gy - r*Math.sin(a), gz + r*Math.cos(a)];
+  s += shape(on(PX(gx), ellUV(gy, gz, R - 1.3, R - 1.3, 24)), '#fbf7ea', .7);
+  let tk = ''; for (let i = 0; i <= 6; i++){ const a = (-120 + 40*i)*Math.PI/180; tk += pd([at(a, 3.7), at(a, 4.7)], false); }
+  s += `<path d="${tk}" fill="none" stroke="${INK}" stroke-width=".6"/>` + ink(pd([at(1.75, 3.9), at(2.09, 3.9)], false).replace(INK, '#e2483d'), 1.2);
+  const a = (-120 + 240*mcClamp(st.steam || 0))*Math.PI/180;
+  return s + ink(pd([at(a + Math.PI, .9), at(a, 4.2)], false), 1.1) + shape(on(PX(gx + .05), ellUV(gy, gz, .7, .7, 8)), INK, 0);
+}
+function mcLamp(st){
+  const col = st.running ? '#43c25c' : st.on && st.stalled ? '#e2483d' : '#5d5650';
+  let s = cylX(W, W + 2, 16, 47, 2.4, matOf(col), toneI, 1, 16);
+  if ((st.running || (st.on && st.stalled)) && facing([1,0,0])) s += fill(pd(on(PX(W + 2.1), ellUV(16, 47, 4.2, 4.2, 16))), col, 'opacity=".28"');
+  return s;
+}
+function mcSpout(st, bits){
+  const [x1, z1] = SPOUT, z0 = 14, sm = BRZD, y0 = 28, y1 = 52;
+  const lip = y => shape([[W, y, z0], [x1, y, z1], [x1, y, z1 + 4], [W, y, z0 + 7]], tone([0, y > 40 ? 1 : -1, 0], sm), 1);
+  let plate = shape([[W, y0, z0], [x1, y0, z1], [x1, y1, z1], [W, y1, z0]], tone(norm([3, 0, 9]), sm), 1);
+  if (facing([1,0,0])) plate += shape([[x1, y0, z1], [x1, y1, z1], [x1, y1, z1 - 1], [x1, y0, z1 - 1]], sm.d, .9);
+  plate += bits.filter(b => b[0] >= W && b[0] <= x1).map(b => mcBit(b, ORE_COL[mcMetal(st)])).join('');
+  return byDepth([
+    { box:[[W, y0 - .5, z1], [x1, y0 + .5, z0 + 7]], svg: lip(y0) },
+    { box:[[W, y0 + .5, z1 - 1], [x1, y1 - .5, z0 + 2]], svg: plate },
+    { box:[[W, y1 - .5, z1], [x1, y1 + .5, z0 + 7]], svg: lip(y1) } ]);
+}
+function mcTray(st, bits){
+  const [x0, y0, x1, y1] = TRAY, A = on(PZ(0), rectUV(x0, y0, x1, y1)), B = on(PZ(TRAY_H), rectUV(x0, y0, x1, y1));
+  const col = ORE_COL[mcMetal(st)], om = { l: col, m: mix(col, '#000000', .14), d: mix(col, '#000000', .4) };
+  let inner = fill(pd(on(PZ(.6), rectUV(x0 + .6, y0 + .6, x1 - .6, y1 - .6))), IRON.d);
+  if ((st.output || 0) > 0){ const h = mcPile(st), a = on(PZ(.6), ellUV(85, 40, 8, 11, 20)), b = on(PZ(.6 + h), ellUV(85, 40, 2.5, 4, 20));
+    inner += loft(a, b, n => toneI(n, om)) + fill(pd(b), om.l) + hullInk([...a, ...b], .9); }
+  inner += bits.filter(b => b[0] > SPOUT[0]).map(b => mcBit(b, col)).join('');
+  return openShell(A, B, n => toneI(n, IRON), inner) + ink(pd(B), 1.4) + hullInk([...A, ...B], 1.8);
+}
+function mcRiser(st){
+  const x = INL.x, y = RISER_Y, wa = (st.valve || 0)*Math.PI*1.5, yw = y + 17, P2 = BRZD;
+  const wheelFace = facing([0,1,0]) ? yw + 1.4 : yw;
+  let wheel = rod([x, y + 3.6, 30], [x, yw, 30], .8, IRON, toneI, .7) + rod([x, yw, 30], [x, yw + 1.4, 30], 6, REDW, toneI, 1.1, 6, 24);
+  let spk = ''; for (let i = 0; i < 4; i++){ const a = wa + i*Math.PI/2; spk += pd([[x + 1.4*Math.cos(a), wheelFace + .05, 30 + 1.4*Math.sin(a)], [x + 4.6*Math.cos(a), wheelFace + .05, 30 + 4.6*Math.sin(a)]], false); }
+  wheel += fill(pd(on(PY(wheelFace + .04), ellUV(x, 30, 4.8, 4.8, 20))), REDW.d) + `<path d="${spk}" fill="none" stroke="${REDW.m}" stroke-width="2" stroke-linecap="round"/>`
+    + shape(on(PY(wheelFace + .06), ellUV(x, 30, 1.5, 1.5, 12)), IRON.l, .6);
+  return byDepth([
+    { box:[[x - 4.5, y - 4.5, 0], [x + 4.5, y + 4.5, 1.5]], svg: cyl(x, y, 0, 1.5, 4.5, P2, toneI, 1) },
+    { box:[[x - 2.4, y - 2.4, 1.5], [x + 2.4, y + 2.4, 26]], svg: cyl(x, y, 1.5, 26, 2.4, P2, toneI, 1) },
+    { box:[[x - 3.6, y - 3.6, 26], [x + 3.6, y + 3.6, 34]], svg: cyl(x, y, 26, 34, 3.6, P2, toneI, 1.1) },
+    { box:[[x - 2.4, y - 2.4, 34], [x + 2.4, y + 2.4, INL.z + 2.4]], svg: cyl(x, y, 34, INL.z + 2.4, 2.4, P2, toneI, 1) },
+    { box:[[x - 4, D, INL.z - 4], [x + 4, y - 2.4, INL.z + 4]], svg: rod([x, D, INL.z], [x, D + 1.4, INL.z], 4, P2, toneI, .9) + rod([x, D + 1.4, INL.z], [x, y - 2.4, INL.z], 2.4, P2, toneI, 1) },
+    { box:[[x - 6, y + 3.6, 24], [x + 6, yw + 1.4, 36]], svg: act('valve', wheel) } ]);
+}
+function mcFeet(){
+  return [[4, 4], [58, 4], [4, 72], [58, 72]].map(([x, y]) => ({ box:[[x, y, 0], [x + 8, y + 8, Z0]], svg: box(x, y, 0, x + 8, y + 8, Z0, DARK, toneI, 1) }));
+}
+
+/* ---------- see-through: the engine and the crusher ---------- */
+let MC_LABELS = '';
+function mcMech(st, k){
+  const parts = [], put = (b, svg) => parts.push({ box: b, svg });
+  const bx = (x0, y0, z0, x1, y1, z1, m, w = .8) => put([[x0, y0, z0], [x1, y1, z1]], box(x0, y0, z0, x1, y1, z1, m, toneI, w));
+  const shaft = (x, z, y0, y1, r = 1.2) => put([[x - r, y0, z - r], [x + r, y1, z + r]], rod([x, y0, z], [x, y1, z], r, IRON, toneI, .6));
+  const ang = st.ang || 0, ra = ang*4/11, col = ORE_COL[mcMetal(st)], ore = mcOre(st);
+  // crusher: bearing posts and blocks, shafts in pieces, rolls, gears
+  for (const [x, z] of [RA, RB]) for (const y0 of [23, 53]){ bx(x - 2, y0, Z0, x + 2, y0 + 2, z - 3, IRON, .7); bx(x - 3, y0, z - 3, x + 3, y0 + 2, z + 3, IRON); }
+  for (const [y0, y1] of [[21, 23], [25, RY0], [RY1, 53], [55, 57], [59, 61], [63, 64.5]]) shaft(RA[0], RA[1], y0, y1);
+  for (const [y0, y1] of [[21, 23], [25, RY0], [RY1, 53], [55, 57], [59, 60]]) shaft(RB[0], RB[1], y0, y1);
+  put([[RA[0] - RR, RY0, RA[1] - RR], [RA[0] + RR, RY1, RA[1] + RR]], mcRoll(RA[0], RA[1], -ra));
+  put([[RB[0] - RR, RY0, RB[1] - RR], [RB[0] + RR, RY1, RB[1] + RR]], mcRoll(RB[0], RB[1], ra));
+  put([[RA[0] - 6, 57, RA[1] - 6], [RA[0] + 6, 59, RA[1] + 6]], mcGear(RA[0], RA[1], 57, 59, 6, 12, -ra, IRON));
+  put([[RB[0] - 6, 57, RB[1] - 6], [RB[0] + 6, 59, RB[1] + 6]], mcGear(RB[0], RB[1], 57, 59, 6, 12, ra + Math.PI/12, IRON));
+  put([[RA[0] - 11, 61, RA[1] - 11], [RA[0] + 11, 63, RA[1] + 11]], mcGear(RA[0], RA[1], 61, 63, 11, 26, -ra, BRZD));
+  // engine: crankshaft on two pedestals, pinion, flywheel, crank, connecting rod, crosshead, piston rod, cylinder
+  for (const y0 of [57, 67]){ bx(CK[0] - 2, y0, Z0, CK[0] + 2, y0 + 2, CK[1] - 3, IRON, .7); bx(CK[0] - 3, y0, CK[1] - 3, CK[0] + 3, y0 + 2, CK[1] + 3, IRON); }
+  for (const [y0, y1] of [[59, 61], [63, 64], [66, 67], [69, 70]]) shaft(CK[0], CK[1], y0, y1, 1.3);
+  put([[CK[0] - 4, 61, CK[1] - 4], [CK[0] + 4, 63, CK[1] + 4]], mcGear(CK[0], CK[1], 61, 63, 4, 9, ang, IRON));
+  put([[CK[0] - 12, 64, CK[1] - 12], [CK[0] + 12, 66, CK[1] + 12]], mcFlywheel(ang));
+  const pin = [CK[0] + CRANK*Math.cos(ang), CK[1] + CRANK*Math.sin(ang)];
+  const xh = pin[0] + Math.sqrt(CONROD**2 - (pin[1] - CK[1])**2);
+  put([[Math.min(CK[0], pin[0]) - 1.8, 70, Math.min(CK[1], pin[1]) - 1.8], [Math.max(CK[0], pin[0]) + 1.8, 71, Math.max(CK[1], pin[1]) + 1.8]],
+    rod([CK[0], 70.5, CK[1]], [pin[0], 70.5, pin[1]], 1.8, IRON, toneI, .7));
+  put([[pin[0] - 1, 71, Math.min(pin[1], CK[1]) - 1], [xh, 73, Math.max(pin[1], CK[1]) + 1]],
+    rod([pin[0], 71, pin[1]], [pin[0], 72.6, pin[1]], .9, IRON, toneI, .5) + rod([pin[0], 72, pin[1]], [xh - 2, 72, CYL.z], 1, BRZD, toneI, .7));
+  bx(xh - 2, 70.6, CYL.z - 2, xh + 2, 73.4, CYL.z + 2, BRZD);
+  for (const z of [CYL.z - 3.6, CYL.z + 2.6]) bx(38, 70.2, z, CYL.x0, 73.8, z + 1, IRON, .6);
+  bx(37, 71, Z0, 39, 73, CYL.z - 3.6, IRON, .6);
+  put([[xh + 2, 71, CYL.z - 1], [CYL.x0, 73, CYL.z + 1]], rod([xh + 2, 72, CYL.z], [CYL.x0, 72, CYL.z], .8, METAL, toneI, .5));
+  { const cyl3 = [rod([CYL.x0 - .6, CYL.y, CYL.z], [CYL.x0 + .6, CYL.y, CYL.z], 6.3, BRZD, toneI, .8),
+      rod([CYL.x0 + .6, CYL.y, CYL.z], [CYL.x1 - .6, CYL.y, CYL.z], CYL.r, IRON, toneI, 1),
+      rod([CYL.x1 - .6, CYL.y, CYL.z], [CYL.x1 + .6, CYL.y, CYL.z], 6.3, BRZD, toneI, .8)];   // end cover, barrel, end cover: far end first
+    put([[CYL.x0 - .6, CYL.y - 6.3, CYL.z - 6.3], [CYL.x1 + .6, CYL.y + 6.3, CYL.z + 6.3]], (facing([1,0,0]) ? cyl3 : cyl3.reverse()).join('')); }
+  bx(58, 69, Z0, 66, 75, CYL.z - CYL.r, DARK, .8);
+  bx(58, 69, CYL.z + CYL.r, 66, 75, 58, BRZD, .9);
+  // steam pipes: inlet through the wall into the chest, exhaust from the chest up into the vent stack
+  const live = st.valve > .5, steamCol = live ? '#f3efe4' : BRZD.l;
+  put([[INL.x - 1.8, 75, INL.z - 1.8], [INL.x + 1.8, D, INL.z + 1.8]], rod([INL.x, D, INL.z], [INL.x, 75, INL.z], 1.8, matOf(steamCol === BRZD.l ? BRZD.m : '#d9d2c2'), toneI, .7));
+  put([[STK[0] - 1.6, STK[1] - 1.6, 58], [STK[0] + 1.6, STK[1] + 1.6, ZT]], rod([STK[0], STK[1], 58], [STK[0], STK[1], ZT], 1.6, BRZD, toneI, .7));
+  // throat liner under the hopper, the chute on its legs
+  { const A = on(PZ(70), rectUV(32, 28.5, 44, 51.5)), B = on(PZ(ZT), rectUV(26, 28, 50, 52));
+    const lump = ore.lump && ore.lump.at[2] <= ZT && ore.lump.at[2] > 66 ? mcLump(ore.lump.at, ore.lump.s, col) : '';
+    put([[26, 28, 70], [50, 52, ZT]], openShell(A, B, n => toneI(n, BRZD), lump) + hullInk([...A, ...B], .9)); }
+  if (ore.lump && ore.lump.at[2] <= 66){ const [x, y, z] = ore.lump.at, s = ore.lump.s; put([[x - 2.4*s, y - 2.2*s, z - 2*s], [x + 2.4*s, y + 2.2*s, z + 2*s]], mcLump(ore.lump.at, s, col)); }
+  for (const y of [30, 50]) put([[49.4, y - .6, Z0], [50.6, y + .6, chuteZ(50) - .5]], rod([50, y, Z0], [50, y, chuteZ(50) - .5], .6, IRON, toneI, .5));
+  { const y0 = 28, y1 = 52, top = chuteZ(28), sm = IRON;
+    const lip = y => shape([[28, y, top], [W, y, 14], [W, y, 17], [28, y, top + 3]], toneI([0, y > 40 ? 1 : -1, 0], sm), .7);
+    const plate = shape([[28, y0, top], [W, y0, 14], [W, y1, 14], [28, y1, top]], toneI(norm([36, 0, 42]), sm), .9);
+    put([[28, y0 - .5, 14], [W, y0 + .5, top + 3]], lip(y0));
+    put([[28, y0 + .5, 13], [W, y1 - .5, top]], plate);
+    put([[28, y1 - .5, 14], [W, y1 + .5, top + 3]], lip(y1)); }
+  for (const b of ore.bits) if (b[0] < W) put([[b[0] - .9, b[1] - .9, b[2] - .8], [b[0] + .9, b[1] + .9, b[2] + .8]], mcBit(b, col));
+  const sb = byDepth(parts);
+  const on1 = !!st.running, crushing = !!(ore.lump && ore.lump.at[2] < 71), sliding = ore.bits.some(b => b[0] < SPOUT[0]);
+  MC_LABELS = k <= .6 ? '' : xrCallouts([
+    { at: [INL.x, D - 3, INL.z], text: 'STEAM INLET', on: live },
+    { at: [62, 75, 56], text: 'STEAM CHEST', on: on1 },
+    { at: [64, CYL.y + CYL.r, CYL.z], text: 'CYLINDER', on: on1 },
+    { at: [xh, 73.4, CYL.z + 2], text: 'CROSSHEAD', on: on1 },
+    { at: [CK[0], 66, CK[1] + 12], text: 'FLYWHEEL', on: on1 },
+    { at: [CK[0], 63, CK[1] - 4], text: 'PINION', on: on1 },
+    { at: [RA[0] - 8, 63, RA[1] + 8], text: 'DRIVE GEAR', on: on1 },
+    { at: [RB[0] + 4, 59, RB[1] + 4], text: 'ROLL GEARS', on: on1 },
+    { at: [RA[0], RY0, RA[1] + RR], text: 'CRUSHING ROLLS', on: crushing },
+    { at: [56, 28, chuteZ(56) + 3], text: 'CHUTE', on: sliding },
+    { at: [STK[0], STK[1], 68], text: 'EXHAUST', on: on1 } ], [0, 96, 0, 100, 0, 104]);
+  return sb;
+}
+
+/* ---------- scene ---------- */
+function scene(st, m){
+  const ore = mcOre(st), k = ease(st.xr || 0);
+  let s = castShadow([...on(PX(0), OUT), ...on(PX(W), OUT), ...on(PZ(ZT + 18), rectUV(16, 18, 60, 62)), [STK[0], STK[1], ZT + 26.5], [INL.x, RISER_Y, INL.z]]);
+  let body = mcCase(st, m);
+  if (k > 0) body = xrGhost(body, '', k, OUT, 0, W, m) + `<g opacity="${f(k)}">${mcMech(st, k)}</g>`;
+  // in see-through the outside parts that stand in front of the mechanism fade back as well
+  const fade = svg => k > 0 ? `<g opacity="${f(1 - .7*k)}">${svg}</g>` : svg;
+  // the feet stand on the floor under everything: drawn first, never sorted with the rest (a foot is beside the stack
+  // on one axis and under the body on another, which makes the sort go round in a circle)
+  s += byDepth(mcFeet());
+  s += byDepth([
+    { box:[[0, 0, Z0], [W, D, ZT]], svg: body },
+    { box:[[16, 18, ZT], [60, 62, ZT + 18]], svg: act('hopper', fade(mcHopper(st, m))) },
+    { box:[[STK[0] - 6.5, STK[1] - 6.5, ZT], [STK[0] + 6.5, STK[1] + 6.5, ZT + 26.5]], svg: fade(mcStack(st)) },
+    { box:[[W, 9.5, 55.5], [W + 3, 22.5, 68.5]], svg: mcGauge(st) },
+    { box:[[W, 13.6, 44.6], [W + 2, 18.4, 49.4]], svg: mcLamp(st) },
+    { box:[[W, 27.5, 10], [SPOUT[0], 52.5, 21]], svg: mcSpout(st, ore.bits) },
+    { box:[[TRAY[0], TRAY[1], 0], [TRAY[2], TRAY[3], TRAY_H]], svg: mcTray(st, ore.bits) },
+    { box:[[INL.x - 6, D, 0], [INL.x + 6, RISER_Y + 18.4, INL.z + 4]], svg: fade(mcRiser(st)) } ]);
+  // spent steam puffing out from under the rain cap
+  for (const p of st.puffs || []){ const t = p.t / 1.6, [X, Y] = P(STK[0] + p.dx*t*10, STK[1] + p.dy*t*10, ZT + 27 + t*20);
+    s += `<circle cx="${f(X)}" cy="${f(Y)}" r="${f(2.2 + 5*t)}" fill="#fbfaf3" stroke="${INK}" stroke-width=".8" opacity="${(.9*(1 - t)**1.5).toFixed(3)}"/>`; }
+  if (k > .6) s += MC_LABELS;
+  else s += xrCallouts([
+    { at: [38, 40, ZT + 18], text: 'HOPPER', on: !!st.active && (st.progress || 0) < .3 },
+    { at: [STK[0], STK[1], ZT + 26.5], text: 'VENT STACK', on: !!st.running },
+    ...(facing([0,1,0]) ? [{ at: [INL.x, RISER_Y + 18.4, 36], text: 'STEAM VALVE', on: st.valve > .5 }] : []),
+    ...(facing([1,0,0]) ? [{ at: [W + 3, 16, 68.5], text: 'PRESSURE GAUGE', on: (st.steam || 0) > .05 },
+                           { at: [W + 2, 16, 45], text: 'RUNNING LAMP', on: !!st.running }] : []),
+    { at: [TRAY[2], 40, TRAY_H], text: 'OUTPUT TRAY', on: (st.output || 0) > 0 } ], [0, 96, 0, 100, 0, 104]);
+  return s;
+}
+
+/* ---------- behaviour: one state object. In the game the sim owns the machine; on its own the figure runs a demo ---------- */
+const DEMO_RECIPES = [{ id:'macerate_iron_ore', name:'Iron Ore' }, { id:'macerate_copper_ore', name:'Copper Ore' }, { id:'macerate_tin_ore', name:'Tin Ore' }];
+const DEMO_SECONDS = 4;   // seconds per ore in the demo (the game uses the real recipe time)
+let ui, mcLoop = false;
+function mcStep(st, dt){
+  st.valve = mcClamp((st.valve || 0) + (st.on ? 1 : -1)*dt/.6);
+  if (!gtBridge.embedded){
+    st.steam = mcClamp(st.steam + ((st.on ? .82 : 0) - st.steam)*dt*1.5);
+    if (!st.active && st.on && st.recipe && st.input > 0){ st.input--; st.active = true; st.progress = 0; }
+    st.stalled = st.on && (!st.active || st.steam < .3);
+    st.running = st.on && st.active && !st.stalled;
+    if (st.running){ st.progress += dt / DEMO_SECONDS; if (st.progress >= 1){ st.progress = 0; st.active = false; st.output++; } }
+  }
+  if (st.running) st.ang = ((st.ang || 0) + dt*6.5) % (Math.PI*2*11);
+  st.puffT = (st.puffT || 0) + dt;
+  if (st.running && st.puffT > .32){ st.puffT = 0; st.puffs.push({ t:0, dx:-.5 + Math.random()*.4, dy:.1 + Math.random()*.3 }); }
+  for (const p of st.puffs) p.t += dt;
+  st.puffs = st.puffs.filter(p => p.t < 1.6);
+  const busy = st.running || st.puffs.length > 0 || Math.abs(st.valve - (st.on ? 1 : 0)) > 1e-3 || (!gtBridge.embedded && st.on);
+  if (!busy) mcLoop = false;
+  return busy;
+}
+function mcRun(){ if (mcLoop) return; mcLoop = true; ui.animate(dt => mcStep(ui.st, dt)); }
+function mcValve(st){
+  if (gtBridge.embedded) gtBridge.send({ type:'gt:toggle' });
+  st.on = !st.on;
+  if (st.on && !st.recipe) ui.flash('Choose a recipe first');
+  else if (st.on && !st.active && !(st.input > 0)) ui.flash('No ore to crush');
+  mcRun();
+}
+function mcRecipe(st, r){
+  if (gtBridge.embedded) gtBridge.send({ type:'gt:setRecipe', id: r.id });
+  st.recipe = r;
+}
+function mcLoad(st){
+  if (gtBridge.embedded) return ui.flash('Ore comes from storage');
+  if (st.input >= 16) return ui.flash('The hopper is full');
+  st.input = Math.min(16, st.input + 4); mcRun();
+}
+
+ui = mountFigure({
+  fig:'S1', turn:'full', title:'Steam Macerator', credit: gtBridge.embedded ? false : undefined,
+  size:[96, 100, 104], center:[48, 50], palette:'bronze',
+  // on: valve open (the machine is switched on). active: an ore is in the crusher. progress 0..1 through it.
+  // steam 0..1 (gauge). input: ore waiting. output: crushed ore made. ang: crank angle. valve 0..1: handwheel turned.
+  state:{ on:false, active:false, running:false, stalled:false, progress:0, steam:0, recipe:DEMO_RECIPES[0],
+          recipes:DEMO_RECIPES, input:6, output:0, ang:0, valve:0, puffs:[], puffT:0 },
+  scene,
+  stats: st => [{ label:'Progress', value: st.active ? `${Math.round((st.progress || 0)*100)}%` : '-' },
+                { label:'Ore', value: st.input | 0, small:true }, { label:'Crushed', value: st.output | 0, small:true }],
+  buttons:[
+    { label:'Recipe', choices: st => (st.recipes || []).map(r => ({ label: r.name, current: !!st.recipe && st.recipe.id === r.id, onClick: st => mcRecipe(st, r) })) },
+    ...(gtBridge.embedded ? [] : [{ label:'Load ore', onClick: st => mcLoad(st) }]),
+    { label:'Steam valve', onClick: st => mcValve(st) },
+  ],
+  acts:{ valve: st => mcValve(st), hopper: st => mcLoad(st) },
+  params:(st, q) => {
+    for (const k of ['progress', 'steam', 'input', 'output', 'ang', 'valve']) if (q.has(k)) st[k] = +q.get(k);
+    if (q.get('run') === '1'){ st.on = st.active = st.running = true; st.valve = 1; if (!q.has('steam')) st.steam = .8; }
+    if (q.has('recipe')){ const r = DEMO_RECIPES.find(r => r.id.includes(q.get('recipe'))); if (r) st.recipe = r; }
+    if (q.has('puffs')) st.puffs = [0, .5, 1, 1.4].map((t, i) => ({ t, dx: -.4 + i*.1, dy: .2 }));
+  },
+});
+xrMount(() => ui, () => '');
+gtBridge.onState(mc => {
+  const st = ui.st;
+  Object.assign(st, { on: mc.enabled, active: mc.active, running: mc.running, stalled: mc.stalled, progress: mc.progress,
+    steam: mc.steam, recipe: mc.recipe, recipes: mc.recipes, input: mc.input, output: mc.output });
+  if (st.running || Math.abs(st.valve - (st.on ? 1 : 0)) > 1e-3) mcRun(); else ui.render();
+});
+gtBridge.ready();
+gtBridge.sprite([[-3, -1, 0], [99, -1, 0], [99, 101, 0], [-3, 101, 0]]);
+if (ui.st.on && !gtBridge.embedded) mcRun();
+</script>
+<script src="cf-tail.js"></script>
+</body></html>

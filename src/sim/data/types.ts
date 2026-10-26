@@ -1,0 +1,80 @@
+import type { Tier } from '../tiers';
+
+export interface ItemDef {
+  id: string;
+  name: string;
+  fluid?: boolean;
+}
+
+export interface Stack {
+  item: string;
+  count: number; // litres for fluids
+  chance?: number; // 0..1, outputs only
+}
+
+/** Steam machines use `steamPerTick`; electric machines use `euPerTick`. */
+export interface RecipeDef {
+  id: string;
+  machine: string; // MachineDef.kind, e.g. 'macerator'
+  inputs: Stack[];
+  outputs: Stack[];
+  ticks: number;
+  euPerTick?: number;
+  steamPerTick?: number;
+  heat?: number; // blast furnace recipes: the coil heat they need, in kelvin
+}
+
+export interface MachineDef {
+  id: string;
+  name: string;
+  short: string; // a few capital letters for the floor's plain boxes
+  kind: string; // which recipes it runs
+  power: 'steam' | 'eu' | 'none'; // what it runs on: 'steam' joins a steam net (boilers too), 'eu' an EU net
+  tier?: Tier; // EU machines: the highest voltage it takes; more and it explodes
+  footprint: [number, number];
+  steamCapacity?: number; // litres of steam it holds; its share of its net's tank
+  euCapacity?: number; // EU it holds; its share of its EU net's buffer
+  boiler?: { steamPerTick: number; fuels: Record<string, number> }; // fuel item -> ticks it burns
+  // makes EU at its tier's voltage: from steam (litres per EU, it also joins a steam net) or from fuel (EU per litre)
+  generator?: { steam?: number; fuels?: Record<string, number>; maxEuPerTick: number };
+  battery?: boolean; // a buffer that feeds its net at its tier's voltage
+  heat?: number; // blast furnaces: the hottest its coils get, in kelvin
+  // moves EU between the net on its front (+x) tile, the high side, and the nets on its other sides, the low side
+  transformer?: { low: Tier; high: Tier; amps: number };
+  figure?: string; // public/figures/<figure>.html
+}
+
+/** One-tile pieces that join machines into nets: pipes (steam) and cables (EU). */
+export interface ConduitDef {
+  id: 'pipe' | 'cable' | 'cable_copper';
+  name: string;
+  carries: 'steam' | 'eu';
+  item: string; // the item a tile of it uses up
+  maxVoltage?: number; // cables: more than this and it burns out
+}
+
+/** A workbench recipe: instant, by hand. */
+export interface CraftDef {
+  id: string;
+  group: 'parts' | 'conduits' | 'machines';
+  inputs: Stack[];
+  output: Stack;
+  note?: string; // the hand tool it implies
+}
+
+export type Goal =
+  | { kind: 'made'; item: string; count: number } // made in total, by machines or by hand
+  | { kind: 'have'; item: string; count: number } // in storage at once
+  | { kind: 'built'; machine: string; count: number } // on the floor at once
+  | { kind: 'burned'; count: number } // fuel burned in boilers, in total
+  | { kind: 'eu'; count: number }; // EU generated, in total
+
+export interface QuestDef {
+  id: string;
+  chapter: string;
+  title: string;
+  text: string;
+  after: string[]; // quests that must be done first
+  goals: Goal[];
+  rewards: Stack[];
+}

@@ -1,0 +1,3 @@
+# keep the line endings the files were written with (LF), whatever core.autocrlf says
+* text=auto eol=lf
+*.png binary

@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Steam Furnace</title>
+<script src="cf-head.js"></script></head><body>
+<script src="core.js"></script>
+<script src="gt-bridge.js"></script>
+<script src="gt-parts.js"></script>
+<script>
+/* Steam Furnace (gtjs, steam age). Steam can't melt metal by itself, so this one makes electricity first.
+
+   How it works (truth first)
+   1. Steam comes up the riser beside the left wall, through the steam valve, and drives a small turbine at the back.
+      Spent steam leaves the turbine up the exhaust pipe and out of the vent stack.
+   2. The turbine turns a dynamo on the same shaft. Its current runs up two leads to a copper induction coil wound round
+      a graphite crucible.
+   3. A charge of ore (crushed ore or dust) drops from the hopper on the roof, down the charge tube, into the crucible.
+      The coil's field heats the graphite and the charge melts.
+   4. The crucible tilts forward on two trunnions and pours into an ingot mold. The ingot cools, slides off the slab,
+      down the chute and out of the front into the output tray.
+   Where the ore is: hopper -> charge tube -> crucible -> mold -> chute -> spout -> tray.
+   Where the steam is: riser -> valve -> inlet pipe -> turbine -> exhaust -> stack -> air.
+
+   x = depth (front at x = W), y = width (+y = viewer-left: the steam side), z = up. 1 unit = 1 cm.
+
+   Parts
+   CASE     bronze case on four feet . riveted front . furnace door on two hinges with peephole and handle . name plate .
+            pressure gauge . running lamp . output slot . service hatch (back) . louvres (right side) . hopper with feed
+            flap . vent stack . spout . output tray
+   STEAM    riser with floor flange, valve and handwheel . wall flange . inlet pipe . turbine . exhaust pipe
+   POWER    dynamo on the turbine shaft . shaft . base under both . two leads to the coil
+   MELT     brick slab . graphite crucible . induction coil . two trunnion posts . charge tube . ingot mold . chute
+
+   Contact checks (numbers)
+   - crucible r 8 at (36, 40), z 28..46, pivoting on its front lip (44, 46): the lip stays put while it pours.
+   - coil r 10.2 spans y 29.8..50.2, between the trunnion posts at y 27..29 and 51..53.
+   - tilted 65 deg the crucible's back rim rises to z 60.5, under the charge tube's end (z 64).
+   - pour: lip (44, 46) -> mold cavity (53, 27). Mold x 48..58 sits on the slab (x 26..62, top z 24).
+   - chute: slab edge (62, 24) -> output slot (70, 11), the slot is z 9..15.
+   - turbine r 8 at x 16 (x 8..24) stops short of the slab (x 26). Inlet down at y 66, exhaust up at y 60.
+*/
+const W = 70, D = 80, Z0 = 6, ZT = 78;
+Z_FLOOR = Z0;
+const OUT = rrUV(0, Z0, D, ZT, 5);
+const SF = {
+  door: [22, 20, 58, 56],          // y0, z0, y1, z1 on the front
+  slot: [32, 9, 48, 15],
+  hopBot: [26, 32, 42, 48], hopTop: [20, 26, 48, 54], hopH: 14,
+  stk: [16, 60],
+  cru: { x:36, y:40, z0:28, z1:46, r:8, px:44, pz:46 },
+  mold: [48, 34, 24, 58, 46, 28],
+  tray: [74, 26, 96, 54], trayH: 7, spout: [W + 8, 8],
+  turb: { x:16, z:20 },
+};
+
+/* ---------- the charge and the ingot, from progress ---------- */
+function sfFlow(st){
+  const p = st.progress || 0, o = { lump:null, melt:0, tilt:0, ingot:null, hot:0 };
+  if (!st.active) return o;
+  if (p < .15) o.lump = { at:[34 + 2*ease(p/.15), 40, ZT + 3 - (ZT + 3 - 32)*ease(p/.15)], s:1 };
+  else if (p < .3){ o.lump = { at:[36, 40, 32], s:1 - (p - .15)/.15 }; o.melt = .3*(p - .15)/.15; }
+  else if (p < .7) o.melt = .3 + .5*(p - .3)/.4;
+  else o.melt = .8;
+  if (p >= .7 && p < .88){
+    o.tilt = p < .76 ? ease((p - .7)/.06)*65 : p < .82 ? 65 : 65*(1 - ease((p - .82)/.06));
+    if (p >= .76) o.melt = .8*(1 - (p - .76)/.06);
+    if (p >= .82) o.melt = 0;
+  }
+  if (p >= .74){ o.hot = gtClamp(1 - (p - .8)/.15); const t = gtClamp((p - .9)/.1);
+    let at;
+    if (t <= 0) at = [53, 40, 28];
+    else if (t < .3) at = [53 + 9*t/.3, 40, 28 - 3.8*t/.3];
+    else if (t < .7){ const u = (t - .3)/.4; at = [62 + (W - 62)*u, 40, 24.2 - 13*u]; }
+    else if (t < .85){ const u = (t - .7)/.15; at = [W + (SF.spout[0] - W)*u, 40, 11.2 - 3*u]; }
+    else { const u = (t - .85)/.15; at = [SF.spout[0] + 4*u, 40, 8.2 - 7*u*u]; }
+    o.ingot = at; }
+  return o;
+}
+
+/* ---------- the case ---------- */
+function sfCase(st, m){
+  const FRONT = facing([1,0,0]), BACK = facing([-1,0,0]), LEFT = facing([0,1,0]), RIGHT = facing([0,-1,0]);
+  let s = '';
+  if (FRONT) s += fill(pd(on(PX(W), OUT)), tone([1,0,0], m));
+  if (BACK) s += fill(pd(on(PX(0), OUT)), tone([-1,0,0], m));
+  s += extrude(OUT, 0, W, m);
+  if (FRONT){ const dk = mix(m.d, m.m, .35), rv = [];
+    s += ink(pd(on(PX(W + .25), rrUV(3.5, Z0 + 3.5, D - 3.5, ZT - 3.5, 3))), 1);
+    for (let y = 7; y <= D - 7; y += 7) rv.push([y, Z0 + 1.8], [y, ZT - 1.8]);
+    s += gtRivets(PX(W + .3), rv, dk);
+    s += gtNamePlate(W, 24, 60, 56, 72, 'FURNACE', 'STEAM AGE');
+    s += shape(on(PX(W + .25), rrUV(...SF.slot, 1.5)), GT.RECESS, 1.7);
+  }
+  if (BACK) s += shape(on(PX(-.25), rrUV(18, 18, 62, 58, 3)), mix(m.m, m.d, .25), 1.4) + gtRivets(PX(-.3), [[21, 21], [59, 21], [21, 55], [59, 55]], m.d);
+  if (LEFT){ const rv = []; for (let x = 7; x <= W - 7; x += 7) rv.push([x, Z0 + 1.8], [x, ZT - 1.8]);
+    s += gtRivets(PY(D + .3), rv, mix(m.d, m.m, .35)) + shape(on(PY(D + .25), ellUV(SF.turb.x, 34, 5.2, 5.2, 18)), mix(m.d, m.m, .2), .9); }
+  if (RIGHT){ let v = ''; for (let z = 30; z <= 60; z += 5) v += pd([[14, -.25, z], [56, -.25, z]], false);
+    s += `<path d="${v}" fill="none" stroke="${INK}" stroke-width="1.5" opacity=".75"/>`; }
+  if (FRONT) s += ink(pd(on(PX(W), OUT)), 2.2);
+  if (BACK) s += ink(pd(on(PX(0), OUT)), 2.2);
+  return s + hullInk([...on(PX(0), OUT), ...on(PX(W), OUT)], 2.8);
+}
+// the furnace door: a thick plate on two hinges (low y), a glowing peephole, a handle
+function sfDoor(st){
+  const [y0, z0, y1, z1] = SF.door, x1 = W + 2, glow = st.heat || 0;
+  let s = box(W, y0, z0, x1, y1, z1, GT.BRZD, toneI, 1.4);
+  for (const z of [z0 + 5, z1 - 5]) s += cyl(W + 1, y0 - 1, z - 3, z + 3, 1.6, GT.IRON, toneI, .8);
+  if (!facing([1,0,0])) return s;
+  s += gtRivets(PX(x1 + .05), [[y0 + 3, z0 + 3], [y1 - 3, z0 + 3], [y0 + 3, z1 - 3], [y1 - 3, z1 - 3]], GT.BRZD.d);
+  s += shape(on(PX(x1 + .05), ellUV(40, 44, 4.2, 4.2, 18)), GT.IRON.m, .9)
+    + fill(pd(on(PX(x1 + .1), ellUV(40, 44, 3, 3, 18))), mix('#3a2a22', GT.GLOW, glow))
+    + (glow > .2 ? fill(pd(on(PX(x1 + .15), ellUV(40, 44, 1.6, 1.6, 12))), GT.HOT, `opacity="${f(glow*.8)}"`) : '');
+  s += rod([x1, 51, 36], [x1 + 2.5, 51, 36], .7, GT.IRON, toneI, .6) + rod([x1, 51, 30], [x1 + 2.5, 51, 30], .7, GT.IRON, toneI, .6)
+    + rod([x1 + 2.5, 51, 29], [x1 + 2.5, 51, 37], 1, GT.IRON, toneI, .8);
+  return s;
+}
+function sfSpout(st, ingot){
+  const [x1, z1] = SF.spout, z0 = 11, y0 = 32, y1 = 48, sm = GT.BRZD;
+  const lip = y => shape([[W, y, z0], [x1, y, z1], [x1, y, z1 + 3], [W, y, z0 + 5]], tone([0, y > 40 ? 1 : -1, 0], sm), 1);
+  let plate = shape([[W, y0, z0], [x1, y0, z1], [x1, y1, z1], [W, y1, z0]], tone(norm([3, 0, 8]), sm), 1);
+  if (facing([1,0,0])) plate += shape([[x1, y0, z1], [x1, y1, z1], [x1, y1, z1 - 1], [x1, y0, z1 - 1]], sm.d, .9);
+  if (ingot && ingot[0] >= W && ingot[0] <= x1) plate += gtIngot(ingot, GT.ORE[gtMetal(st.recipe && st.recipe.id)], 0, true);
+  return byDepth([
+    { box:[[W, y0 - .5, z1], [x1, y0 + .5, z0 + 5]], svg: lip(y0) },
+    { box:[[W, y0 + .5, z1 - 1], [x1, y1 - .5, z0 + 1]], svg: plate },
+    { box:[[W, y1 - .5, z1], [x1, y1 + .5, z0 + 5]], svg: lip(y1) } ]);
+}
+function sfTray(st, ingot){
+  const [x0, y0, x1, y1] = SF.tray, A = on(PZ(0), rectUV(x0, y0, x1, y1)), B = on(PZ(SF.trayH), rectUV(x0, y0, x1, y1));
+  const col = GT.ORE[gtMetal(st.recipe && st.recipe.id)];
+  let inner = fill(pd(on(PZ(.6), rectUV(x0 + .6, y0 + .6, x1 - .6, y1 - .6))), GT.IRON.d);
+  const bars = [];
+  for (let i = 0; i < Math.min(12, st.output | 0); i++){ const at = [78 + (i % 4)*5, 31 + Math.floor(i / 4)*9, .7]; bars.push({ box:[[at[0] - 2, at[1] - 4, .7], [at[0] + 2, at[1] + 4, 2.9]], svg: gtIngot(at, col, 0, true) }); }
+  if (ingot && ingot[0] > SF.spout[0]) bars.push({ at: ingot, svg: gtIngot(ingot, col, 0, true) });
+  inner += byDepth(bars);
+  return openShell(A, B, n => toneI(n, GT.IRON), inner) + ink(pd(B), 1.4) + hullInk([...A, ...B], 1.8);
+}
+function sfFeet(){
+  return [[4, 4], [58, 4], [4, 68], [58, 68]].map(([x, y]) => ({ box:[[x, y, 0], [x + 8, y + 8, Z0]], svg: box(x, y, 0, x + 8, y + 8, Z0, DARK, toneI, 1) }));
+}
+
+/* ---------- see-through: turbine, dynamo, coil, crucible, mold ---------- */
+let SF_LABELS = '';
+const sfWire = (pts, col, w = .6) => { const d = pd(pts, false);
+  return { box: [[0,1,2].map(i => Math.min(...pts.map(p => p[i])) - 1), [0,1,2].map(i => Math.max(...pts.map(p => p[i])) + 1)],
+    svg: `<path d="${d}" fill="none" stroke="${INK}" stroke-width="${f(2*w + 1)}" stroke-linejoin="round" stroke-linecap="round"/><path d="${d}" fill="none" stroke="${col}" stroke-width="${f(2*w)}" stroke-linejoin="round" stroke-linecap="round"/>` }; };
+function sfMech(st, k, flow){
+  const parts = [], put = (b, svg) => parts.push({ box: b, svg }), bx = (x0, y0, z0, x1, y1, z1, m, w = .8) => put([[x0, y0, z0], [x1, y1, z1]], box(x0, y0, z0, x1, y1, z1, m, toneI, w));
+  const run = !!st.running, heat = st.heat || 0, col = GT.ORE[gtMetal(st.recipe && st.recipe.id)], c = SF.cru, a = flow.tilt*Math.PI/180;
+  // the brick slab, the trunnion posts, the crucible with its coil
+  bx(26, 26, Z0, 62, 54, 24, GT.BRICK, 1);
+  for (const y of [27, 51]) bx(42, y, 24, 46, y + 2, c.pz + 2, GT.IRON, .8);
+  for (const y of [29, 50]) put([[43, y, c.pz - 1], [45, y + 1, c.pz + 1]], rod([44, y, c.pz], [44, y + 1, c.pz], 1.1, GT.IRON, toneI, .5));
+  parts.push(...gtCrucible(c, heat, flow.melt, col, a));
+  if (flow.lump && flow.lump.at[2] < ZT) { const [x, y, z] = flow.lump.at, s = flow.lump.s;
+    if (z > c.z1 + 2) put([[x - 2.4*s, y - 2.2*s, z - 2*s], [x + 2.4*s, y + 2.2*s, z + 2*s]], gtLump(flow.lump.at, s, col)); }
+  // the pour: a stream from the lip into the mold
+  if (flow.tilt > 50 && flow.melt > 0){ const pts = [[44.6, 40, 46.5], [47.5, 40, 44], [50.5, 40, 38], [52.5, 40, 31], [53, 40, 28.5]];
+    put([[44, 39, 28], [54, 41, 47]], `<path d="${pd(pts, false)}" fill="none" stroke="${INK}" stroke-width="3.2" stroke-linecap="round"/><path d="${pd(pts, false)}" fill="none" stroke="${mix(col, GT.HOT, .8)}" stroke-width="2.2" stroke-linecap="round"/>`); }
+  // the ingot mold and the chute down to the front slot
+  { const [x0, y0, z0, x1, y1, z1] = SF.mold;
+    let mold = box(x0, y0, z0, x1, y1, z1, GT.IRON, toneI, .9) + fill(pd(on(PZ(z1 + .05), rectUV(x0 + 1, y0 + 2, x1 - 1, y1 - 2))), GT.RECESS);
+    if (flow.ingot && flow.ingot[0] <= x1 && flow.ingot[2] >= z1 - .5) mold += gtIngot([flow.ingot[0], 40, z1 - 1.8], col, flow.hot, false);
+    put([[x0, y0, z0], [x1, y1, z1 + 2]], mold); }
+  { const y0 = 33, y1 = 47, top = 24, sm = GT.IRON;
+    const lip = y => shape([[62, y, top], [W, y, 11], [W, y, 14], [62, y, top + 3]], toneI([0, y > 40 ? 1 : -1, 0], sm), .7);
+    put([[62, y0 - .5, 11], [W, y0 + .5, top + 3]], lip(y0));
+    put([[62, y0 + .5, 10], [W, y1 - .5, top]], shape([[62, y0, top], [W, y0, 11], [W, y1, 11], [62, y1, top]], toneI(norm([13, 0, 8]), sm), .9));
+    put([[62, y1 - .5, 11], [W, y1 + .5, top + 3]], lip(y1)); }
+  if (flow.ingot && (flow.ingot[0] > SF.mold[3] || flow.ingot[2] < SF.mold[5] - .5) && flow.ingot[0] < W)
+    put([[flow.ingot[0] - 2, 36, flow.ingot[2]], [flow.ingot[0] + 2, 44, flow.ingot[2] + 2.2]], gtIngot(flow.ingot, col, flow.hot, true));
+  // turbine and dynamo on one shaft, the leads up to the coil
+  const t = SF.turb;
+  parts.push(...gtTurbineDynamo(t.x, t.z, 58, 70, 38, 52, st.t || 0, run));
+  put([[t.x - 1.2, 52, t.z - 1.2], [t.x + 1.2, 58, t.z + 1.2]], rod([t.x, 52, t.z], [t.x, 58, t.z], 1.2, GT.IRON, toneI, .6));
+  const lead = run ? '#f0a070' : GT.COPPER.m;
+  // the leads are flexible: their ends ride on the coil's top turn as the crucible tilts
+  const term = y => gtTilt([c.x - c.r - 2.2, y, c.z1 - 2], c.px, c.pz, a);
+  parts.push(sfWire([[t.x, 43, t.z + 7], [t.x, 43, 52], [24, 43, 54], term(43)], lead), sfWire([[t.x, 47, t.z + 7], [t.x, 47, 55], [24, 47, 56], term(47)], lead));
+  // steam: inlet from the wall to the turbine, exhaust from the turbine up into the stack; the charge tube under the hopper
+  const pm = matOf(st.valve > .5 ? '#d9d2c2' : GT.BRZD.m);
+  put([[t.x - 1.8, 66, 34 - 1.8], [t.x + 1.8, D, 34 + 1.8]], rod([t.x, D, 34], [t.x, 66, 34], 1.8, pm, toneI, .7));
+  put([[t.x - 1.8, 64.2, t.z + 7], [t.x + 1.8, 67.8, 34]], rod([t.x, 66, 34], [t.x, 66, t.z + 7.5], 1.8, pm, toneI, .7));
+  put([[SF.stk[0] - 1.6, SF.stk[1] - 1.6, t.z + 7], [SF.stk[0] + 1.6, SF.stk[1] + 1.6, ZT]], rod([SF.stk[0], SF.stk[1], t.z + 7.5], [SF.stk[0], SF.stk[1], ZT], 1.6, GT.BRZD, toneI, .7));
+  put([[31, 37, 64], [37, 43, ZT]], rod([34, 40, ZT], [35, 40, 64], 3, GT.IRON, toneI, .8) + fill(pd(on(PZ(64), ellUV(35, 40, 2, 2, 14))), GT.RECESS));
+  const sb = byDepth(parts);
+  const ct = gtTilt([c.x - c.r, c.y, c.z1], c.px, c.pz, a);
+  SF_LABELS = k <= .6 ? '' : xrCallouts([
+    { at: [t.x, D - 3, 34], text: 'STEAM INLET', on: st.valve > .5 },
+    { at: [t.x, 64, t.z + 8], text: 'TURBINE', on: run },
+    { at: [t.x, 45, t.z + 7], text: 'DYNAMO', on: run },
+    { at: [27, 45, 52], text: 'LEADS', on: run },
+    { at: [c.x, c.y + c.r + 2.2, c.z0 + 8], text: 'INDUCTION COIL', on: heat > .3 },
+    { at: ct, text: 'CRUCIBLE', on: flow.melt > .05 },
+    { at: [44, 27, 40], text: 'TRUNNION', on: flow.tilt > 1 },
+    { at: [SF.mold[3], SF.mold[1], SF.mold[5]], text: 'INGOT MOLD', on: !!flow.ingot && flow.hot > 0 },
+    { at: [66, 33, 18], text: 'CHUTE', on: !!flow.ingot && flow.ingot[0] > 60 && flow.ingot[0] < W },
+    { at: [35, 37, 70], text: 'CHARGE TUBE', on: !!flow.lump },
+    { at: [SF.stk[0], SF.stk[1], 60], text: 'EXHAUST', on: run } ], [0, 96, 0, 100, 0, 106]);
+  return sb;
+}
+
+/* ---------- scene ---------- */
+function scene(st, m){
+  const flow = sfFlow(st), k = ease(st.xr || 0), col = GT.ORE[gtMetal(st.recipe && st.recipe.id)];
+  const fade = svg => k > 0 ? `<g opacity="${f(1 - .7*k)}">${svg}</g>` : svg;
+  let s = castShadow([...on(PX(0), OUT), ...on(PX(W), OUT), ...on(PZ(ZT + SF.hopH), rectUV(...SF.hopTop)), [SF.stk[0], SF.stk[1], ZT + 26.5], [SF.turb.x, D + 10, 34]]);
+  let body = sfCase(st, m);
+  if (k > 0) body = xrGhost(body, '', k, OUT, 0, W, m) + `<g opacity="${f(k)}">${sfMech(st, k, flow)}</g>`;
+  const rest = [[29, 35, ZT + 2.5], [39, 45, ZT + 2.5], [33, 45, ZT + 3.5], [38, 35, ZT + 3.5]].slice(0, Math.min(4, st.input | 0)).map(at => ({ at, svg: gtLump(at, .85, col) }));
+  if (flow.lump && flow.lump.at[2] > ZT) rest.push({ at: flow.lump.at, svg: gtLump(flow.lump.at, flow.lump.s, col) });
+  const riser = gtRiser(SF.turb.x, D, 34, st.valve), stack = gtStack(SF.stk[0], SF.stk[1], ZT);
+  // the feet stand on the floor under everything: drawn first, never sorted with the rest (a foot is beside the stack
+  // on one axis and under the body on another, which makes the sort go round in a circle)
+  s += byDepth(sfFeet());
+  s += byDepth([
+    { box:[[0, 0, Z0], [W, D, ZT]], svg: body },
+    { box:[[SF.hopTop[0], SF.hopTop[1], ZT], [SF.hopTop[2], SF.hopTop[3], ZT + SF.hopH]], svg: act('hopper', fade(gtHopper(ZT, SF.hopBot, SF.hopTop, SF.hopH, m, rest, !!flow.lump && flow.lump.at[2] > ZT - 2))) },
+    { box: stack.box, svg: fade(stack.svg) },
+    { box:[[W, SF.door[0] - 3, SF.door[1]], [W + 5, SF.door[2], SF.door[3]]], svg: fade(sfDoor(st)) },
+    { box:[[W, 5, 58], [W + 3, 17, 70]], svg: gtGauge(W, 11, 64, 6, st.steam) },
+    { box:[[W, 8.6, 47.6], [W + 2, 13.4, 52.4]], svg: gtLamp(W, 11, 50, st) },
+    { box:[[W, 31.5, 7], [SF.spout[0], 48.5, 16]], svg: sfSpout(st, flow.ingot) },
+    { box:[[SF.tray[0], SF.tray[1], 0], [SF.tray[2], SF.tray[3], SF.trayH]], svg: sfTray(st, flow.ingot) },
+    { box: riser.box, svg: fade(riser.svg) } ]);
+  s += gtPuffsSvg(st);
+  if (k > .6) s += SF_LABELS;
+  else s += xrCallouts([
+    { at: [34, 40, ZT + SF.hopH], text: 'HOPPER', on: !!flow.lump },
+    { at: [SF.stk[0], SF.stk[1], ZT + 26.5], text: 'VENT STACK', on: !!st.running },
+    ...(facing([0,1,0]) ? [{ at: [SF.turb.x, D + 18, 26], text: 'STEAM VALVE', on: st.valve > .5 }] : []),
+    ...(facing([1,0,0]) ? [{ at: [W + 2, 40, 48], text: 'PEEPHOLE', on: (st.heat || 0) > .3 }, { at: [W + 3, 11, 70], text: 'PRESSURE GAUGE', on: (st.steam || 0) > .05 }] : []),
+    { at: [SF.tray[2], 40, SF.trayH], text: 'OUTPUT TRAY', on: (st.output || 0) > 0 } ], [0, 96, 0, 100, 0, 106]);
+  return s;
+}
+
+gtMachine({
+  fig:'S2', title:'Steam Furnace', size:[96, 100, 106], center:[48, 50], scene,
+  recipes:[{ id:'smelt_crushed_iron', name:'Iron Ingot' }, { id:'smelt_crushed_copper', name:'Copper Ingot' }, { id:'smelt_crushed_tin', name:'Tin Ingot' }],
+  demoSeconds: 6, loadLabel:'Load ore', inLabel:'Ore', outLabel:'Ingots',
+  emitters:[{ id:'vent', at: () => [SF.stk[0], SF.stk[1], ZT + 27], when: st => !!st.running }],
+  tile:[[-3, -1, 0], [99, -1, 0], [99, 101, 0], [-3, 101, 0]],
+});
+</script>
+<script src="cf-tail.js"></script>
+</body></html>
