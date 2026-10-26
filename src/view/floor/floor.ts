@@ -20,6 +20,7 @@ type Pt = [number, number];
 const INK = '#231e16', SHADOW = '#41538f';
 const BRONZE = { l: '#eab36c', m: '#c98a42', d: '#5c3b17' }, BRICK = { l: '#d98a6a', m: '#b5654a', d: '#4e2418' };
 const STEEL = { l: '#d3d8db', m: '#a3abb0', d: '#4a5157' }, IRONP = { l: '#a7aeb2', m: '#7d858b', d: '#3b4146' };
+const STONE = { l: '#cfc9be', m: '#a39d93', d: '#4e4a44' };
 // screen height of one tile-length of height, in units of T. The floor's tiles are 2:1, and a figure sprite mapped
 // onto a tile stretches to match, which makes its heights exactly T per tile: boxes use the same so they line up.
 const ZK = 1;
@@ -321,7 +322,7 @@ export class Floor {
   /** A plain inked box in the figures' palette, for machines that have no figure yet. */
   private drawBox(m: MachineState) {
     const def = MACHINES.get(m.def)!, [fw, fh] = def.footprint, h = this.heightOf(m), ctx = this.ctx;
-    const pal = def.kind === 'coke_oven' ? BRICK : def.id === 'hp_boiler' ? IRONP : def.power === 'eu' ? STEEL : BRONZE, i = INSET;
+    const pal = def.kind === 'coke_oven' ? BRICK : def.fuel ? STONE : def.id === 'hp_boiler' ? IRONP : def.power === 'eu' ? STEEL : BRONZE, i = INSET;
     const x0 = m.x + i, y0 = m.y + i, x1 = m.x + fw - i, y1 = m.y + fh - i;
     const P = (x: number, y: number, z: number): Pt => { const [px, py] = this.iso(x, y, z); return [px + wob(x, y, z), py + wob(y, z, x)]; };
     const poly = (pts: Pt[], fill: string, line = 1.4) => {
@@ -338,7 +339,7 @@ export class Floor {
     poly([P(x0, y0, h), P(x1, y0, h), P(x1, y1, h), P(x0, y1, h)], pal.l); // top
     // the front's details: a firebox for boilers, then the name, written along the front face
     const T = this.T;
-    if (def.boiler) {
+    if (def.boiler || def.fuel) { // a firebox that glows while fuel burns
       const fire = m.burn > 0;
       poly([P(x1 + 0.005, y0 + 0.3 * fh, 0.12), P(x1 + 0.005, y1 - 0.3 * fh, 0.12), P(x1 + 0.005, y1 - 0.3 * fh, 0.38), P(x1 + 0.005, y0 + 0.3 * fh, 0.38)],
         fire ? '#ff8a3d' : '#2b2523', 1.2);

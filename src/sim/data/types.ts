@@ -35,6 +35,7 @@ export interface MachineDef {
   steamCapacity?: number; // litres of steam it holds; its share of its net's tank
   euCapacity?: number; // EU it holds; its share of its EU net's buffer
   boiler?: { steamPerTick: number; fuels: Record<string, number> }; // fuel item -> ticks it burns
+  fuel?: Record<string, number>; // a fire-heated machine (the furnace): fuel item -> ticks of work it gives
   // makes EU at its tier's voltage: from steam (litres per EU, it also joins a steam net) or from fuel (EU per litre)
   generator?: { steam?: number; fuels?: Record<string, number>; maxEuPerTick: number };
   battery?: boolean; // a buffer that feeds its net at its tier's voltage

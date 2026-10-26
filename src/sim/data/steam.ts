@@ -11,6 +11,7 @@ export const items: ItemDef[] = [
   { id: 'water', name: 'Water', fluid: true },
   { id: 'steam', name: 'Steam', fluid: true },
   // gathered by hand
+  { id: 'cobblestone', name: 'Cobblestone' },
   { id: 'iron_ore', name: 'Iron Ore' },
   { id: 'copper_ore', name: 'Copper Ore' },
   { id: 'tin_ore', name: 'Tin Ore' },
@@ -29,6 +30,7 @@ export const items: ItemDef[] = [
   ...METALS.map((m) => ({ id: `${m}_ingot`, name: `${cap(m)} Ingot` })),
   ...METALS.map((m) => ({ id: `${m}_plate`, name: `${cap(m)} Plate` })),
   { id: 'tin_wire', name: 'Tin Wire' },
+  { id: 'bronze_dust', name: 'Bronze Dust' },
   // other parts
   { id: 'brick', name: 'Brick' },
   { id: 'coke_oven_brick', name: 'Coke Oven Brick' },
@@ -36,6 +38,7 @@ export const items: ItemDef[] = [
   { id: 'rubber_sheet', name: 'Rubber Sheet' },
   { id: 'bronze_hull', name: 'Bronze Machine Hull' },
   // things you place: a machine or conduit is an item until it's on the floor
+  { id: 'stone_furnace', name: 'Furnace' },
   { id: 'bronze_pipe', name: 'Bronze Pipe' },
   { id: 'tin_cable', name: 'Tin Cable' },
   { id: 'coke_oven', name: 'Coke Oven' },
@@ -49,10 +52,12 @@ export const items: ItemDef[] = [
 ];
 
 /** What you can gather by hand on the bench: one per click. */
-export const gatherable = ['iron_ore', 'copper_ore', 'tin_ore', 'coal', 'clay', 'sand', 'sticky_resin', 'wood_planks'];
+export const gatherable = ['cobblestone', 'coal', 'iron_ore', 'copper_ore', 'tin_ore', 'clay', 'sand', 'sticky_resin', 'wood_planks'];
 
 // Building a machine uses up its item (crafted below) and removing it gives the item back.
 export const machines: MachineDef[] = [
+  // the way in, before steam: a cobblestone furnace that burns coal, as in GTNH's first hour
+  { id: 'stone_furnace', name: 'Furnace', short: 'FURNACE', kind: 'furnace', power: 'none', footprint: [1, 1], fuel: { coal: 1600, coke: 3200 } },
   { id: 'coke_oven', name: 'Coke Oven', short: 'COKE OVEN', kind: 'coke_oven', power: 'none', footprint: [3, 3] },
   {
     id: 'bronze_boiler', name: 'Small Coal Boiler', short: 'BOILER', kind: 'boiler', power: 'steam', footprint: [1, 1], steamCapacity: 16000, figure: 'bronze_boiler',
@@ -112,8 +117,8 @@ export const recipes: RecipeDef[] = [
     inputs: [{ item: 'sand', count: 1 }],
     outputs: [{ item: 'glass', count: 1 }],
   },
-  // clean dusts from the LV ore line smelt in the steam furnace too
-  ...['iron', 'copper', 'tin', 'nickel', 'gold'].map((m): RecipeDef => ({
+  // clean dusts (hand-ground, or from the LV ore line) smelt in the steam furnace too
+  ...['iron', 'copper', 'tin', 'nickel', 'gold', 'bronze'].map((m): RecipeDef => ({
     id: `smelt_${m}_dust`, machine: 'furnace', ticks: 256, steamPerTick: 4,
     inputs: [{ item: `${m}_dust`, count: 1 }],
     outputs: [{ item: `${m}_ingot`, count: 1 }],
@@ -128,6 +133,11 @@ export const recipes: RecipeDef[] = [
     id: `hammer_${m}_plate`, machine: 'forge_hammer', ticks: 200, steamPerTick: 6,
     inputs: [{ item: `${m}_ingot`, count: 3 }],
     outputs: [{ item: `${m}_plate`, count: 2 }],
+  })),
+  // the coal furnace: no steam, just fire. A coal gives 1600 ticks, eight smelts.
+  ...[...['iron', 'copper', 'tin'].map((m) => [`crushed_${m}`, `${m}_ingot`]), ...['iron', 'copper', 'tin', 'bronze'].map((m) => [`${m}_dust`, `${m}_ingot`]),
+    ['clay', 'brick'], ['sand', 'glass']].map(([from, to]): RecipeDef => ({
+    id: `fire_smelt_${from}`, machine: 'furnace', ticks: 200, inputs: [{ item: from, count: 1 }], outputs: [{ item: to, count: 1 }],
   })),
   {
     id: 'extract_resin', machine: 'extractor', ticks: 300, steamPerTick: 4,
@@ -146,6 +156,12 @@ const HULL_AND_PIPES = [s('bronze_hull'), s('bronze_pipe', 2)];
 
 // Crafting at the workbench is instant: GT's hand tools (hammer, wrench, file, cutters) are taken as given.
 export const crafts: CraftDef[] = [
+  // the bootstrap, all by hand: hammer ore into crushed ore, grind it to dust, mix bronze dust
+  ...(['iron', 'copper', 'tin'] as const).flatMap((m): CraftDef[] => [
+    { id: `crush_${m}_ore`, group: 'parts', inputs: [s(`${m}_ore`)], output: s(`crushed_${m}`), note: 'hammer' },
+    { id: `grind_crushed_${m}`, group: 'parts', inputs: [s(`crushed_${m}`)], output: s(`${m}_dust`), note: 'mortar' },
+  ]),
+  { id: 'bronze_dust', group: 'parts', inputs: [s('copper_dust', 3), s('tin_dust')], output: s('bronze_dust', 4), note: 'mixed by hand' },
   ...METALS.map((m): CraftDef => ({ id: `${m}_plate`, group: 'parts', inputs: [s(`${m}_ingot`, 2)], output: s(`${m}_plate`), note: 'hammer' })),
   { id: 'tin_wire', group: 'parts', inputs: [s('tin_plate')], output: s('tin_wire'), note: 'wire cutters' },
   { id: 'bronze_hull', group: 'parts', inputs: [s('bronze_plate', 8)], output: s('bronze_hull'), note: 'wrench' },
@@ -159,5 +175,6 @@ export const crafts: CraftDef[] = [
   { id: 'steam_forge_hammer', group: 'machines', inputs: [...HULL_AND_PIPES, s('iron_plate', 4)], output: s('steam_forge_hammer') },
   { id: 'steam_compressor', group: 'machines', inputs: [...HULL_AND_PIPES, s('iron_plate', 2), s('tin_plate', 2)], output: s('steam_compressor') },
   { id: 'steam_extractor', group: 'machines', inputs: [...HULL_AND_PIPES, s('tin_plate', 2), s('brick')], output: s('steam_extractor') },
+  { id: 'stone_furnace', group: 'machines', inputs: [s('cobblestone', 8)], output: s('stone_furnace') },
   { id: 'coke_oven', group: 'machines', inputs: [s('coke_oven_brick', 9)], output: s('coke_oven') },
 ];

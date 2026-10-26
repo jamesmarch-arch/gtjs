@@ -77,17 +77,10 @@ export function noteMade(w: World, item: string, n: number): void {
   w.stats.made[item] = (w.stats.made[item] ?? 0) + n;
 }
 
-/** A new game: the starting workshop, laid out on the floor. */
+/** A new game: an empty floor and empty storage. Everything starts from what you gather by hand: cobblestone for a
+ *  furnace, coal to fire it, ore to hammer and smelt, until there is bronze for a boiler (the quest book walks it). */
 export function createWorld(): World {
-  const w = emptyWorld();
-  w.storage = { coal: 32, iron_ore: 8, copper_ore: 12, tin_ore: 4 };
-  for (let x = 1; x <= 5; x++) placePipe(w, x, 2);
-  placeMachine(w, 'bronze_boiler', 0, 2).enabled = true;
-  placeMachine(w, 'bronze_boiler', 6, 2).enabled = true;
-  setRecipe(placeMachine(w, 'steam_macerator', 1, 1), 'macerate_iron_ore');
-  setRecipe(placeMachine(w, 'steam_furnace', 3, 1), 'smelt_crushed_iron');
-  setRecipe(placeMachine(w, 'steam_alloy_smelter', 5, 1), 'bronze');
-  return w;
+  return emptyWorld();
 }
 
 /* ---------- storage ---------- */
@@ -286,6 +279,18 @@ export function tickMachine(w: World, m: MachineState, tank: Tank | null, volts 
     if (!tank || tank.stored < need) { m.stalled = true; return; }
     tank.stored -= need;
     m.rate = need;
+  }
+  // a fire-heated machine lights fuel from storage when it has work, and burns it as it works
+  const fuel = MACHINES.get(m.def)!.fuel;
+  if (fuel) {
+    if (m.burn <= 0) {
+      const f = Object.keys(fuel).find((item) => count(w, item) > 0);
+      if (!f) { m.stalled = true; return; }
+      add(w, f, -1);
+      m.burn = m.burnMax = fuel[f];
+      w.stats.burned++;
+    }
+    m.burn--;
   }
   if (++m.progress < ticks) return;
   for (const s of r.outputs) if (s.chance === undefined || nextRandom(w) < s.chance) { add(w, s.item, s.count); noteMade(w, s.item, s.count); }

@@ -182,4 +182,11 @@ credit them on the game's About screen. Figures may set `credit:false` inside th
   - The quest book's last chapter ends with the first aluminium ingot; claiming it shows the end-of-slice screen.
   - The floor makes room above it for tall machines; multi-tile sprites render in a larger frame.
 
-The slice is complete: steam age, LV and the EBF, from a starting workshop to MV.
+The slice is complete: steam age, LV and the EBF, from an empty floor to MV.
+
+**Starting empty (after M6).** New games start with an empty floor and empty storage, as GTNH does. The bootstrap is
+by hand and by fire: gather cobblestone for a coal-fired furnace (`stone_furnace`); hammer ore into crushed ore and
+grind it to dust at the workbench; mix bronze dust (3 copper + 1 tin); smelt in the furnace (one coal smelts eight);
+then bronze plates and bricks make the first boiler. The quest book's opening follows that path. A test
+(`src/sim/bootstrap.test.ts`) proves a boiler is reachable with hand crafting and the furnace alone, and every machine
+after it. The old starting kit lives on as a test fixture (`src/sim/fixtures.ts`).

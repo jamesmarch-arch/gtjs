@@ -23,6 +23,7 @@ export function mountMachinePanel(el: HTMLElement, getWorld: () => World, m: Mac
       <dl>
         <dt>Status</dt><dd data-k="status"></dd>
         ${boiler ? '<dt>Fuel</dt><dd data-k="fuel"></dd>' : recipes.length ? '<dt>Recipe</dt><dd data-k="detail"></dd>' : ''}
+        ${def.fuel ? '<dt>Fuel</dt><dd data-k="fuel"></dd>' : ''}
         ${recipes.length || boiler ? '<dt>Progress</dt><dd><div class="bar"><i data-k="progress"></i></div></dd>' : ''}
         ${def.steamCapacity ? '<dt>Steam</dt><dd><div class="bar steam"><i data-k="steam"></i></div></dd>' : ''}
         ${eu && euCapacity(m) ? '<dt>Energy</dt><dd><div class="bar energy"><i data-k="energy"></i></div><small class="muted" data-k="eu"></small></dd>' : ''}
@@ -45,7 +46,8 @@ export function mountMachinePanel(el: HTMLElement, getWorld: () => World, m: Mac
     if (def.battery) return m.eu > 0 ? 'charged' : 'empty';
     if (gen) return !m.enabled ? 'off' : m.rate > 0 ? `making ${m.rate} EU/t` : gen.steam ? 'waiting for steam' : 'no fuel';
     if (xf) return !m.enabled ? 'off' : `${m.mode === 'up' ? `step-up: ${xf.low} to ${xf.high}` : `step-down: ${xf.high} to ${xf.low}`} · moving ${m.rate} EU/t`;
-    return v.running ? `working${eu ? ` · ${m.rate} EU/t` : ''}` : !m.enabled ? 'off' : !m.recipe ? 'no recipe' : !v.active ? 'waiting for inputs' : eu ? 'waiting for EU' : 'waiting for steam';
+    return v.running ? `working${eu ? ` · ${m.rate} EU/t` : ''}` : !m.enabled ? 'off' : !m.recipe ? 'no recipe' : !v.active ? 'waiting for inputs'
+      : eu ? 'waiting for EU' : def.fuel ? 'waiting for coal' : 'waiting for steam';
   };
 
   const sync = () => {
@@ -55,7 +57,7 @@ export function mountMachinePanel(el: HTMLElement, getWorld: () => World, m: Mac
     if (select && document.activeElement !== select) select.value = m.recipe ?? '';
     $('status')!.textContent = status(v);
     const fuel = $('fuel');
-    if (fuel) fuel.textContent = m.burn > 0 ? `${Math.ceil(m.burn / TICKS_PER_SECOND)} s left` : 'empty';
+    if (fuel) fuel.textContent = m.burn > 0 ? `burning: ${Math.ceil(m.burn / TICKS_PER_SECOND)} s left` : def.fuel ? 'lights coal from storage when it has work' : 'empty';
     const detail = $('detail');
     if (detail) {
       const r = m.recipe ? RECIPES.get(m.recipe) : undefined;

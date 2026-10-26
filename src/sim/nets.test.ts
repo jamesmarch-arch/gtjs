@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { netOf, netSteam, PIPE_CAPACITY, steamNets } from './nets';
-import { createWorld, emptyWorld, placeMachine, placePipe, removeAt, tick } from './world';
+import { emptyWorld, placeMachine, placePipe, removeAt, tick } from './world';
+import { workshop } from './fixtures';
 
 describe('steam nets', () => {
   it('joins the starting kit into one net through the pipe row', () => {
-    const w = createWorld(), nets = steamNets(w);
+    const w = workshop(), nets = steamNets(w);
     expect(nets).toHaveLength(1);
     expect(nets[0].machines).toHaveLength(5);
     expect(nets[0].pipes).toHaveLength(5);
@@ -12,7 +13,7 @@ describe('steam nets', () => {
   });
 
   it('splits in two when a pipe between machines is removed', () => {
-    const w = createWorld();
+    const w = workshop();
     removeAt(w, 4, 2);
     const names = steamNets(w).map((n) => n.machines.map((m) => m.def).sort());
     expect(names).toHaveLength(2);
@@ -21,7 +22,7 @@ describe('steam nets', () => {
   });
 
   it('cuts off a machine whose only pipe is removed', () => {
-    const w = createWorld();
+    const w = workshop();
     removeAt(w, 3, 2); // the furnace at (3, 1) touched only this pipe
     const furnace = w.machines.find((m) => m.def === 'steam_furnace')!;
     expect(steamNets(w)).toHaveLength(3);
@@ -58,7 +59,7 @@ describe('steam nets', () => {
   });
 
   it('keeps each side\'s steam when a net splits', () => {
-    const w = createWorld();
+    const w = workshop();
     for (const m of w.machines) m.steam = 4000;
     for (const p of w.pipes) p.steam = 500;
     removeAt(w, 3, 2); // that pipe's 500 L is lost with it

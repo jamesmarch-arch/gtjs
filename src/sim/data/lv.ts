@@ -91,7 +91,7 @@ export const recipes: RecipeDef[] = [
     eu(`lv_smelt_crushed_${m}`, 'furnace', 128, 4, [s(`crushed_${m}`)], [s(`${m}_ingot`)]),
     eu(`lv_smelt_impure_${m}_dust`, 'furnace', 128, 4, [s(`impure_${m}_dust`)], [s(`${m}_ingot`)]),
   ]),
-  ...['iron', 'copper', 'tin', 'nickel', 'gold'].map((m) => eu(`lv_smelt_${m}_dust`, 'furnace', 128, 4, [s(`${m}_dust`)], [s(`${m}_ingot`)])),
+  ...['iron', 'copper', 'tin', 'nickel', 'gold', 'bronze'].map((m) => eu(`lv_smelt_${m}_dust`, 'furnace', 128, 4, [s(`${m}_dust`)], [s(`${m}_ingot`)])),
   eu('lv_smelt_clay', 'furnace', 128, 4, [s('clay')], [s('brick')]),
   eu('lv_smelt_sand', 'furnace', 128, 4, [s('sand')], [s('glass')]),
   // parts

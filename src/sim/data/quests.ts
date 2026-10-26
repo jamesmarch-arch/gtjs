@@ -1,4 +1,4 @@
-// The quest book: the Steam Age chapter. It walks from the starting workshop to the first tin cables, ready for LV.
+// The quest book. The Steam Age chapter walks from an empty floor (a furnace, hand tools) to the first tin cables.
 import type { QuestDef } from './types';
 
 export const chapters = [{ id: 'steam', name: 'Steam Age' }, { id: 'lv', name: 'LV: Electricity' }, { id: 'ebf', name: 'The Blast Furnace' }];
@@ -8,29 +8,34 @@ export const FINAL_QUEST = 'aluminium';
 
 export const quests: QuestDef[] = [
   {
-    id: 'stoke', chapter: 'steam', title: 'Stoke the boilers', after: [],
-    text: 'Your workshop runs on steam. Switch on a boiler and let it burn a lump of coal.',
-    goals: [{ kind: 'burned', count: 1 }], rewards: [{ item: 'coal', count: 8 }],
+    id: 'furnace', chapter: 'steam', title: 'A furnace', after: [],
+    text: 'Everything starts by hand. Gather eight cobblestone, craft a furnace at the workbench and place it on the floor.',
+    goals: [{ kind: 'built', machine: 'stone_furnace', count: 1 }], rewards: [{ item: 'coal', count: 8 }],
   },
   {
-    id: 'crush', chapter: 'steam', title: 'Crush some ore', after: ['stoke'],
-    text: 'GregTech furnaces won\'t take raw ore. Run iron ore through the steam macerator first.',
+    id: 'crush', chapter: 'steam', title: 'Crush some ore', after: ['furnace'],
+    text: 'GregTech furnaces won’t take raw ore. Hammer iron ore into crushed ore at the workbench.',
     goals: [{ kind: 'made', item: 'crushed_iron', count: 4 }], rewards: [{ item: 'iron_ore', count: 4 }],
   },
   {
-    id: 'ingots', chapter: 'steam', title: 'Your first ingots', after: ['crush'],
-    text: 'Smelt crushed ore into ingots in the steam furnace.',
+    id: 'stoke', chapter: 'steam', title: 'Light the fire', after: ['crush'],
+    text: 'Set the furnace to smelt crushed iron and switch it on. It lights a coal from storage when it has work; one coal smelts eight.',
+    goals: [{ kind: 'burned', count: 1 }], rewards: [{ item: 'iron_ore', count: 8 }],
+  },
+  {
+    id: 'ingots', chapter: 'steam', title: 'Your first ingots', after: ['stoke'],
+    text: 'Smelt crushed ore into ingots.',
     goals: [{ kind: 'made', item: 'iron_ingot', count: 4 }], rewards: [{ item: 'copper_ore', count: 8 }],
   },
   {
-    id: 'copper_tin', chapter: 'steam', title: 'Copper and tin', after: ['ingots'],
-    text: 'Bronze needs three parts copper to one part tin. Smelt some of each.',
-    goals: [{ kind: 'made', item: 'copper_ingot', count: 6 }, { kind: 'made', item: 'tin_ingot', count: 2 }],
+    id: 'copper_tin', chapter: 'steam', title: 'Copper and tin dust', after: ['ingots'],
+    text: 'Bronze needs three parts copper to one of tin. Hammer the ores, then grind the crushed ore to dust with a mortar.',
+    goals: [{ kind: 'made', item: 'copper_dust', count: 6 }, { kind: 'made', item: 'tin_dust', count: 2 }],
     rewards: [{ item: 'tin_ore', count: 4 }],
   },
   {
     id: 'bronze', chapter: 'steam', title: 'The Bronze Age', after: ['copper_tin'],
-    text: 'Alloy copper and tin in the steam alloy smelter. Bronze is what every steam machine is made of.',
+    text: 'Mix bronze dust by hand and smelt it. Bronze is what every steam machine is made of; later the steam alloy smelter makes it for you.',
     goals: [{ kind: 'made', item: 'bronze_ingot', count: 8 }], rewards: [{ item: 'coal', count: 16 }],
   },
   {
@@ -39,19 +44,30 @@ export const quests: QuestDef[] = [
     goals: [{ kind: 'made', item: 'bronze_plate', count: 4 }], rewards: [{ item: 'bronze_ingot', count: 4 }],
   },
   {
-    id: 'forge_hammer', chapter: 'steam', title: 'A better hammer', after: ['plates'],
+    id: 'bricks', chapter: 'steam', title: 'Bricks', after: ['ingots'],
+    text: 'Gather clay and fire it into bricks in the furnace.',
+    goals: [{ kind: 'made', item: 'brick', count: 8 }], rewards: [{ item: 'clay', count: 8 }],
+  },
+  {
+    id: 'boiler', chapter: 'steam', title: 'Raise steam', after: ['plates', 'bricks'],
+    text: 'Four bronze plates and three bricks make a small coal boiler. Place it, switch it on, and keep coal in storage.',
+    goals: [{ kind: 'built', machine: 'bronze_boiler', count: 1 }], rewards: [{ item: 'coal', count: 16 }],
+  },
+  {
+    id: 'steam_machines', chapter: 'steam', title: 'Your first steam machines', after: ['boiler'],
+    text: 'A bronze hull and two pipes make a steam machine. Pipe a macerator and a steam furnace to the boiler: they work while you don’t.',
+    goals: [{ kind: 'built', machine: 'steam_macerator', count: 1 }, { kind: 'built', machine: 'steam_furnace', count: 1 }],
+    rewards: [{ item: 'iron_ore', count: 16 }],
+  },
+  {
+    id: 'forge_hammer', chapter: 'steam', title: 'A better hammer', after: ['steam_machines'],
     text: 'A steam forge hammer gets two plates from three ingots. Craft one and put it on the floor.',
     goals: [{ kind: 'built', machine: 'steam_forge_hammer', count: 1 }], rewards: [{ item: 'iron_ore', count: 8 }],
   },
   {
-    id: 'bricks', chapter: 'steam', title: 'Bricks', after: ['ingots'],
-    text: 'Gather clay and fire it into bricks in the steam furnace.',
-    goals: [{ kind: 'made', item: 'brick', count: 8 }], rewards: [{ item: 'clay', count: 8 }],
-  },
-  {
-    id: 'more_steam', chapter: 'steam', title: 'More steam', after: ['bricks', 'plates'],
-    text: 'Three machines want more steam than two small boilers make. Build a third and pipe it in.',
-    goals: [{ kind: 'built', machine: 'bronze_boiler', count: 3 }], rewards: [{ item: 'coal', count: 32 }],
+    id: 'more_steam', chapter: 'steam', title: 'More steam', after: ['steam_machines'],
+    text: 'A steam machine wants 4 to 8 L of steam a tick and a small boiler makes 6. Build a second boiler and pipe it in.',
+    goals: [{ kind: 'built', machine: 'bronze_boiler', count: 2 }], rewards: [{ item: 'coal', count: 32 }],
   },
   {
     id: 'coke_oven', chapter: 'steam', title: 'The coke oven', after: ['bricks'],
