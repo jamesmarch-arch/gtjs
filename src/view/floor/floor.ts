@@ -313,6 +313,10 @@ export class Floor {
     if (sprite) {
       ctx.save();
       ctx.setTransform(ctx.getTransform().multiply(spriteTransform(sprite, this.iso(m.x, m.y), this.iso(m.x + fw, m.y), this.iso(m.x, m.y + fh))));
+      // sprites are drawn 3-4x smaller than they were rendered: the default ('low') smoothing samples too few pixels
+      // and turns fine stone lines and paper grain into speckle; 'high' averages them
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
       ctx.drawImage(sprite.img, 0, 0);
       ctx.restore();
     } else this.drawBox(m);
