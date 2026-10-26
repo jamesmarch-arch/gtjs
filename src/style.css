@@ -113,6 +113,8 @@ button[aria-pressed='true'] { background: var(--ink); color: var(--paper); }
 .crafts li.cant .what b { color: var(--muted); }
 .crafts .what { display: flex; flex-direction: column; }
 .crafts .from .short { color: #b8372d; }
+.crafts .from .ok { color: #2e7d3a; }
+.crafts .from .ok small { color: #5f9a68; }
 .crafts small { color: var(--muted); }
 button:disabled { opacity: .4; cursor: default; }
 button:disabled:hover { background: var(--paper); }

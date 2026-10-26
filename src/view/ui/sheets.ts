@@ -30,8 +30,9 @@ export function workbenchHtml(w: World, view: BenchView): string {
   const v = benchView(view);
   const tabs = BENCH_GROUPS.map((g) => `<button role="tab" data-act="group" data-group="${g.id}" aria-selected="${g.id === v.group}">${g.name}${ready(w, craftsIn(g.id))}</button>`).join('');
   const subtabs = tiersIn(v.group).map((t) => `<button role="tab" data-act="tier" data-tier="${t.id}" aria-selected="${t.id === v.tier}">${t.name}${ready(w, craftsIn(v.group, t.id))}</button>`).join('');
-  const rows = craftsIn(v.group, v.tier).map((c) => {
-    const max = maxCrafts(w, c.id);
+  // what you can craft now comes first; the rest keep their order below it
+  const list = craftsIn(v.group, v.tier).map((c) => ({ c, max: maxCrafts(w, c.id) }));
+  const rows = [...list.filter((x) => x.max > 0), ...list.filter((x) => x.max === 0)].map(({ c, max }) => {
     const inputs = c.inputs.map((s) => {
       const have = count(w, s.item);
       return `<span class="${have >= s.count ? 'ok' : 'short'}">${s.count} ${esc(itemName(s.item))} <small>(${have})</small></span>`;

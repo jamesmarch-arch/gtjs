@@ -3,7 +3,8 @@ import { CRAFTS, CRAFT_TIERS } from '../../sim/data';
 import { emptyWorld } from '../../sim/world';
 import { BENCH_GROUPS, benchView, workbenchHtml, type BenchView } from './sheets';
 
-const craftIds = (html: string) => [...html.matchAll(/data-act="craft" data-id="([^"]+)" data-n="1"/g)].map((m) => m[1]);
+// one id per row: the row's Craft button (its "All" button also says data-n="1" when you can make exactly one)
+const craftIds = (html: string) => [...html.matchAll(/data-act="craft" data-id="([^"]+)" data-n="1"[^>]*>Craft</g)].map((m) => m[1]);
 
 describe('the workbench tabs', () => {
   it('show every recipe in exactly one category and tier', () => {
@@ -36,5 +37,25 @@ describe('the workbench tabs', () => {
     expect(html).toMatch(/data-group="parts"[^>]*>Items <span class="ready">\d+<\/span>/);
     expect(html).toMatch(/data-group="machines"[^>]*>Machines<\/button>/); // nothing ready: no count
     expect(html).toMatch(/aria-selected="true">Machines/);
+  });
+});
+
+describe('the workbench list', () => {
+  it('puts what you can craft now at the top, the rest in their usual order', () => {
+    const w = emptyWorld();
+    w.storage = { tin_ingot: 2, cobblestone: 8 };
+    const ids = craftIds(workbenchHtml(w, { group: 'parts', tier: 'steam' }));
+    const usual = [...CRAFTS.values()].filter((c) => c.group === 'parts' && c.tier === 'steam').map((c) => c.id);
+    expect(ids[0]).toBe('tin_plate');
+    expect(ids.slice(1)).toEqual(usual.filter((id) => id !== 'tin_plate'));
+  });
+
+  it('marks each material you have enough of as ok, and the rest as short', () => {
+    const w = emptyWorld();
+    w.storage = { copper_dust: 3 };
+    const html = workbenchHtml(w, { group: 'parts', tier: 'steam' });
+    const row = html.slice(html.indexOf('Bronze Dust</b>'));
+    expect(row).toMatch(/<span class="ok">3 Copper Dust/);
+    expect(row).toMatch(/<span class="short">1 Tin Dust/);
   });
 });
