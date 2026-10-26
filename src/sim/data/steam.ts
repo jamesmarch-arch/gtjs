@@ -57,7 +57,7 @@ export const gatherable = ['cobblestone', 'coal', 'iron_ore', 'copper_ore', 'tin
 // Building a machine uses up its item (crafted below) and removing it gives the item back.
 export const machines: MachineDef[] = [
   // the way in, before steam: a cobblestone furnace that burns coal, as in GTNH's first hour
-  { id: 'stone_furnace', name: 'Furnace', short: 'FURNACE', kind: 'furnace', power: 'none', footprint: [1, 1], fuel: { coal: 1600, coke: 3200 } },
+  { id: 'stone_furnace', name: 'Furnace', short: 'FURNACE', kind: 'furnace', power: 'none', footprint: [1, 1], fuel: { coal: 1600, coke: 3200 }, figure: 'stone_furnace' },
   { id: 'coke_oven', name: 'Coke Oven', short: 'COKE OVEN', kind: 'coke_oven', power: 'none', footprint: [3, 3] },
   {
     id: 'bronze_boiler', name: 'Small Coal Boiler', short: 'BOILER', kind: 'boiler', power: 'steam', footprint: [1, 1], steamCapacity: 16000, figure: 'bronze_boiler',

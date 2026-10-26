@@ -170,6 +170,7 @@ function gtMachine(cfg){
     st.stalled = st.on && (!st.active || st.steam < .3);
     st.running = st.on && st.active && !st.stalled;
     if (st.running){ st.progress += dt / (cfg.demoSeconds || 5); if (st.progress >= 1){ st.progress = 0; st.active = false; st.output++; } }
+    if (cfg.fuelled){ st.burning = st.running; st.burn = st.running ? .6 : 0; }   // the demo's fire burns while it works
   }
   function step(dt){
     st.valve = gtClamp(st.valve + (cfg.boiler ? 1 : st.on ? 1 : -1)*dt/.6);
@@ -221,6 +222,7 @@ function gtMachine(cfg){
     params: (s, q) => {
       for (const k of ['progress', 'steam', 'input', 'output', 't', 'valve', 'heat', 'burn']) if (q.has(k)) s[k] = +q.get(k);
       if (q.get('run') === '1'){ s.on = true; s.valve = 1; if (cfg.boiler){ s.burning = true; s.burn = s.burn || .7; } else s.active = s.running = true;
+        if (cfg.fuelled){ s.burning = true; s.burn = s.burn || .6; }
         if (!q.has('steam')) s.steam = .8; if (!q.has('heat')) s.heat = 1; }
       if (q.get('vent') === '1') s.venting = true;
       if (q.get('freeze') === '1') s.frozen = true;
@@ -235,7 +237,7 @@ function gtMachine(cfg){
   gtBridge.onState(mc => {
     Object.assign(st, { on: mc.enabled, active: mc.active, running: mc.running, stalled: mc.stalled, progress: mc.progress, steam: mc.steam,
       recipe: mc.recipe, recipes: mc.recipes, input: mc.input, output: mc.output, burn: mc.burn || 0, burning: !!mc.burning, venting: !!mc.venting,
-      energy: mc.energy || 0, needsMv: !!mc.lowVolts });
+      energy: mc.energy || 0, needsMv: !!mc.lowVolts, fuel: mc.fuel || 0 });
     st.lamp = lampOf();
     if ((cfg.boiler ? st.burning : st.running) || st.heat > 0 || st.puffs.length) run(); else ui.render();
   });

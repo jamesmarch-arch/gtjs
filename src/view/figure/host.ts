@@ -20,8 +20,9 @@ export interface FigureMachine {
   output: number; // its main output, in storage
   energy: number; // EU machines: 0..1 of its EU buffer
   lowVolts: boolean; // EU machines: stalled because its net's voltage is too low for the recipe
-  burn: number; // boilers: 0..1 of the current fuel left
-  burning: boolean; // boilers: the firebox is lit
+  burn: number; // boilers and fire-heated machines: 0..1 of the current fuel left
+  burning: boolean; // boilers and fire-heated machines: the firebox is lit
+  fuel: number; // fire-heated machines: fuel in storage
   venting: boolean; // boilers: burning with the net full, so the safety valve lifts
 }
 
@@ -44,7 +45,7 @@ export function figureMachine(w: World, m: MachineState): FigureMachine {
     const fuel = Object.keys(def.boiler.fuels).reduce((n, f) => n + count(w, f), 0);
     return {
       name: def.name, enabled: m.enabled, active: m.burn > 0, running: m.burn > 0, stalled: m.stalled, progress: 0, steam,
-      recipe: null, recipes: [], input: fuel, output: 0, energy: 0, lowVolts: false,
+      recipe: null, recipes: [], input: fuel, output: 0, energy: 0, lowVolts: false, fuel,
       burn: m.burnMax ? m.burn / m.burnMax : 0, burning: m.burn > 0, venting: m.burn > 0 && steam > 0.995,
     };
   }
@@ -61,7 +62,8 @@ export function figureMachine(w: World, m: MachineState): FigureMachine {
     input: shown ? count(w, shown.inputs[0].item) : 0,
     output: shown ? count(w, shown.outputs[0].item) : 0,
     energy: euCapacity(m) > 0 ? m.eu / euCapacity(m) : 0, lowVolts: !!m.lowVolts,
-    burn: 0, burning: false, venting: false,
+    burn: def.fuel && m.burnMax ? m.burn / m.burnMax : 0, burning: !!def.fuel && m.burn > 0, venting: false,
+    fuel: def.fuel ? Object.keys(def.fuel).reduce((n, f) => n + count(w, f), 0) : 0,
   };
 }
 

@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Furnace</title>
+<script src="cf-head.js"></script></head><body>
+<script src="core.js"></script>
+<script src="gt-bridge.js"></script>
+<script src="gt-parts.js"></script>
+<script>
+/* Furnace (gtjs, the first hour): a cobblestone furnace that burns coal. No steam, no power: just fire.
+
+   How it works (truth first)
+   1. Coal from the crate beside it goes onto the iron grate in the firebox, behind the lower mouth. Air comes in
+      through the mouth, under the grate; ash falls through.
+   2. The fire's heat rises round a clay crucible standing on an iron shelf in the smelting chamber above. The charge
+      in the crucible (crushed ore, dust, clay, sand) heats until it becomes an ingot, a brick or glass.
+   3. The hot gas leaves the top of the chamber through a flue at the back and up the chimney.
+   4. What is made goes out onto the tray in front. One coal burns for 1600 ticks: eight smelts.
+   Where the coal is: crate -> grate -> ash and smoke. Where the charge is: storage -> crucible -> tray.
+
+   x = depth (front at x = W), y = width (+y = viewer-left), z = up. 1 unit = 1 cm.
+
+   Parts
+   OUTSIDE  cobblestone body . smelting chamber mouth (arched) . firebox mouth (arched) . chimney with cap . coal crate
+            with coal . output tray
+   INSIDE   iron fire grate . coal bed . flames . iron shelf . clay crucible . charge . flue to the chimney
+
+   Contact checks (numbers)
+   - firebox: grate at z 12 from x 34 to 74, just inside the lower mouth (y 28..52, z 8..32), so the fire shows through it.
+   - shelf at z 42 (x 48..72) holds the crucible (r 9 at x 60, y 40, z 43..61), seen through the upper mouth (y 24..56, z 48..82).
+   - flue: from the chamber's top at the back (x 14, y 54, z 84) into the chimney (x 6..22, y 46..62, from z 90).
+*/
+const W = 80, D = 80, H = 90;
+Z_FLOOR = 0;
+const OUT = rectUV(0, 0, D, H);
+const STONE = { l:'#cfc9be', m:'#a39d93', d:'#55504a' }, CLAY = { l:'#d9a37a', m:'#b97f55', d:'#6b4026' };
+const WOODM = { l:'#d9a86c', m:'#bf8a4f', d:'#6e4a26' };
+const UP = { y0:24, y1:56, z0:48, r:16 }, LOW = { y0:28, y1:52, z0:8, r:12 };
+const CHIM = [6, 46, 22, 62], CHIM_H = 40;
+const TRAY = [83, 22, 99, 58], TRAY_H = 7, CRATE = [22, 84, 58, 100], CRATE_H = 12;
+const CRUC = { x:60, y:40, z0:43, z1:61, r:9 };
+
+// what the recipe works on, and what comes out: their colours and shapes
+const FROM_COL = { crushed_iron:'#c98d6b', crushed_copper:'#e5874c', crushed_tin:'#dcdad0', iron_dust:'#b07a5e', copper_dust:'#d77a45',
+  tin_dust:'#cfcdc4', bronze_dust:'#d79b4c', clay:'#b9a58f', sand:'#e8d9a8' };
+const OUT_COL = { iron:'#c9ced1', copper:'#e5874c', tin:'#dcdad0', bronze:'#e0a050' };
+const fromOf = st => ((st.recipe && st.recipe.id) || 'fire_smelt_crushed_iron').replace('fire_smelt_', '');
+const product = st => { const f = fromOf(st);
+  if (f === 'clay') return { kind:'brick', col:'#b5654a' };
+  if (f === 'sand') return { kind:'glass', col:'#cfe9f0' };
+  return { kind:'ingot', col: OUT_COL[(f.match(/iron|copper|tin|bronze/) || ['iron'])[0]] }; };
+
+/* ---------- cobblestone: rows of irregular stones on a face, the same every time ---------- */
+const sfRand = (a, b) => { const s = Math.sin(a*12.9898 + b*78.233)*43758.5453; return s - Math.floor(s); };
+function stones(plane, u0, u1, v0, v1, base, seed){
+  let fills = '', lines = '';
+  for (let v = v0, row = 0; v < v1 - .5; v += 15, row++){
+    const vt = Math.min(v1, v + 15);
+    for (let u = u0 - (row % 2 ? 9 : 0), k = 0; u < u1 - .5; u += 18 + 6*sfRand(row + seed, k), k++){
+      const a = Math.max(u0, u), b = Math.min(u1, u + 18 + 6*sfRand(row + seed, k));
+      if (b - a < 3) continue;
+      const pts = on(plane, rrUV(a + 1, v + 1, b - 1, vt - 1, 2.5, 2)), shade = sfRand(seed + k, row + 3);
+      fills += fill(pd(pts), shade < .33 ? base.l : shade < .66 ? mix(base.l, base.m, .5) : base.m);
+      lines += pd(pts);
+    }
+  }
+  return fills + `<path d="${lines}" fill="none" stroke="${INK}" stroke-width=".8" opacity=".55"/>`;
+}
+const arch = m => [[m.y1, m.z0], ...arcUV((m.y0 + m.y1)/2, m.z0 + 2*m.r - m.r, m.r, 0, 180, 10), [m.y0, m.z0]];
+
+/* ---------- the body: masonry, its two mouths and what shows through them ---------- */
+function sfFire(st, clipPts){
+  if (!st.burning) return '';
+  const t = st.t || 0, k = .6 + .4*gtClamp(st.heat || 0);
+  let s = '';
+  for (const [y, ph] of [[34, 0], [40, 1.9], [46, 3.4]]){
+    const h = (9 + 3*Math.sin(t*7 + ph))*k, [X, Y] = P(58, y, 14), [, Yt] = P(58, y, 14 + h), w = 3*k, tip = Yt + Math.sin(t*11 + ph);
+    s += `<path d="M${f(X - w)} ${f(Y)}Q${f(X - w)} ${f((Y + tip)/2)} ${f(X)} ${f(tip)}Q${f(X + w)} ${f((Y + tip)/2)} ${f(X + w)} ${f(Y)}Z" fill="${GT.GLOW}" stroke="${INK}" stroke-width=".7"/>`
+      + `<path d="M${f(X - w*.45)} ${f(Y)}Q${f(X)} ${f((Y + tip)/2 + 1.5)} ${f(X)} ${f(tip + (Y - tip)*.4)}Q${f(X + w*.45)} ${f((Y + tip)/2 + 1.5)} ${f(X + w*.45)} ${f(Y)}Z" fill="${GT.HOT}"/>`;
+  }
+  return clipPts ? clipTo(clipPts, s) : s;
+}
+function sfCoalBed(st){
+  const hot = st.burning ? .5 + .5*gtClamp(st.heat || 0) : 0;
+  const a = on(PZ(12.6), ellUV(56, 40, 16, 11, 18)), b = on(PZ(17), ellUV(56, 40, 9, 6, 18));
+  const CM = hot ? { l: mix(GT.COAL.l, GT.GLOW, .6*hot), m: mix(GT.COAL.m, '#a8401c', .5*hot), d: GT.COAL.d } : GT.COAL;
+  return loft(a, b, n => toneI(n, CM)) + fill(pd(b), hot ? mix(GT.COAL.l, GT.HOT, .7*hot) : GT.COAL.l) + hullInk([...a, ...b], .8);
+}
+function sfCrucible(st){
+  const c = CRUC, hot = gtClamp(st.heat || 0)*(st.burning ? 1 : .4), p = st.progress || 0;
+  const ring = (z, r) => on(PZ(z), ellUV(c.x, c.y, r, r, 20));
+  const A = ring(c.z0, c.r - 1.5), B = ring(c.z1, c.r);
+  const CM = hot > .2 ? { l: mix(CLAY.l, '#ffb070', hot*.5), m: mix(CLAY.m, '#e0703a', hot*.45), d: CLAY.d } : CLAY;
+  let inner = '';
+  if (st.active){
+    const prod = product(st), from = FROM_COL[fromOf(st)] || '#c98d6b';
+    if (p < .85){ const glow = gtClamp((p - .15)/.6);
+      for (const [dx, dy, dz] of [[-3, -2, 0], [3, 1, 0], [0, 3, 2], [-1, -1, 3]]){
+        const col = mix(from, GT.HOT, glow*.75);
+        inner += box(c.x + dx - 2.2, c.y + dy - 2, c.z1 - 7 + dz, c.x + dx + 2.2, c.y + dy + 2, c.z1 - 3.2 + dz, matOf(col), toneI, .6); } }
+    else inner += fill(pd(ring(c.z1 - 4, c.r - 2.5)), mix(prod.col, GT.HOT, gtClamp(1 - (p - .85)/.15)*.8));
+  }
+  return openShell(A, B, n => toneI(n, CM), inner) + ink(pd(B), 1) + hullInk([...A, ...B], 1.3);
+}
+function sfBody(st, m){
+  const FRONT = facing([1,0,0]), BACK = facing([-1,0,0]), LEFT = facing([0,1,0]), RIGHT = facing([0,-1,0]), hot = gtClamp(st.heat || 0);
+  let s = extrude(OUT, 0, W, m);
+  if (FRONT) s += fill(pd(on(PX(W), OUT)), tone([1,0,0], m)) + stones(PX(W + .2), 0, D, 0, H, m, 1);
+  if (BACK) s += fill(pd(on(PX(0), OUT)), tone([-1,0,0], m)) + stones(PX(-.2), 0, D, 0, H, m, 2);
+  if (LEFT) s += stones(PY(D + .2), 0, W, 0, H, m, 3);
+  if (RIGHT) s += stones(PY(-.2), 0, W, 0, H, m, 4);
+  if (facing([0,0,1])) s += stones(PZ(H + .2), 0, W, 0, D, m, 5);
+  if (FRONT){
+    // the smelting chamber's mouth: the crucible inside, glowing when hot
+    const up = on(PX(W + .3), arch(UP)), low = on(PX(W + .3), arch(LOW));
+    s += fill(pd(up), mix('#2b2523', GT.GLOW, hot*.35));
+    s += clipTo(up, sfCrucible(st));
+    s += ink(pd(up), 1.8);
+    // the firebox mouth: the coal bed and its flames
+    s += fill(pd(low), st.burning ? mix('#3a2a22', GT.GLOW, .25 + .3*hot) : '#2b2523');
+    s += clipTo(low, sfCoalBed(st) + sfFire(st));
+    s += ink(pd(low), 1.8);
+  }
+  if (FRONT) s += ink(pd(on(PX(W), OUT)), 2.2);
+  if (BACK) s += ink(pd(on(PX(0), OUT)), 2.2);
+  return s + hullInk([...on(PX(0), OUT), ...on(PX(W), OUT)], 2.8);
+}
+function sfChimney(){
+  const [x0, y0, x1, y1] = CHIM, z1 = H + CHIM_H;
+  let s = box(x0, y0, H, x1, y1, z1, STONE, tone, 1.4);
+  for (const [n, plane, a, b] of [[[1,0,0], PX(x1 + .2), y0, y1], [[0,1,0], PY(y1 + .2), x0, x1], [[-1,0,0], PX(x0 - .2), y0, y1], [[0,-1,0], PY(y0 - .2), x0, x1]])
+    if (facing(n)) s += stones(plane, a, b, H, z1, STONE, 7 + a);
+  s += box(x0 - 2, y0 - 2, z1, x1 + 2, y1 + 2, z1 + 3, DARK, toneI, 1.1) + fill(pd(on(PZ(z1 + 3.1), rectUV(x0 + 2, y0 + 2, x1 - 2, y1 - 2))), GT.RECESS);
+  return s;
+}
+function sfCrate(st){
+  const [x0, y0, x1, y1] = CRATE, A = on(PZ(0), rectUV(x0, y0, x1, y1)), B = on(PZ(CRATE_H), rectUV(x0, y0, x1, y1));
+  let inner = fill(pd(on(PZ(.6), rectUV(x0 + .6, y0 + .6, x1 - .6, y1 - .6))), WOODM.d);
+  const lumps = [];
+  for (let i = 0; i < Math.min(8, st.fuel | 0); i++){ const at = [x0 + 6 + (i % 4)*8, y0 + 5 + Math.floor(i/4)*6, 2 + Math.floor(i/4)*1.5];
+    lumps.push({ at, svg: gtLump(at, .9, null, GT.COAL) }); }
+  inner += byDepth(lumps);
+  let planks = ''; for (const z of [4, 8]) planks += pd([[x0, y1 + .05, z], [x1, y1 + .05, z]], false) + pd([[x1 + .05, y0, z], [x1 + .05, y1, z]], false);
+  return openShell(A, B, n => toneI(n, WOODM), inner) + `<path d="${planks}" fill="none" stroke="${INK}" stroke-width=".7" opacity=".6"/>` + ink(pd(B), 1.2) + hullInk([...A, ...B], 1.6);
+}
+function sfTray(st){
+  const [x0, y0, x1, y1] = TRAY, A = on(PZ(0), rectUV(x0, y0, x1, y1)), B = on(PZ(TRAY_H), rectUV(x0, y0, x1, y1)), prod = product(st);
+  let inner = fill(pd(on(PZ(.6), rectUV(x0 + .6, y0 + .6, x1 - .6, y1 - .6))), GT.IRON.d);
+  const items = [];
+  for (let i = 0; i < Math.min(8, st.output | 0); i++){ const at = [87 + (i % 2)*7, 27 + Math.floor(i/2)*8, .7];
+    const svg = prod.kind === 'glass' ? box(at[0] - 3, at[1] - 3, .7, at[0] + 3, at[1] + 3, 1.6, { l:'#e4f2f4', m:'#c4dfe4', d:'#97b9c0' }, toneI, .6)
+      : prod.kind === 'brick' ? box(at[0] - 3, at[1] - 3.5, .7, at[0] + 3, at[1] + 3.5, 3.4, matOf(prod.col), toneI, .7)
+      : gtIngot(at, prod.col, 0, true);
+    items.push({ box:[[at[0] - 3, at[1] - 4, .7], [at[0] + 3, at[1] + 4, 3.5]], svg }); }
+  inner += byDepth(items);
+  return openShell(A, B, n => toneI(n, GT.IRON), inner) + ink(pd(B), 1.3) + hullInk([...A, ...B], 1.6);
+}
+
+/* ---------- see-through: firebox, shelf, crucible, flue ---------- */
+let SF_LABELS = '';
+function sfMech(st, k){
+  const parts = [], put = (b, svg) => parts.push({ box: b, svg });
+  let grate = ''; for (let y = 26; y <= 54; y += 4) grate += rod([34, y, 12], [74, y, 12], .8, GT.IRON, toneI, .5);
+  put([[34, 25, 11], [74, 55, 12.8]], grate);
+  put([[40, 29, 12.6], [72, 51, 30]], sfCoalBed(st) + sfFire(st));
+  let shelf = ''; for (let x = 48; x <= 72; x += 4) shelf += rod([x, 28, 42], [x, 52, 42], .9, GT.IRON, toneI, .5);
+  put([[47, 27, 41], [73, 53, 42.9]], shelf);
+  put([[CRUC.x - CRUC.r, CRUC.y - CRUC.r, CRUC.z0], [CRUC.x + CRUC.r, CRUC.y + CRUC.r, CRUC.z1]], sfCrucible(st));
+  put([[10, 50, 76], [18, 58, H]], rod([14, 54, 76], [14, 54, H], 4, STONE, toneI, .8) + fill(pd(on(PZ(76), ellUV(14, 54, 3, 3, 12))), GT.RECESS));
+  const sb = byDepth(parts);
+  SF_LABELS = k <= .6 ? '' : xrCallouts([
+    { at: [74, 54, 12], text: 'FIRE GRATE', on: !!st.burning },
+    { at: [56, 40, 17], text: 'COAL BED', on: !!st.burning },
+    { at: [72, 52, 42], text: 'SHELF', on: false },
+    { at: [CRUC.x, CRUC.y + CRUC.r, CRUC.z1], text: 'CRUCIBLE', on: !!st.active },
+    { at: [14, 58, 84], text: 'FLUE', on: !!st.burning } ], [0, 99, 0, 100, 0, H + CHIM_H + 3]);
+  return sb;
+}
+
+/* ---------- scene ---------- */
+function scene(st, m){
+  const k = ease(st.xr || 0), fade = svg => k > 0 ? `<g opacity="${f(1 - .7*k)}">${svg}</g>` : svg;
+  // in see-through the shadow fades with the walls: through the glass it would read as a stain on the ground
+  // (the attribute sits on the path itself, so the page's 'solid shadows' fix, which looks at groups, leaves it alone)
+  let s = castShadow([...on(PX(0), OUT), ...on(PX(W), OUT), [CHIM[0], CHIM[1], H + CHIM_H], [CHIM[2], CHIM[3], H + CHIM_H]])
+    .replace('<path ', `<path opacity="${f(1 - .75*k)}" `);
+  let body = sfBody(st, STONE);
+  // see-through: paper under the footprint, so the cast shadow doesn't show through the ghosted walls
+  if (k > 0) body = fill(pd(on(PZ(0), rectUV(0, 0, W, D))), '#f2efe7', `opacity="${f(.85*k)}"`)
+    + xrGhost(body, '', k, OUT, 0, W, STONE) + `<g opacity="${f(k)}">${sfMech(st, k)}</g>`;
+  // the body and what stands beside it, then what stands on the roof (sorted on its own: see the design notes)
+  s += byDepth([
+    { box:[[0, 0, 0], [W, D, H]], svg: body },
+    { box:[[TRAY[0], TRAY[1], 0], [TRAY[2], TRAY[3], TRAY_H]], svg: sfTray(st) },
+    { box:[[CRATE[0], CRATE[1], 0], [CRATE[2], CRATE[3], CRATE_H]], svg: fade(sfCrate(st)) } ]);
+  s += fade(sfChimney());
+  s += gtPuffsSvg(st);
+  if (k > .6) s += SF_LABELS;
+  else s += xrCallouts([
+    ...(facing([1,0,0]) ? [{ at: [W, 40, 82], text: 'SMELTING CHAMBER', on: !!st.active }, { at: [W, 40, 32], text: 'FIREBOX', on: !!st.burning }] : []),
+    { at: [CHIM[0] + 8, CHIM[1] + 8, H + CHIM_H + 3], text: 'CHIMNEY', on: !!st.burning },
+    { at: [40, CRATE[3], CRATE_H], text: 'COAL', on: (st.fuel || 0) > 0 },
+    { at: [TRAY[2], 40, TRAY_H], text: 'OUTPUT TRAY', on: (st.output || 0) > 0 } ], [0, 99, 0, 100, 0, H + CHIM_H + 3]);
+  return s;
+}
+
+gtMachine({
+  fig:'F0', title:'Furnace', size:[99, 100, 133], center:[50, 50], scene, fuelled: true, heatTime: 2.5, demoSeconds: 4,
+  recipes:[{ id:'fire_smelt_crushed_iron', name:'Iron Ingot from Crushed Iron Ore' }, { id:'fire_smelt_clay', name:'Brick from Clay' },
+           { id:'fire_smelt_sand', name:'Glass from Sand' }, { id:'fire_smelt_bronze_dust', name:'Bronze Ingot from Bronze Dust' }],
+  state:{ fuel: 6 },
+  toggleLabel:'Fire', loadLabel:'Load charge',
+  stats: st => [{ label:'Progress', value: st.active ? `${Math.round((st.progress || 0)*100)}%` : '-' },
+                { label:'Coal', value: st.fuel | 0, small:true }, { label:'Made', value: st.output | 0, small:true }],
+  emitters:[{ id:'smoke', kind:'smoke', at: () => [14, 54, H + CHIM_H + 4], when: st => !!st.burning, every:.3, life:2.2, rise:24, r0:3 }],
+  tile:[[-3, -1, 0], [99, -1, 0], [99, 101, 0], [-3, 101, 0]],
+});
+</script>
+<script src="cf-tail.js"></script>
+</body></html>
