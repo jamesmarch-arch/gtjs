@@ -53,7 +53,8 @@ app.innerHTML = `
   </aside>
   <main class="floor-area">
     <div class="toolbar"><div class="tools" id="tools"></div>
-      <div class="zoom"><button id="zout" aria-label="Zoom out">−</button><span id="zval">100%</span><button id="zin" aria-label="Zoom in">+</button></div></div>
+      <div class="zoom"><button id="tleft" aria-label="Turn the view left" title="Turn left (Q)">⟲</button><button id="tright" aria-label="Turn the view right" title="Turn right (E)">⟳</button>
+        <button id="zout" aria-label="Zoom out">−</button><span id="zval">100%</span><button id="zin" aria-label="Zoom in">+</button></div></div>
     <div class="floor-host" id="floor"></div>
     <p class="statusline" id="status">&nbsp;</p>
   </main>
@@ -88,7 +89,19 @@ const zoomBy = (k: number) => { floor.setZoom(floor.getZoom() * k); $('zval').te
 $('zin').onclick = () => zoomBy(1.4);
 $('zout').onclick = () => zoomBy(1 / 1.4);
 $('floor').addEventListener('wheel', () => requestAnimationFrame(() => { $('zval').textContent = `${Math.round(floor.getZoom() * 100)}%`; }));
-addEventListener('keydown', (e) => { if (e.key === 'Escape' && !gui && !sheet) floor.setTool({ kind: 'inspect' }); });
+$('tleft').onclick = () => floor.rotate(-1);
+$('tright').onclick = () => floor.rotate(1);
+// the camera's keys: arrows or WASD pan, Q and E turn, Home looks at the machines again
+const PAN_KEYS: Record<string, [number, number]> = { ArrowLeft: [1, 0], a: [1, 0], ArrowRight: [-1, 0], d: [-1, 0], ArrowUp: [0, 1], w: [0, 1], ArrowDown: [0, -1], s: [0, -1] };
+addEventListener('keydown', (e) => {
+  if (gui || sheet || e.ctrlKey || e.metaKey || e.altKey || (e.target as HTMLElement).closest('input, textarea, select')) return;
+  const key = e.key.length === 1 ? e.key.toLowerCase() : e.key, pan = PAN_KEYS[key];
+  if (key === 'Escape') floor.setTool({ kind: 'inspect' });
+  else if (pan) { e.preventDefault(); floor.panBy(pan[0] * 60, pan[1] * 60); }
+  else if (key === 'q') floor.rotate(-1);
+  else if (key === 'e') floor.rotate(1);
+  else if (key === 'Home') floor.recenter();
+});
 
 function refreshTools() {
   const cur = floor.getTool();
@@ -143,7 +156,7 @@ function openGui(uid: string) {
   sheet?.close();
   const m = w.machines.find((x) => x.uid === uid);
   if (!m) return;
-  gui = openMachineGui(m, () => w, () => refresh(), () => { gui = null; });
+  gui = openMachineGui(m, () => w, () => refresh(), () => { gui = null; }, floor.figureYaw());
 }
 
 /* ---------- saving ---------- */

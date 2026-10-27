@@ -1,6 +1,10 @@
 // The isometric floor: draws the layout every frame and turns pointer input into tool actions.
-// Tile (x, y) runs right-down for +x and left-down for +y, like a figure's own axes, so a machine's front (+x) faces
-// the lower right and its figure sprite drops straight onto its tile.
+// In the default view tile (x, y) runs right-down for +x and left-down for +y, like a figure's own axes, so a machine's
+// front (+x) faces the lower right and its figure sprite drops straight onto its tile. The camera turns: `angle` (in
+// quarter turns) maps the floor's (x, y), about its middle, to view axes (u, v) that run right-down and left-down on
+// screen. It rests on whole quarter turns, the four views each figure has a sprite for (<figure>@r); while it turns
+// in between (a right-button drag, or the swing to the next view) each machine shows the nearest view's sprite upright,
+// riding on the middle of its turning tile. It pans over the floor and zooms about the pointer.
 import { CONDUITS, MACHINES } from '../../sim/data';
 import { joinsSteam } from '../../sim/nets';
 import { joinsEu } from '../../sim/power';
@@ -27,7 +31,10 @@ const ZK = 1;
 // plain boxes match the macerator figure's proportions: its body is ~70% of its tile and ~0.8 tiles tall
 const HEIGHT: Record<string, number> = { coke_oven: 1.4, ebf: 4.1 }; // the EBF is GT's four blocks tall
 const INSET = 0.15;
-const PAD = 16;
+const BASE_T = 40; // tile size in px at 100%
+const T_MIN = 14, T_MAX = 160;
+// where world +x (a machine's front, a transformer's high side) points on screen in each view
+const FRONT_DIR = ['lower right', 'upper right', 'upper left', 'lower left'];
 
 const mix = (a: string, b: string, t: number) => '#' + [1, 3, 5].map((i) =>
   Math.round(parseInt(a.substr(i, 2), 16) * (1 - t) + parseInt(b.substr(i, 2), 16) * t).toString(16).padStart(2, '0')).join('');
@@ -41,17 +48,20 @@ const wob = (x: number, y: number, k: number) => {
 export class Floor {
   readonly canvas = document.createElement('canvas');
   private ctx = this.canvas.getContext('2d')!;
-  private T = 40;
-  private zoom = 1;
-  private headTiles = 1.9; // room above the back corner for tall machines, in tiles
-  private ox = 0;
-  private oy = 0;
+  private T = BASE_T;
+  private angle = 0; // the camera's turn, in quarter turns (any real number; it rests on whole ones)
+  private target = 0; // the quarter turn it is swinging to
+  private cam: Pt = [0, 0]; // the view-space point (u, v) at the middle of the canvas
+  private cw = 0; // the canvas's size in CSS px
+  private ch = 0;
+  private world: World | null = null; // the world the camera was last pointed at
   private tool: Tool = { kind: 'inspect' };
   private hover: Pt | null = null;
   private pointer: Pt | null = null;
   private dragging = false;
   private lastDragTile = '';
-  private sprites = new Map<string, Sprite | null>();
+  private pan: { from: Pt; cam: Pt; angle: number; moved: boolean; button: number } | null = null;
+  private sprites = new Map<string, Sprite | null>(); // by '<figure>' or '<figure>@<view>'; null while loading or missing
   private puffs: { x: number; y: number; z: number; t: number; seed: number }[] = [];
   private booms: { x: number; y: number; t: number; big: boolean }[] = [];
   private lastFrame = 0;
@@ -60,21 +70,16 @@ export class Floor {
   constructor(private host: HTMLElement, private getWorld: () => World, private events: FloorEvents) {
     host.appendChild(this.canvas);
     this.canvas.className = 'floor-canvas';
-    for (const def of MACHINES.values()) if (def.figure) {
-      const fig = def.figure;
-      void loadSprite(fig).then((s) => this.sprites.set(fig, s));
-    }
     new ResizeObserver(() => this.layout()).observe(host);
     this.canvas.addEventListener('pointermove', (e) => this.onMove(e));
     this.canvas.addEventListener('pointerdown', (e) => this.onDown(e));
-    this.canvas.addEventListener('pointerup', () => { this.dragging = false; this.lastDragTile = ''; });
-    this.canvas.addEventListener('pointerleave', () => { this.hover = this.pointer = null; this.dragging = false; this.events.status(''); });
+    this.canvas.addEventListener('pointerup', (e) => this.onUp(e));
+    this.canvas.addEventListener('pointerleave', () => { this.hover = this.pointer = null; this.events.status(''); });
     this.canvas.addEventListener('wheel', (e) => {
-      if (!e.ctrlKey && !e.metaKey) return;
       e.preventDefault();
-      this.setZoom(this.zoom * Math.exp(-e.deltaY * 0.002));
+      this.zoomAt(this.T * Math.exp(-e.deltaY * 0.0015), this.local(e));
     }, { passive: false });
-    this.canvas.addEventListener('contextmenu', (e) => { e.preventDefault(); this.setTool({ kind: 'inspect' }); });
+    this.canvas.addEventListener('contextmenu', (e) => e.preventDefault()); // right-drag turns; a right click puts the tool down
     this.layout();
   }
 
@@ -87,37 +92,120 @@ export class Floor {
 
   getTool(): Tool { return this.tool; }
 
-  /** Zoom in or out (1 = fit the floor to its frame); the frame scrolls when the floor is bigger. */
-  setZoom(z: number) {
-    this.zoom = Math.max(1, Math.min(4, z));
-    this.layout();
+  /** Zoom (1 = 100%) about the middle of the frame. */
+  setZoom(z: number) { this.zoomAt(z * BASE_T, [this.cw / 2, this.ch / 2]); }
+
+  getZoom(): number { return this.T / BASE_T; }
+
+  /** Swing the floor a quarter turn on screen (+1 clockwise, -1 anticlockwise) about whatever is in the middle of the frame. */
+  rotate(dir: 1 | -1) {
+    this.target = Math.round(this.target) - dir;
+    this.describeView(this.target);
   }
 
-  getZoom(): number { return this.zoom; }
+  /** The quarter turn the camera is at or nearest to, 0..3: which side of the machines it sees. */
+  private get view() { return ((Math.round(this.angle) % 4) + 4) % 4; }
+
+  // turn the camera to `a` about whatever is in the middle of the frame
+  private setAngle(a: number) {
+    const mid = this.unrot(...this.cam);
+    this.angle = a;
+    this.cam = this.rot(...mid);
+  }
+
+  private describeView(a: number) {
+    const v = ((Math.round(a) % 4) + 4) % 4;
+    this.events.status(`View ${v + 1} of 4: machine fronts face the ${FRONT_DIR[v]}`);
+  }
+
+  /** The figures' camera yaw that sees machines from the side this view does (tools/snapshot-figures.mjs uses the same). */
+  figureYaw(): number { return 45 + 90 * this.view; }
+
+  /** Pan by a distance on screen, in px: the floor moves with it. */
+  panBy(dx: number, dy: number) {
+    const a = dx / this.T, b = dy / (this.T / 2);
+    this.cam = this.clampCam([this.cam[0] - (a + b) / 2, this.cam[1] - (b - a) / 2]);
+  }
+
+  /** Point the camera at the machines, or at the middle of an empty floor. */
+  recenter() {
+    const w = this.getWorld();
+    if (!w.machines.length) { this.cam = this.rot(w.floor.w / 2, w.floor.h / 2); return; }
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const m of w.machines) {
+      const [fw, fh] = MACHINES.get(m.def)!.footprint;
+      x0 = Math.min(x0, m.x); y0 = Math.min(y0, m.y); x1 = Math.max(x1, m.x + fw); y1 = Math.max(y1, m.y + fh);
+    }
+    this.cam = this.rot((x0 + x1) / 2, (y0 + y1) / 2);
+  }
 
   /* ---------- geometry ---------- */
 
   private layout() {
-    const w = this.getWorld(), span = w.floor.w + w.floor.h;
-    this.T = Math.floor(Math.max(22, Math.min(64, (this.host.clientWidth - 2 * PAD - 2) / span)) * this.zoom);
-    const T = this.T, head = this.headTiles * ZK * T;
-    const cssW = span * T + 2 * PAD, cssH = (span * T) / 2 + head + PAD;
-    this.ox = PAD + w.floor.h * T;
-    this.oy = head;
+    this.cw = this.host.clientWidth;
+    this.ch = this.host.clientHeight;
     const dpr = devicePixelRatio || 1;
-    this.canvas.width = Math.round(cssW * dpr);
-    this.canvas.height = Math.round(cssH * dpr);
-    this.canvas.style.width = `${cssW}px`;
-    this.canvas.style.height = `${cssH}px`;
+    this.canvas.width = Math.round(this.cw * dpr);
+    this.canvas.height = Math.round(this.ch * dpr);
+    this.canvas.style.width = `${this.cw}px`;
+    this.canvas.style.height = `${this.ch}px`;
   }
 
-  private iso(x: number, y: number, z = 0): Pt {
-    return [this.ox + (x - y) * this.T, this.oy + ((x + y) * this.T) / 2 - z * ZK * this.T];
+  // the camera's turn as a cosine and sine, exact at whole quarter turns (so tiles land on whole numbers there)
+  private turn(): Pt {
+    const a = (this.angle * Math.PI) / 2, r = (n: number) => Math.round(n * 1e9) / 1e9;
+    return [r(Math.cos(a)), r(Math.sin(a))];
+  }
+
+  /** The floor's (x, y) on the view's axes (u, v), measured from the middle of the floor. */
+  private rot(x: number, y: number): Pt {
+    const { w, h } = this.getWorld().floor, [c, s] = this.turn(), dx = x - w / 2, dy = y - h / 2;
+    return [dx * c + dy * s, dy * c - dx * s];
+  }
+
+  private unrot(u: number, v: number): Pt {
+    const { w, h } = this.getWorld().floor, [c, s] = this.turn();
+    return [w / 2 + u * c - v * s, h / 2 + u * s + v * c];
+  }
+
+  /** The screen point of view-space (u, v) at height z. */
+  private scr(u: number, v: number, z = 0): Pt {
+    const du = u - this.cam[0], dv = v - this.cam[1];
+    return [this.cw / 2 + (du - dv) * this.T, this.ch / 2 + ((du + dv) * this.T) / 2 - z * ZK * this.T];
+  }
+
+  private iso(x: number, y: number, z = 0): Pt { return this.scr(...this.rot(x, y), z); }
+
+  /** The view-space point on the floor under a screen point. */
+  private viewAt(px: number, py: number): Pt {
+    const a = (px - this.cw / 2) / this.T, b = (py - this.ch / 2) / (this.T / 2);
+    return [this.cam[0] + (a + b) / 2, this.cam[1] + (b - a) / 2];
   }
 
   private tileAt(px: number, py: number): Pt {
-    const a = (px - this.ox) / this.T, b = (py - this.oy) / (this.T / 2);
-    return [Math.floor((a + b) / 2), Math.floor((b - a) / 2)];
+    const [x, y] = this.unrot(...this.viewAt(px, py));
+    return [Math.floor(x), Math.floor(y)];
+  }
+
+  /** A machine's footprint in view space, [u0, v0, u1, v1]: exact at rest, the turned tile's bounds in between. */
+  private viewRect(m: MachineState): [number, number, number, number] {
+    const [fw, fh] = MACHINES.get(m.def)!.footprint;
+    const pts = [this.rot(m.x, m.y), this.rot(m.x + fw, m.y), this.rot(m.x + fw, m.y + fh), this.rot(m.x, m.y + fh)];
+    const us = pts.map((p) => p[0]), vs = pts.map((p) => p[1]);
+    return [Math.min(...us), Math.min(...vs), Math.max(...us), Math.max(...vs)];
+  }
+
+  private zoomAt(t: number, at: Pt) {
+    const before = this.viewAt(...at);
+    this.T = Math.max(T_MIN, Math.min(T_MAX, t));
+    const after = this.viewAt(...at);
+    this.cam = this.clampCam([this.cam[0] + before[0] - after[0], this.cam[1] + before[1] - after[1]]);
+  }
+
+  // keep the middle of the frame over the floor
+  private clampCam(c: Pt): Pt {
+    const { w, h } = this.getWorld().floor, [x, y] = this.unrot(...c);
+    return this.rot(Math.max(0, Math.min(w, x)), Math.max(0, Math.min(h, y)));
   }
 
   private heightOf(m: MachineState) { return HEIGHT[m.def] ?? 0.8; }
@@ -127,42 +215,52 @@ export class Floor {
     const w = this.getWorld();
     const ms = [...w.machines].sort((a, b) => this.depth(b) - this.depth(a));
     for (const m of ms) {
-      const [fw, fh] = MACHINES.get(m.def)!.footprint, h = this.heightOf(m);
-      const poly = [this.iso(m.x, m.y, h), this.iso(m.x + fw, m.y, h), this.iso(m.x + fw, m.y, 0),
-        this.iso(m.x + fw, m.y + fh, 0), this.iso(m.x, m.y + fh, 0), this.iso(m.x, m.y + fh, h)];
+      const [u0, v0, u1, v1] = this.viewRect(m), h = this.heightOf(m);
+      const poly = [this.scr(u0, v0, h), this.scr(u1, v0, h), this.scr(u1, v0, 0), this.scr(u1, v1, 0), this.scr(u0, v1, 0), this.scr(u0, v1, h)];
       if (inPoly(px, py, poly)) return { kind: 'machine', m };
     }
     const [x, y] = this.tileAt(px, py);
     return occupant(w, x, y);
   }
 
+  // draw order: back to front, along the view
   private depth(m: MachineState) {
-    const [fw, fh] = MACHINES.get(m.def)!.footprint;
-    return m.x + fw / 2 + m.y + fh / 2;
+    const [u0, v0, u1, v1] = this.viewRect(m);
+    return (u0 + u1) / 2 + (v0 + v1) / 2;
   }
 
   /* ---------- input ---------- */
 
-  private local(e: PointerEvent): Pt {
+  private local(e: MouseEvent): Pt {
     const r = this.canvas.getBoundingClientRect();
     return [e.clientX - r.left, e.clientY - r.top];
   }
 
   private onMove(e: PointerEvent) {
     this.pointer = this.local(e);
+    if (this.pan) {
+      const dx = this.pointer[0] - this.pan.from[0], dy = this.pointer[1] - this.pan.from[1];
+      if (Math.hypot(dx, dy) > 4) this.pan.moved = true;
+      if (this.pan.moved) {
+        this.canvas.dataset.panning = this.pan.button === 2 ? 'turn' : '';
+        // the right button turns the camera (a quarter turn per 240 px sideways, the near side following the pointer)
+        if (this.pan.button === 2) { this.setAngle(this.pan.angle + dx / 240); this.target = this.angle; this.describeView(this.angle); }
+        else { this.cam = this.pan.cam; this.panBy(dx, dy); }
+      }
+    }
     this.hover = this.tileAt(...this.pointer);
     if (this.dragging) this.applyDrag();
-    this.describeHover();
+    if (this.pan?.button !== 2 || !this.pan.moved) this.describeHover();
   }
 
   private onDown(e: PointerEvent) {
-    if (e.button !== 0) return;
     this.pointer = this.local(e);
     this.hover = this.tileAt(...this.pointer);
     const t = this.tool, w = this.getWorld();
-    if (t.kind === 'inspect') {
-      const o = this.pick(...this.pointer);
-      if (o?.kind === 'machine') this.events.inspect(o.m);
+    // the right button turns and the middle one pans, with any tool; the left one pans too with the open tool, once it moves
+    if (e.button !== 0 || t.kind === 'inspect') {
+      this.pan = { from: this.pointer, cam: this.cam, angle: this.angle, moved: false, button: e.button };
+      this.canvas.setPointerCapture(e.pointerId);
       return;
     }
     if (t.kind === 'build' && !isConduit(t.what)) {
@@ -177,6 +275,22 @@ export class Floor {
     this.dragging = true;
     this.canvas.setPointerCapture(e.pointerId);
     this.applyDrag();
+  }
+
+  private onUp(e: PointerEvent) {
+    this.dragging = false;
+    this.lastDragTile = '';
+    const pan = this.pan;
+    this.pan = null;
+    delete this.canvas.dataset.panning;
+    if (pan?.button === 2 && pan.moved) this.target = Math.round(this.angle); // let go: settle on the nearest view
+    if (!pan || pan.moved || pan.button !== e.button) return;
+    // a click, not a drag: the left button opens what's under it, the right one puts the tool down
+    if (pan.button === 2) return this.setTool({ kind: 'inspect' });
+    if (pan.button === 0) {
+      const o = this.pick(...this.local(e));
+      if (o?.kind === 'machine') this.events.inspect(o.m);
+    }
   }
 
   private applyDrag() {
@@ -211,7 +325,7 @@ export class Floor {
     if (!o) return this.events.status('');
     if (o.kind === 'machine') {
       const def = MACHINES.get(o.m.def)!;
-      const side = def.transformer ? ` · ${o.m.mode === 'up' ? 'step-up' : 'step-down'}, high side in front (lower right)` : '';
+      const side = def.transformer ? ` · ${o.m.mode === 'up' ? 'step-up' : 'step-down'}, high side in front (${FRONT_DIR[this.view]})` : '';
       return this.events.status(`${def.name} (${o.m.x}, ${o.m.y}): ${machineStatus(o.m)}${side}${t.kind === 'remove' ? ' · click to remove' : ' · click to open'}`);
     }
     const cd = CONDUITS.get(o.kind === 'pipe' ? 'pipe' : o.c.kind)!;
@@ -224,10 +338,12 @@ export class Floor {
     const dt = Math.min(0.1, (now - (this.lastFrame || now)) / 1000);
     this.lastFrame = now;
     const ctx = this.ctx, w = this.getWorld(), dpr = devicePixelRatio || 1;
-    // make room above the floor for the tallest machine on it (and a puff of smoke)
-    const head = Math.max(1.9, ...w.machines.map((m) => this.heightOf(m) + 0.8));
-    if (head !== this.headTiles) { this.headTiles = head; this.layout(); }
-    if (this.canvas.width !== Math.round(parseFloat(this.canvas.style.width) * dpr)) this.layout();
+    if (w !== this.world) { this.world = w; this.recenter(); } // a new game or a loaded save: look at it
+    if (this.angle !== this.target) { // swinging to a view: ease in, land exactly
+      const d = this.target - this.angle;
+      this.setAngle(Math.abs(d) < 0.003 ? this.target : this.angle + d * Math.min(1, dt * 12));
+    }
+    if (this.canvas.width !== Math.round(this.cw * dpr)) this.layout();
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
     ctx.lineJoin = ctx.lineCap = 'round';
@@ -238,9 +354,18 @@ export class Floor {
 
     type Item = { depth: number; draw: () => void };
     const items: Item[] = [];
-    for (const m of w.machines) items.push({ depth: this.depth(m), draw: () => this.drawMachine(m) });
-    for (const p of w.pipes) items.push({ depth: p.x + p.y + 1, draw: () => this.drawConduit(w, p.x, p.y, 'pipe') });
-    for (const c of w.cables) items.push({ depth: c.x + c.y + 1, draw: () => this.drawConduit(w, c.x, c.y, c.kind) });
+    // only what's in the frame (allowing for machines up to 4.5 tiles tall)
+    const shows = (x: number, y: number, up: number) => {
+      const [px, py] = this.iso(x, y), m = 2 * this.T;
+      return px > -m && px < this.cw + m && py > -m && py < this.ch + m + up * this.T;
+    };
+    const tileDepth = (x: number, y: number) => { const [u, v] = this.rot(x + 0.5, y + 0.5); return u + v; };
+    for (const m of w.machines) {
+      const [fw, fh] = MACHINES.get(m.def)!.footprint;
+      if (shows(m.x + fw / 2, m.y + fh / 2, 4.5 + fw)) items.push({ depth: this.depth(m), draw: () => this.drawMachine(m) });
+    }
+    for (const p of w.pipes) if (shows(p.x + 0.5, p.y + 0.5, 0)) items.push({ depth: tileDepth(p.x, p.y), draw: () => this.drawConduit(w, p.x, p.y, 'pipe') });
+    for (const c of w.cables) if (shows(c.x + 0.5, c.y + 0.5, 0)) items.push({ depth: tileDepth(c.x, c.y), draw: () => this.drawConduit(w, c.x, c.y, c.kind) });
     const ghost = this.ghost(w);
     if (ghost) items.push(ghost);
     items.sort((a, b) => a.depth - b.depth);
@@ -306,13 +431,35 @@ export class Floor {
     return { depth: this.depth(fake) + 0.01, draw: () => { this.ctx.globalAlpha = ok ? 0.55 : 0.3; this.drawMachine(fake); this.ctx.globalAlpha = 1; } };
   }
 
+  /** The figure's sprite for the current view, once it has loaded. A figure's first sprite brings the other three
+   * sides after it, so turning the camera doesn't show plain boxes while they load. */
+  private spriteFor(figure: string): Sprite | null {
+    const keyOf = (v: number) => (v ? `${figure}@${v}` : figure), key = keyOf(this.view);
+    const load = (k: string) => { this.sprites.set(k, null); return loadSprite(k).then((s) => this.sprites.set(k, s)); };
+    if (!this.sprites.has(key)) void load(key).then(() => { for (let v = 0; v < 4; v++) if (!this.sprites.has(keyOf(v))) void load(keyOf(v)); });
+    return this.sprites.get(key)!;
+  }
+
+  /** Where a sprite goes: on its tile at rest; between views, upright as in the nearest view (bending it onto the
+   * turned tile would shear it sideways), moved to where the middle of its tile is now. */
+  private placeSprite(sprite: Sprite, x: number, y: number, fw: number, fh: number): DOMMatrix {
+    const onTile = () => spriteTransform(sprite, this.iso(x, y), this.iso(x + fw, y), this.iso(x, y + fh));
+    const a = this.angle, r = Math.round(a);
+    if (a === r) return onTile();
+    const now = this.iso(x + fw / 2, y + fh / 2);
+    this.angle = r; // the nearest view, for a moment (cam stays put)
+    const rest = this.iso(x + fw / 2, y + fh / 2), at = onTile();
+    this.angle = a;
+    return new DOMMatrix().translate(now[0] - rest[0], now[1] - rest[1]).multiply(at);
+  }
+
   private drawMachine(m: MachineState) {
     const def = MACHINES.get(m.def)!, [fw, fh] = def.footprint;
-    const sprite = def.figure ? this.sprites.get(def.figure) : null;
+    const sprite = def.figure ? this.spriteFor(def.figure) : null;
     const ctx = this.ctx;
     if (sprite) {
       ctx.save();
-      ctx.setTransform(ctx.getTransform().multiply(spriteTransform(sprite, this.iso(m.x, m.y), this.iso(m.x + fw, m.y), this.iso(m.x, m.y + fh))));
+      ctx.setTransform(ctx.getTransform().multiply(this.placeSprite(sprite, m.x, m.y, fw, fh)));
       // sprites are drawn 3-4x smaller than they were rendered: the default ('low') smoothing samples too few pixels
       // and turns fine stone lines and paper grain into speckle; 'high' averages them
       ctx.imageSmoothingEnabled = true;
@@ -323,12 +470,12 @@ export class Floor {
     if (m.uid !== 'ghost') this.drawLamp(m);
   }
 
-  /** A plain inked box in the figures' palette, for machines that have no figure yet. */
+  /** A plain inked box in the figures' palette: a machine with no figure, or one whose sprite is still loading. */
   private drawBox(m: MachineState) {
-    const def = MACHINES.get(m.def)!, [fw, fh] = def.footprint, h = this.heightOf(m), ctx = this.ctx;
-    const pal = def.kind === 'coke_oven' ? BRICK : def.fuel ? STONE : def.id === 'hp_boiler' ? IRONP : def.power === 'eu' ? STEEL : BRONZE, i = INSET;
-    const x0 = m.x + i, y0 = m.y + i, x1 = m.x + fw - i, y1 = m.y + fh - i;
-    const P = (x: number, y: number, z: number): Pt => { const [px, py] = this.iso(x, y, z); return [px + wob(x, y, z), py + wob(y, z, x)]; };
+    const def = MACHINES.get(m.def)!, h = this.heightOf(m), ctx = this.ctx, i = INSET;
+    const pal = def.kind === 'coke_oven' ? BRICK : def.fuel ? STONE : def.id === 'hp_boiler' ? IRONP : def.power === 'eu' ? STEEL : BRONZE;
+    const [U0, V0, U1, V1] = this.viewRect(m), u0 = U0 + i, v0 = V0 + i, u1 = U1 - i, v1 = V1 - i;
+    const P = (u: number, v: number, z: number): Pt => { const [px, py] = this.scr(u, v, z); return [px + wob(u, v, z), py + wob(v, z, u)]; };
     const poly = (pts: Pt[], fill: string, line = 1.4) => {
       ctx.beginPath(); for (const p of pts) ctx.lineTo(...p); ctx.closePath();
       ctx.fillStyle = fill; ctx.fill(); ctx.strokeStyle = INK; ctx.lineWidth = line; ctx.stroke();
@@ -336,49 +483,36 @@ export class Floor {
     // shadow toward the lower left, like the figures'
     ctx.fillStyle = SHADOW;
     ctx.beginPath();
-    for (const p of [P(x0, y1, 0), P(x1, y1, 0), P(x1 - 0.1, y1 + 0.35 * h, 0), P(x0 - 0.1, y1 + 0.35 * h, 0)]) ctx.lineTo(...p);
+    for (const p of [P(u0, v1, 0), P(u1, v1, 0), P(u1 - 0.1, v1 + 0.35 * h, 0), P(u0 - 0.1, v1 + 0.35 * h, 0)]) ctx.lineTo(...p);
     ctx.closePath(); ctx.fill();
-    poly([P(x0, y1, 0), P(x1, y1, 0), P(x1, y1, h), P(x0, y1, h)], mix(pal.d, pal.m, 0.25)); // left side, in shade
-    poly([P(x1, y0, 0), P(x1, y1, 0), P(x1, y1, h), P(x1, y0, h)], mix(pal.l, pal.m, 0.3)); // front, lit
-    poly([P(x0, y0, h), P(x1, y0, h), P(x1, y1, h), P(x0, y1, h)], pal.l); // top
-    // the front's details: a firebox for boilers, then the name, written along the front face
-    const T = this.T;
-    if (def.boiler || def.fuel) { // a firebox that glows while fuel burns
-      const fire = m.burn > 0;
-      poly([P(x1 + 0.005, y0 + 0.3 * fh, 0.12), P(x1 + 0.005, y1 - 0.3 * fh, 0.12), P(x1 + 0.005, y1 - 0.3 * fh, 0.38), P(x1 + 0.005, y0 + 0.3 * fh, 0.38)],
-        fire ? '#ff8a3d' : '#2b2523', 1.2);
-    }
-    if (def.transformer && m.mode === 'up') {
-      // a red band along the front edge: this side runs at MV
-      poly([P(x1 + 0.005, y0, h - 0.12), P(x1 + 0.005, y1, h - 0.12), P(x1 + 0.005, y1, h), P(x1 + 0.005, y0, h)], '#e2483d', 1);
-    }
-    if (def.kind === 'coke_oven') {
-      poly([P(x1 + 0.005, y0 + 1.1, 0.1), P(x1 + 0.005, y1 - 1.1, 0.1), P(x1 + 0.005, y1 - 1.1, 0.7), P(x1 + 0.005, y0 + 1.1, 0.7)], m.active ? '#ff8a3d' : '#2b2523', 1.4);
-    }
-    const [lx, ly] = this.iso(x1, (y0 + y1) / 2, h * 0.72);
+    poly([P(u0, v1, 0), P(u1, v1, 0), P(u1, v1, h), P(u0, v1, h)], mix(pal.d, pal.m, 0.25)); // the lower-left face, in shade
+    poly([P(u1, v0, 0), P(u1, v1, 0), P(u1, v1, h), P(u1, v0, h)], mix(pal.l, pal.m, 0.3)); // the lower-right face, lit
+    poly([P(u0, v0, h), P(u1, v0, h), P(u1, v1, h), P(u0, v1, h)], pal.l); // top
+    // the name, written along the lower-right face
+    const T = this.T, [lx, ly] = this.scr(u1, (v0 + v1) / 2, h * 0.72);
     ctx.save();
     ctx.setTransform(ctx.getTransform().multiply(new DOMMatrix([1, -0.5, 0, 1, lx, ly])));
     ctx.fillStyle = INK;
     ctx.textAlign = 'center';
-    // shrink long names to fit the face: along it, the skewed text runs 1 px per px of the face's width (y1 - y0) * T
+    // shrink long names to fit the face: along it, the skewed text runs 1 px per px of the face's width (v1 - v0) * T
     const font = (px: number) => `800 ${px}px ui-monospace, Menlo, monospace`, base = Math.max(7, T * 0.2);
     ctx.font = font(base);
-    const label = def.transformer ? (m.mode === 'up' ? 'STEP UP' : 'STEP DOWN') : def.short;
-    const fit = ((y1 - y0) * T * 0.82) / ctx.measureText(label).width;
+    const fit = ((v1 - v0) * T * 0.82) / ctx.measureText(def.short).width;
     if (fit < 1) ctx.font = font(Math.max(5, base * fit));
-    ctx.fillText(label, 0, 0);
+    ctx.fillText(def.short, 0, 0);
     ctx.restore();
     // silhouette
     ctx.beginPath();
-    for (const p of [P(x0, y0, h), P(x1, y0, h), P(x1, y0, 0), P(x1, y1, 0), P(x0, y1, 0), P(x0, y1, h)]) ctx.lineTo(...p);
+    for (const p of [P(u0, v0, h), P(u1, v0, h), P(u1, v0, 0), P(u1, v1, 0), P(u0, v1, 0), P(u0, v1, h)]) ctx.lineTo(...p);
     ctx.closePath(); ctx.strokeStyle = INK; ctx.lineWidth = 2.2; ctx.stroke();
   }
 
+  // a status dot over the machine's right-hand corner, whichever way the camera faces
   private drawLamp(m: MachineState) {
     const st = machineStatus(m);
     if (st === 'off') return;
-    const def = MACHINES.get(m.def)!, [fw] = def.footprint, ctx = this.ctx;
-    const [x, y] = this.iso(m.x + fw - 0.1, m.y + 0.12, this.heightOf(m) + 0.12);
+    const [, v0, u1] = this.viewRect(m), ctx = this.ctx;
+    const [x, y] = this.scr(u1 - 0.1, v0 + 0.12, this.heightOf(m) + 0.12);
     ctx.beginPath();
     ctx.arc(x, y, Math.max(3, this.T * 0.08), 0, Math.PI * 2);
     ctx.fillStyle = st === 'working' || st === 'burning' ? '#43c25c' : st === 'idle' ? '#f4b829' : '#e2483d';

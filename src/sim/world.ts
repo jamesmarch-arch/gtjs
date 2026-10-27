@@ -68,8 +68,11 @@ export interface World {
   events: WorldEvent[]; // what broke, for the view to show and clear (not saved)
 }
 
+/** The floor every new game gets, in tiles. Older, smaller floors grow to it when they load. */
+export const FLOOR = { w: 32, h: 32 };
+
 export function emptyWorld(): World {
-  return { tick: 0, floor: { w: 12, h: 8 }, storage: {}, machines: [], pipes: [], cables: [], nextUid: 1, seed: 1, stats: { made: {}, burned: 0, eu: 0 }, quests: {}, layoutRev: 0, events: [] };
+  return { tick: 0, floor: { ...FLOOR }, storage: {}, machines: [], pipes: [], cables: [], nextUid: 1, seed: 1, stats: { made: {}, burned: 0, eu: 0 }, quests: {}, layoutRev: 0, events: [] };
 }
 
 /** Count `n` of `item` as made, for the quest book. */

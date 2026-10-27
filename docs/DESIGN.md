@@ -199,3 +199,14 @@ the workbench; mix bronze dust (3 copper + 1 tin); smelt in the furnace (one coa
 then bronze plates and bricks make the first boiler. The quest book's opening follows that path. A test
 (`src/sim/bootstrap.test.ts`) proves a boiler is reachable with hand crafting and the furnace alone, and every machine
 after it. The old starting kit lives on as a test fixture (`src/sim/fixtures.ts`).
+
+**The camera (after M6).** The floor is 32 x 32 tiles (`FLOOR` in `src/sim/world.ts`); saves from the 12 x 8 days
+grow to it on load, with everything on its tile. The floor's frame is a fixed window with a camera: drag with the
+middle button (or the left one with the open tool), or the arrows / WASD, to pan; the wheel zooms about the pointer;
+hold the right button and drag sideways to turn the view freely, and let go to settle on the nearest quarter turn;
+Q and E (or the turn buttons) swing a quarter turn; Home looks at the machines again. The camera's angle (in quarter
+turns) maps the floor's (x, y) onto view axes (u, v) about the floor's middle (`rot` / `unrot` in `floor.ts`);
+drawing, picking and the draw order all work in view space. Between quarter turns each machine shows the nearest
+view's sprite upright, riding on the middle of its turning tile (bending it onto the turned tile shears it badly). Sprites are pictures, so `npm run sprites` renders every figure from four sides
+(`<figure>.png`, `@1`, `@2`, `@3`, at yaw 45 + 90 per view), and a machine opened from a turned view opens its figure
+from the same side.

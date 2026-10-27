@@ -1,7 +1,7 @@
 // Saves: JSON with a version number. Loading rebuilds the world through the same placement rules a player uses,
 // so a damaged or hand-edited save can't put two things on one tile or name a machine that doesn't exist.
 import { ITEMS, MACHINES, QUESTS, RECIPES } from './data';
-import { emptyWorld, placeCable, placeMachine, placePipe, type World } from './world';
+import { emptyWorld, FLOOR, placeCable, placeMachine, placePipe, type World } from './world';
 
 // 1: M2 (no cables). 2: M3 adds cables. 3: M4 adds stats and quests. 4: M5 adds EU, cable kinds, transformer modes.
 export const SAVE_VERSION = 4;
@@ -37,7 +37,8 @@ export function deserialize(text: string): World {
 
   const w = emptyWorld();
   const floor = obj(s.floor, 'floor');
-  w.floor = { w: num(floor.w, 'floor.w', 1), h: num(floor.h, 'floor.h', 1) };
+  // a floor never shrinks; one saved when floors were smaller grows to today's size (everything keeps its tile)
+  w.floor = { w: Math.max(FLOOR.w, num(floor.w, 'floor.w', 1)), h: Math.max(FLOOR.h, num(floor.h, 'floor.h', 1)) };
   w.tick = num(s.tick, 'tick');
   w.seed = num(s.seed, 'seed', -(2 ** 31));
 

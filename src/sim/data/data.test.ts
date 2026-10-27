@@ -62,11 +62,12 @@ describe('game data', () => {
 });
 
 describe('machine art', () => {
-  it('gives every machine a figure page and a floor sprite', () => {
+  it('gives every machine a figure page and a floor sprite from each of the four sides', () => {
     // the paths of the files in public/ (globbed, never loaded)
     const files = new Set(Object.keys(import.meta.glob(['/public/figures/*.html', '/public/sprites/*'])).map((p) => p.replace('/public/', '')));
     const has = (path: string) => files.has(path);
-    const missing = machines.filter((m) => !m.figure || ![`figures/${m.figure}.html`, `sprites/${m.figure}.png`, `sprites/${m.figure}.json`].every(has));
+    const sprites = (f: string) => ['', '@1', '@2', '@3'].flatMap((v) => [`sprites/${f}${v}.png`, `sprites/${f}${v}.json`]);
+    const missing = machines.filter((m) => !m.figure || ![`figures/${m.figure}.html`, ...sprites(m.figure)].every(has));
     expect(missing.map((m) => m.id)).toEqual([]);
   });
 });

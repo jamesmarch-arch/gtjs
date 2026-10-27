@@ -82,13 +82,14 @@ export function figureMachine(w: World, m: MachineState): FigureMachine {
   };
 }
 
-export function mountFigureHost(el: HTMLElement, getWorld: () => World, m: MachineState, onChange: () => void) {
+/** yaw: which side the figure opens on (45 = its front view), so it matches the floor's camera. */
+export function mountFigureHost(el: HTMLElement, getWorld: () => World, m: MachineState, onChange: () => void, yaw = 45) {
   const def = MACHINES.get(m.def)!;
   if (!def.figure) throw new Error(`${def.id} has no figure`);
   const frame = document.createElement('iframe');
   frame.className = 'figure-frame';
   frame.title = def.name;
-  frame.src = `/figures/${def.figure}.html`;
+  frame.src = `/figures/${def.figure}.html${yaw === 45 ? '' : `?yaw=${yaw}`}`;
   el.replaceChildren(frame);
 
   let ready = false, last = '';

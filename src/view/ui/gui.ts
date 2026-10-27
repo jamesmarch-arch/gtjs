@@ -6,7 +6,7 @@ import { mountMachinePanel } from './machinePanel';
 
 export interface MachineGui { machine: MachineState; sync(): void; close(): void }
 
-export function openMachineGui(m: MachineState, getWorld: () => World, onChange: () => void, onClose: () => void): MachineGui {
+export function openMachineGui(m: MachineState, getWorld: () => World, onChange: () => void, onClose: () => void, yaw = 45): MachineGui {
   const def = MACHINES.get(m.def)!;
   const back = document.createElement('div');
   back.className = 'gui-backdrop';
@@ -16,7 +16,7 @@ export function openMachineGui(m: MachineState, getWorld: () => World, onChange:
     </div>`;
   document.body.appendChild(back);
   const body = back.querySelector<HTMLElement>('.gui-body')!;
-  const view = (def.figure ? mountFigureHost : mountMachinePanel)(body, getWorld, m, onChange);
+  const view = def.figure ? mountFigureHost(body, getWorld, m, onChange, yaw) : mountMachinePanel(body, getWorld, m, onChange);
 
   const close = () => {
     view.destroy();

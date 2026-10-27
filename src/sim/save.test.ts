@@ -29,6 +29,13 @@ describe('saves', () => {
     expect(serialize(deserialize(text))).toBe(text);
   });
 
+  it('grow a floor saved when floors were 12 by 8, and keep everything on its tile', () => {
+    const w = workshop(), old = edit(w, (s) => { s.world.floor = { w: 12, h: 8 }; });
+    const back = deserialize(old);
+    expect(back.floor).toEqual({ w: 32, h: 32 });
+    expect(back.machines.map((m) => [m.def, m.x, m.y])).toEqual(w.machines.map((m) => [m.def, m.x, m.y]));
+  });
+
   it('carry on exactly as the original would, chanced outputs included', () => {
     const a = busyWorld(), b = deserialize(serialize(a));
     run(a, 3000);
