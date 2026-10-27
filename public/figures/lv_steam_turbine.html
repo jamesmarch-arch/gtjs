@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LV Steam Turbine</title>
+<script src="cf-head.js"></script></head><body>
+<script src="core.js"></script>
+<script src="gt-bridge.js"></script>
+<script src="gt-parts.js"></script>
+<script src="gt-lv.js"></script>
+<script>
+/* LV Steam Turbine (gtjs, LV): the first EU. Steam from the boilers' net spins a turbine wheel; the wheel turns a
+   dynamo; the dynamo's current leaves by the cable as 32 V (LV). 2 L of steam make 1 EU; at most 32 EU a tick.
+
+   How it works (truth first)
+   1. Steam comes up the bronze riser from the steam net under the floor, through the red-wheeled valve, into the
+      left (+y) wall, and out of a nozzle at the rim of the turbine wheel.
+   2. The jet pushes the wheel's curved brass blades round (you can watch them through the round window on the face);
+      the spent steam leaves through the exhaust stack on the roof as puffs.
+   3. The wheel's shaft runs back to a dynamo at the back of the case, which turns the spin into current; the leads go
+      to the control board, which charges the buffer and sends EU out through the socket and its cable.
+   Where the steam is: riser -> valve -> wall -> nozzle -> wheel -> exhaust pipe -> stack -> air.
+   Where the power is: wheel -> shaft -> dynamo -> leads -> control board -> socket -> cable.
+
+   Parts
+   OUTSIDE  the LV case (see gt-lv.js) . round window with the turbine wheel spinning behind it . steam gauge .
+            EU/t bar . steam riser with valve (left wall) . exhaust stack on the roof
+   INSIDE   steam inlet and nozzle . turbine wheel . shaft . dynamo with its commutator . exhaust pipe . leads
+
+   Contact checks (numbers)
+   - window r 17 (bronze ring to r 20) at y 40, z 37.5 on the face: y 20..60, z 17.5..57.5, inside LV_FACE (8..72, 15..60).
+   - gauge r 5.2 at y 66, z 50: y 60.8..71.2, clear of the ring (60); EU bar y 11..17, z 20..53.
+   - riser at x 56 enters the +y wall at z 34; the socket is at x 26, z 46 and its cable runs down at x 26: 30 apart.
+   - wheel x 62..67, r 16, centre (y 40, z 37.5): behind the window (face x 74); nozzle ends at (64.5, 58, 37): 2 off the rim.
+   - shaft r 2 from the commutator (x 37) to the wheel (x 62); dynamo r 10 from x 10 to 34, on feet from z 6 to 27.5.
+   - exhaust from (60, 26, 46) on the wheel's casing to the stack's foot at (52, 20, 84); stack h 20 on the roof (x 46..58),
+     clear of the roof grille (x 6..26).
+*/
+const TB = { y: 40, z: 37.5, r: 17, wx0: 62, wx1: 67, wr: 16 };
+const TB_STACK = [52, 20], TB_STACK_H = 20, TB_RISER = 56;
+// how far round the wheel is: it turns faster the more EU it makes
+const tbAng = st => (st.t || 0)*(3 + 7*(st.rate || 0));
+const tbPct = v => `${Math.round((v || 0)*100)}%`;
+// one curved blade from the hub to the rim, at angle a, in (u, v) about (cu, cv)
+function tbBlade(cu, cv, r0, r1, a){
+  const P2 = (r, b) => [cu + r*Math.cos(b), cv + r*Math.sin(b)], rm = (r0 + r1)/2;
+  return [P2(r0, a), P2(rm, a + .16), P2(r1, a + .42), P2(r1, a + .66), P2(rm, a + .38), P2(r0, a + .26)];
+}
+
+function tbFace(st){
+  const run = !!st.running, rate = st.rate || 0, a = tbAng(st), { y, z, r } = TB;
+  // the bronze ring with its bolts, and the dark window
+  let s = shape(lvOn(ellUV(y, z, r + 3, r + 3, 40)), GT_BRZ.m, 1.5);
+  s += fill(pd(lvOn(arcUV(y, z, r + 2.2, 100, 200, 10).concat(arcUV(y, z, r + .6, 200, 100, 10)), .45)), GT_BRZ.l, 'opacity=".8"');
+  s += gtRivets(PX(LV.W + .5), Array.from({ length: 8 }, (_, i) => [y + (r + 1.5)*Math.cos(i*Math.PI/4 + .39), z + (r + 1.5)*Math.sin(i*Math.PI/4 + .39)]), GT.BRZD.d);
+  s += shape(lvOn(ellUV(y, z, r, r, 40), .5), '#23272b', 1.2);
+  // the wheel: twelve curved brass blades round a hub, a blur disc when it is going fast
+  s += fill(pd(lvOn(ellUV(y, z, TB.wr - .5, TB.wr - .5, 36), .55)), GT.BRZD.d);
+  for (let i = 0; i < 12; i++){ const b = tbBlade(y, z, 4, TB.wr - 1.2, a + i*Math.PI/6);
+    s += shape(lvOn(b, .6), i % 2 ? GT_BRZ.l : mix(GT_BRZ.l, GT_BRZ.m, .45), .55); }
+  if (run && rate > .05) s += fill(pd(lvOn(ellUV(y, z, TB.wr - 1, TB.wr - 1, 36), .62)), '#f3d9a6', `opacity="${f(.2*rate)}"`);
+  s += shape(lvOn(ellUV(y, z, 4.6, 4.6, 18), .65), GT.BRZD.m, .9) + fill(pd(lvOn(ellUV(y, z, 1.7, 1.7, 10), .7)), INK);
+  // glass: two streaks of light
+  s += fill(pd(lvOn([[y + 9, z + 12], [y + 13, z + 6], [y + 11, z + 5], [y + 7, z + 11]], .75)), '#ffffff', 'opacity=".35"')
+    + fill(pd(lvOn([[y - 8, z - 12], [y - 12, z - 7], [y - 11, z - 9.5], [y - 7.5, z - 13]], .75)), '#ffffff', 'opacity=".25"');
+  s += ink(pd(lvOn(ellUV(y, z, r, r, 40), .8)), 1.4);
+  // the EU/t bar on the right of the window: how much it is making
+  s += shape(lvOn(rrUV(11, 20, 17, 53, 1.5), .45), '#23272b', 1);
+  if (rate > .01) s += fill(pd(lvOn(rectUV(12.2, 21.2, 15.8, 21.2 + 30.6*gtClamp(rate)), .5)), '#ffcf5a');
+  let tk = ''; for (let v = 27; v < 53; v += 6) tk += pd([lvAt(11, v, .55), lvAt(12.6, v, .55)], false);
+  s += `<path d="${tk}" fill="none" stroke="${GT_STEEL.l}" stroke-width=".6"/>`;
+  s += tx(...lvAt(14, 55, .5), 'EU', 3.4, INK, 800) + tx(...lvAt(66, 38.5, .5), 'STEAM', 2.8, INK, 800);
+  return s;
+}
+
+function tbParts(st, k, fade){
+  const riser = gtRiser(TB_RISER, LV.D, 34, st.valve), stack = gtStack(...TB_STACK, LV.ZT, TB_STACK_H);
+  return [
+    { ...riser, svg: fade(riser.svg) },
+    { ...stack, svg: fade(stack.svg) },
+    { box:[[LV.W, 60.5, 44.5], [LV.W + 3, 71.5, 55.5]], svg: fade(gtGauge(LV.W, 66, 50, 5.2, st.steam)) },
+  ];
+}
+
+function tbInside(st, k){
+  const out = [], put = (b, svg) => out.push({ box: b, svg }), run = !!st.running, a = tbAng(st), { y, z } = TB;
+  // the dynamo at the back on its feet, its commutator and the shaft
+  put([[10, 30, LV.Z0], [34, 50, z + 10]], box(13, 32, LV.Z0, 31, 48, z - 9, GT_TRIM, toneI, .8)
+    + cylX(10, 34, y, z, 10, GT.IRON, toneI, 1.2, 28)
+    + [16, 22, 28].map(x => cylX(x, x + 1.4, y, z, 10.3, GT.IRON, toneI, .6, 28)).join(''));
+  put([[34, y - 5, z - 5], [37, y + 5, z + 5]], cylX(34, 37, y, z, 5, run ? matOf('#f6b98a') : GT.COPPER, toneI, .8, 18));
+  put([[37, y - 2, z - 2], [TB.wx0, y + 2, z + 2]], cylX(37, TB.wx0, y, z, 2, GT_TRIM, toneI, .8, 12));
+  // the wheel: a brass disc with its blades on the front
+  let wheel = cylX(TB.wx0, TB.wx1, y, z, TB.wr, GT_BRZ, toneI, 1.2, 36);
+  if (facing([1,0,0])) for (let i = 0; i < 12; i++) wheel += shape(on(PX(TB.wx1 + .1), tbBlade(y, z, 4, TB.wr - 1.2, a + i*Math.PI/6)), i % 2 ? GT_BRZ.l : GT.BRZD.l, .5);
+  put([[TB.wx0, y - TB.wr, z - TB.wr], [TB.wx1, y + TB.wr, z + TB.wr]], wheel);
+  // the steam inlet from the riser in the wall, and its nozzle at the rim
+  put([[53, 61, 31], [59, LV.D, 37]], rod([TB_RISER, LV.D - 1, 34], [TB_RISER, 64, 34], 2.4, GT.BRZD, toneI, 1));
+  put([[54, 56, 31], [66, 66, 39]], rod([TB_RISER, 64, 34], [64.5, 58, 37], 2.2, GT.BRZD, toneI, 1, 1.4));
+  // the exhaust up to the stack
+  put([[50, 18, 44], [62, 28, 58]], rod([60, 26, 46], [TB_STACK[0], TB_STACK[1], 56], 2.6, GT.BRZD, toneI, 1));
+  put([[49, 17, 56], [55, 23, LV.ZT]], rod([TB_STACK[0], TB_STACK[1], 56], [TB_STACK[0], TB_STACK[1], LV.ZT], 2.6, GT.BRZD, toneI, 1));
+  // the dynamo's leads to the control board
+  out.push(gtWire([[20, y - 3, z + 9.6], [20, y - 3, 60], [5, y - 3, 60]], run ? '#f6b98a' : GT.COPPER.m, .8));
+  out.push(gtWire([[24, y + 3, z + 9.6], [24, y + 3, 62], [5, y + 3, 62]], run ? '#f6b98a' : GT.COPPER.m, .8));
+  return out;
+}
+
+gtLv({
+  fig:'LV9', title:'LV Steam Turbine', name:'STEAM TURBINE', nameSize: 4.2, socket:'out', noRecipe: true,
+  face: tbFace, parts: tbParts, inside: tbInside,
+  shadowPts: [[TB_STACK[0] - 6, TB_STACK[1] - 6, LV.ZT + TB_STACK_H + 4], [TB_STACK[0] + 6, TB_STACK[1] + 6, LV.ZT + TB_STACK_H + 4]],
+  emitters:[{ id:'vent', at: () => [TB_STACK[0], TB_STACK[1], LV.ZT + TB_STACK_H + 5], when: st => !!st.running, every: .3, life: 1.8, rise: 22 }],
+  stats: st => [{ label:'Output', value: `${Math.round((st.running ? st.rate || 0 : 0)*32)} EU/t` },
+    { label:'Steam', value: tbPct(st.steam), small:true }, { label:'Buffer', value: tbPct(st.energy), small:true }],
+  callouts: st => [
+    ...(facing([1,0,0]) ? [{ at: [LV.W, TB.y, TB.z + TB.r], text: 'TURBINE WINDOW', on: !!st.running },
+      { at: [LV.W + 3, 66, 50], text: 'STEAM GAUGE', on: (st.steam || 0) > .05 }] : []),
+    { at: [TB_RISER, LV.D + 17, 30], text: 'STEAM VALVE', on: !!st.on },
+    { at: [TB_STACK[0], TB_STACK[1], LV.ZT + TB_STACK_H + 4], text: 'EXHAUST STACK', on: !!st.running }],
+  insideCallouts: st => [{ at: [TB_RISER, 70, 36], text: 'STEAM INLET', on: !!st.running },
+    { at: [64, TB.y, TB.z + TB.wr], text: 'TURBINE WHEEL', on: !!st.running }, { at: [48, TB.y, TB.z + 2], text: 'SHAFT', on: !!st.running },
+    { at: [22, TB.y, TB.z + 10], text: 'DYNAMO', on: !!st.running }, { at: [TB_STACK[0], TB_STACK[1], 70], text: 'EXHAUST', on: !!st.running }],
+});
+</script>
+<script src="cf-tail.js"></script>
+</body></html>

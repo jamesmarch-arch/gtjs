@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LV Assembler</title>
+<script src="cf-head.js"></script></head><body>
+<script src="core.js"></script>
+<script src="gt-bridge.js"></script>
+<script src="gt-parts.js"></script>
+<script src="gt-lv.js"></script>
+<script>
+/* LV Assembler (gtjs, LV): puts several parts together into one (a vacuum tube, a resistor, a circuit, a motor).
+
+   How it works (truth first)
+   1. A carrier (a green board) is pushed out of the magazine inside the left wall onto a little conveyor, which brings
+      it into the lit assembly bay and stops it in front of the robot arm.
+   2. The parts wait in three bins on the roof; they drop down a feed into the parts tray on the bay floor behind the
+      conveyor.
+   3. The robot arm (a turntable, a shoulder and an elbow, each turned by a servo) picks a part from the tray, swings
+      round, sets it on the board and goes back for the next: three parts per item.
+   4. The conveyor carries the finished item out through the right wall; it falls off the end of the belt onto a chute
+      that runs down under the bay floor to the output slot and the tray.
+   Where the parts are: roof bins -> feed -> parts tray -> gripper -> board -> conveyor -> chute -> slot -> tray.
+   Where the power is: cable -> socket -> control board -> arm servos (through the arm cable) and conveyor motor.
+
+   Parts
+   OUTSIDE  the LV case (see gt-lv.js) . the lit assembly bay (back wall, floor, right wall, lamp strip) . conveyor
+            (frame, belt with cleats) . lamp panel (one lamp per part) . board with gold tracks and the parts set on it . parts tray . robot arm (base,
+            turntable, post, upper arm, forearm, wrist, two-finger gripper) . three parts bins on the roof
+   INSIDE   board magazine . conveyor motor . arm cable . chute . the bay's mechanism again (arm, conveyor, board)
+
+   Contact checks (numbers)
+   - bay opening y 12..68, z 22..57 in the face; it runs back to x 52; its floor is z 22.
+   - conveyor x 62..72 from wall to wall (y 12..68), belt top z 25.5; the board (x 63..71, 14 long) lies on the belt top
+     (z 25.5..26.7); placed parts sit on the board (z 26.7..28.1).
+   - arm base r 4.5 at (57, 20) on the floor; shoulder at z 30; upper arm and forearm 11 each, gripper 3 below the wrist.
+     The board stops at y 30; its slots (66..69, 26..34) are 10.8..16.6 from the base, the tray (57.5, 37.5) is 17.5:
+     all inside the reach (22).
+   - the gripper tip goes down to the tray parts' tops (z 25.4) and to the board top (z 26.7) + a part (1.4) = 28.1.
+   - parts tray x 54.5..60.5, y 32..43, z 22..25.5 on the floor, behind the conveyor (x 62) and left of the arm base (y 24.5).
+   - roof bins x 50..64 (bottom 52..62), y 14..28, 33..47, 52..66, z 84..91: on the front half, clear of the vent (x 6..26).
+   - magazine x 61..71, y 70..78 inside the case, left of the bay's left wall (y 68), at the belt's height.
+   - chute from the conveyor's right end (y 10, z 21, under the belt) down to the slot (x 74, z 10.5, y 32).
+   - the lamp panel under the bay (z 16.4..21) sits between the recess bottom (z 15) and the bay (z 22).
+*/
+const ASW = LV.W;
+const AS = { y0: 12, z0: 22, y1: 68, z1: 57, xb: 52,                    // the bay
+  cv: [62, 72, 25.5], board: { x0: 63, x1: 71, len: 14, z: 25.5, h: 1.2, stop: 30 },
+  base: [57, 20], S: [57, 20, 30], L1: 11, L2: 11, grip: 3,
+  tray: [54.5, 32, 60.5, 43, 25.5], pick: [57.5, 37.5, 25.4],
+  slots: [[66, -4], [69, 0], [66, 4]], home: [64, 26, 34] };
+const AS_ORG = { l:'#f7a04a', m:'#dc7a22', d:'#6e360a' };
+const AS_BIN = { l:'#7fa6e0', m:'#5a82c6', d:'#1c2948' };
+// what each recipe puts on the board (three parts), and what comes out
+const AS_KIT = {
+  vacuum_tube: { parts: ['#e5874c', '#cfe6ee', '#e5874c'], out: '#cfe6ee' },
+  resistor: { parts: ['#3a3633', '#e5874c', '#3a3633'], out: '#c9a27a' },
+  coated_board: { parts: ['#a07a46', '#3a3633', '#a07a46'], out: '#a07a46' },
+  circuit_lv: { parts: ['#c9a27a', '#cfe6ee', '#e5874c'], out: GT_PCB.l },
+  lv_motor: { parts: ['#c9ced1', '#e5874c', '#3a3a3a'], out: '#9aa2a8' } };
+const asKit = st => { const id = ((st.recipe && st.recipe.id) || '').replace('assemble_', ''); return AS_KIT[id] || AS_KIT.circuit_lv; };
+const asProd = st => ({ kind: 'part', col: asKit(st).out });
+const asLerp = (a, b, u) => a.map((v, i) => v + (b[i] - v)*u);
+
+/* the cell, from progress: where the board is, where the gripper tip is, what it holds, how many parts are placed */
+function asCell(st){
+  const o = { yb: null, tip: AS.home.slice(), held: -1, placed: 0, open: true, belt: 0 };
+  if (!st.active) return o;
+  const p = st.progress || 0, B = AS.board, n = AS.slots.length;
+  const slotTip = i => [AS.slots[i][0], B.stop + AS.slots[i][1], B.z + B.h + 1.4];
+  const hover = q => [q[0], q[1], q[2] + 4.5];
+  const swing = (a, b, u) => { const e = ease(u), q = asLerp(a, b, e); q[2] += 3*Math.sin(Math.PI*e); return q; };
+  if (p < .12){ o.yb = B.stop + (78 - B.stop)*(1 - ease(p/.12)); o.belt = o.yb; return o; }
+  if (p >= .84){ const u = (p - .84)/.16; o.yb = B.stop - 42*ease(u); o.belt = o.yb; o.placed = n; o.tip = swing(hover(slotTip(n - 1)), AS.home, Math.min(1, u*2)); return o; }
+  o.yb = B.stop; o.belt = B.stop;
+  const k = (p - .12)/.72*n, i = Math.min(n - 1, Math.floor(k)), c = k - i, prev = i ? hover(slotTip(i - 1)) : AS.home;
+  const pk = AS.pick, sl = slotTip(i);
+  o.placed = i;
+  if (c < .3) o.tip = swing(prev, hover(pk), c/.3);
+  else if (c < .4){ const u = (c - .3)/.1; o.tip = asLerp(hover(pk), pk, Math.sin(Math.PI*u)); if (u > .5){ o.held = i; o.open = false; } }
+  else if (c < .75){ o.tip = swing(hover(pk), hover(sl), (c - .4)/.35); o.held = i; o.open = false; }
+  else if (c < .85){ const u = (c - .75)/.1; o.tip = asLerp(hover(sl), sl, Math.sin(Math.PI*u)); if (u < .5){ o.held = i; o.open = false; } else o.placed = i + 1; }
+  else { o.tip = hover(sl); o.placed = i + 1; }
+  return o;
+}
+// two-link arm: the elbow for a wrist point (elbow up), and the turntable's angle
+function asIK(w){
+  const [sx, sy, sz] = AS.S, dx = w[0] - sx, dy = w[1] - sy, r = Math.hypot(dx, dy), h = w[2] - sz, a = Math.atan2(dy, dx);
+  const D = Math.min(AS.L1 + AS.L2 - .05, Math.hypot(r, h)), t1 = Math.atan2(h, r) + Math.acos(gtClamp((AS.L1*AS.L1 + D*D - AS.L2*AS.L2)/(2*AS.L1*D), -1, 1));
+  return { e: [sx + AS.L1*Math.cos(t1)*Math.cos(a), sy + AS.L1*Math.cos(t1)*Math.sin(a), sz + AS.L1*Math.sin(t1)], a };
+}
+// a small part: a little block in its colour, with a dark lead stripe
+const asPart = ([x, y, z], col) => box(x - 1.3, y - 1.3, z, x + 1.3, y + 1.3, z + 1.4, matOf(col), toneI, .6);
+
+/* the bay's contents as parts for byDepth (on the face, and again in the see-through) */
+function asCellParts(st){
+  const out = [], put = (b, svg) => out.push({ box: b, svg }), c = asCell(st), kit = asKit(st), B = AS.board, run = !!st.running;
+  const [cx0, cx1, cz] = AS.cv;
+  // the conveyor: frame, belt with cleats sliding along, the end roller
+  { let s = box(cx0, AS.y0, AS.z0, cx1, AS.y1, cz - .6, GT_TRIM, toneI, 1) + shape(on(PZ(cz), rectUV(cx0 + .4, AS.y0, cx1 - .4, AS.y1)), '#3d4347', .8);
+    let cl = ''; const off = ((c.belt || 0) % 5 + 5) % 5;
+    for (let y = AS.y0 + off; y < AS.y1; y += 5) cl += pd([[cx0 + .8, y, cz + .05], [cx1 - .8, y, cz + .05]], false);
+    s += `<path d="${cl}" fill="none" stroke="#5a6066" stroke-width=".7"/>`;
+    if (facing([1,0,0])) s += gtRivets(PX(cx1 + .05), [[16, 21], [30, 21], [44, 21], [58, 21]], GT_TRIM.l);
+    put([[cx0, AS.y0, AS.z0], [cx1, AS.y1, cz]], s); }
+  // the board on the belt (cut where it goes through the side walls), the parts set on it
+  if (c.yb != null){ const y0 = Math.max(AS.y0, c.yb - B.len/2), y1 = Math.min(AS.y1, c.yb + B.len/2);
+    if (y1 > y0 + .2){ const z0 = B.z, z1 = B.z + B.h;
+      let s = box(B.x0, y0, z0, B.x1, y1, z1, GT_PCB, toneI, .8);
+      let tr = ''; for (const [a, b] of [[[64, -5], [70, -5]], [[64, 5], [70, 5]], [[67, -5], [67, 5]], [[64, 0], [65.5, 0]]]){
+        const ya = gtClamp(c.yb + a[1], y0, y1), yb2 = gtClamp(c.yb + b[1], y0, y1); tr += pd([[a[0], ya, z1 + .05], [b[0], yb2, z1 + .05]], false); }
+      s += `<path d="${tr}" fill="none" stroke="#e9c46a" stroke-width=".6" opacity=".9"/>`;
+      for (let i = 0; i < c.placed; i++){ const q = [AS.slots[i][0], c.yb + AS.slots[i][1], z1]; if (q[1] > y0 + 1 && q[1] < y1 - 1) s += asPart(q, kit.parts[i]); }
+      put([[B.x0, y0, z0], [B.x1, y1, z1 + 1.4]], s); } }
+  // the parts tray behind the conveyor, with parts waiting in it
+  { const [x0, y0, x1, y1, zt] = AS.tray, A = on(PZ(AS.z0), rectUV(x0, y0, x1, y1)), T = on(PZ(zt), rectUV(x0, y0, x1, y1));
+    let inner = fill(pd(on(PZ(AS.z0 + .3), rectUV(x0 + .5, y0 + .5, x1 - .5, y1 - .5))), '#2f3336');
+    const w = []; [[56, 34.5], [59, 37], [56, 39.5], [59, 41]].forEach((q, i) => w.push({ at: [q[0], q[1], AS.z0 + 2], svg: asPart([q[0], q[1], AS.z0 + 2], kit.parts[i % 3]) }));
+    inner += byDepth(w);
+    put([[x0, y0, AS.z0], [x1, y1, zt]], openShell(A, T, n => toneI(n, GT.IRON), inner) + ink(pd(T), .9) + hullInk([...A, ...T], 1.2)); }
+  // the arm: base and turntable on the floor, then the links
+  const wr = [c.tip[0], c.tip[1], c.tip[2] + AS.grip], { e, a } = asIK(wr), [bx, by] = AS.base, S = AS.S;
+  put([[bx - 4.5, by - 4.5, AS.z0], [bx + 4.5, by + 4.5, S[2]]], cyl(bx, by, AS.z0, AS.z0 + 3, 4.5, GT_TRIM, toneI, 1, 24) + cyl(bx, by, AS.z0 + 3, AS.z0 + 5.5, 3.2, AS_ORG, toneI, 1, 24)
+    + rod([bx, by, AS.z0 + 5.5], [bx, by, S[2]], 2.4, AS_ORG, toneI, 1, 2.4, 16));
+  { const u = [-Math.sin(a), Math.cos(a), 0], fo = c.open ? 1.5 : .9, tip = c.tip;
+    let s = rod(S, e, 2.2, AS_ORG, toneI, 1.1, 1.8, 16) + rod([S[0] - u[0]*2.4, S[1] - u[1]*2.4, S[2]], [S[0] + u[0]*2.4, S[1] + u[1]*2.4, S[2]], 2.6, GT.IRON, toneI, .9, 2.6, 14);
+    s += rod([e[0] - u[0]*2, e[1] - u[1]*2, e[2]], [e[0] + u[0]*2, e[1] + u[1]*2, e[2]], 2.1, GT.IRON, toneI, .9, 2.1, 14);
+    s += rod(e, wr, 1.7, AS_ORG, toneI, 1.1, 1.3, 14) + rod(wr, [wr[0], wr[1], wr[2] - 1.6], 1.4, GT_TRIM, toneI, .8, 1.4, 12);
+    if (c.held >= 0) s += asPart([tip[0], tip[1], tip[2] - 1.4], kit.parts[c.held]);
+    let fg = ''; for (const sg of [-1, 1]) fg += pd([[wr[0] + sg*u[0]*fo, wr[1] + sg*u[1]*fo, wr[2] - 1.6], [tip[0] + sg*u[0]*fo, tip[1] + sg*u[1]*fo, tip[2] - (c.held >= 0 ? 1 : 0)]], false);
+    s += `<path d="${fg}" fill="none" stroke="${INK}" stroke-width="1.5" stroke-linecap="round"/><path d="${fg}" fill="none" stroke="${GT.IRON.l}" stroke-width=".6" stroke-linecap="round"/>`;
+    const xs = [S[0], e[0], wr[0], tip[0]], ys = [S[1], e[1], wr[1], tip[1]], zs = [S[2], e[2], wr[2], tip[2]];
+    // its box sits on top of the board and the tray (it is always above them), so it is drawn after them
+    put([[Math.min(...xs) - 2, Math.min(...ys) - 2, B.z + B.h + 1.41], [Math.max(...xs) + 2, Math.max(...ys) + 2, Math.max(...zs) + 2]], s); }
+  return out;
+}
+
+function asFace(st){
+  const W = ASW, { y0, z0, y1, z1, xb } = AS;
+  // a cobalt surround round the bay
+  let s = shape(lvOn(rrUV(10, 17, 70, 59, 2.5), .45), AS_BIN.m, 1.2);
+  const q = (pts, n, col) => facing(n) ? fill(pd(pts), col) + ink(pd(pts), .5) : '';
+  let bay = q([[xb, y0, z0], [xb, y1, z0], [xb, y1, z1], [xb, y0, z1]], [1,0,0], '#e4ecee')
+    + q([[xb, y0, z0], [W, y0, z0], [W, y1, z0], [xb, y1, z0]], [0,0,1], '#c3ced2')
+    + q([[xb, y0, z1], [W, y0, z1], [W, y1, z1], [xb, y1, z1]], [0,0,-1], '#9fb0b6')
+    + q([[xb, y0, z0], [W, y0, z0], [W, y0, z1], [xb, y0, z1]], [0,1,0], '#d2dcdf')
+    + q([[xb, y1, z0], [W, y1, z0], [W, y1, z1], [xb, y1, z1]], [0,-1,0], '#d2dcdf');
+  // a grid on the back wall, the lamp strip's glow at its top
+  if (facing([1,0,0])){ let g = ''; for (let y = y0 + 6; y < y1; y += 6) g += pd([[xb + .05, y, z0], [xb + .05, y, z1]], false);
+    for (let z = z0 + 6; z < z1; z += 6) g += pd([[xb + .05, y0, z], [xb + .05, y1, z]], false);
+    bay += `<path d="${g}" fill="none" stroke="#b7c6cb" stroke-width=".5"/>` + fill(pd(on(PX(xb + .1), rectUV(y0, z1 - 6, y1, z1))), '#fffbe6', 'opacity=".6"'); }
+  bay += byDepth(asCellParts(st));
+  const open = lvOn(rrUV(y0, z0, y1, z1, 2), .55);
+  s += clipTo(open, bay);
+  // under the bay: a lamp for each part of the kit, lit once it is on the board
+  const c = asCell(st), kit = asKit(st);
+  s += shape(lvOn(rrUV(24, 16.4, 56, 21, 1.2), .5), GT_TRIM.m, 1);
+  kit.parts.forEach((col, i) => { const y = 50 - i*10, lit = c.yb != null && c.placed > i;
+    s += shape(lvOn(rrUV(y - 3, 17.2, y + 3, 20.2, .8), .55), lit ? col : GT_TRIM.d, .7)
+      + (lit ? fill(pd(lvOn(rrUV(y - 2.2, 19, y + .5, 19.7, .3), .6)), '#ffffff', 'opacity=".45"') : ''); });
+  s += fill(pd(lvOn([[y0 + 3, z1 - 10], [y0 + 12, z1 - 2], [y0 + 8, z1 - 2], [y0 + 3, z1 - 6]], .65)), '#ffffff', 'opacity=".3"');
+  return s + ink(pd(open), 1.6);
+}
+
+function asParts(st, k, fade){
+  const kit = asKit(st), ZT = LV.ZT, h = 7, out = [];
+  [[14, 28], [33, 47], [52, 66]].forEach(([y0, y1], i) => {
+    const A = on(PZ(ZT), rectUV(52, y0 + 2, 62, y1 - 2)), T = on(PZ(ZT + h), rectUV(50, y0, 64, y1));
+    const col = kit.parts[i], cy = (y0 + y1)/2, lumps = [];
+    if ((st.input | 0) > i) [[54, cy - 3], [58, cy + 2], [55, cy + 3], [59, cy - 3], [56.5, cy]].forEach(([x, y], j) => lumps.push({ at: [x, y, ZT + 2 + (j === 4 ? 1.4 : 0)], svg: asPart([x, y, ZT + 2 + (j === 4 ? 1.4 : 0)], col) }));
+    const inner = fill(pd(on(PZ(ZT + .2), rectUV(52, y0 + 2, 62, y1 - 2))), AS_BIN.d) + byDepth(lumps);
+    out.push({ box: [[50, y0, ZT], [64, y1, ZT + h]], svg: fade(openShell(A, T, n => toneI(n, AS_BIN), inner) + ink(pd(T), 1.1) + hullInk([...A, ...T], 1.6)) });
+  });
+  return out;
+}
+
+function asInside(st, k){
+  const out = [], put = (b, svg) => out.push({ box: b, svg }), run = !!st.running;
+  // the magazine of blank boards inside the left wall
+  let mg = box(60, 69, AS.z0 - 4, 72, 79, AS.z0, GT_TRIM, toneI, .9);
+  for (let i = 0; i < 5; i++) mg += box(61, 70, AS.z0 + i*1.5, 71, 78, AS.z0 + i*1.5 + 1.2, GT_PCB, toneI, .6);
+  put([[60, 69, AS.z0 - 4], [72, 79, AS.z0 + 7.5]], mg);
+  // the conveyor motor under the right end of the belt
+  put([[61, 13, 12], [71, 21, 20]], rod([61, 17, 16], [71, 17, 16], 4, GT.IRON, toneI, 1, 4, 20));
+  // the chute from the right end of the belt down to the slot
+  const ch = [[60, 10, 21], [72, 10, 21], [ASW, 32, 10.5], [62, 32, 10.5]];
+  put([[60, 10, 10.5], [ASW, 32, 21]], shape(ch, toneI(norm([0, .6, 1]), GT.IRON), .9));
+  // the arm cable from the control board to the arm base
+  out.push(gtWire([[4.5, 30, 50], [30, 30, 50], [30, 20, AS.z0 + 1], [AS.base[0] - 4.5, AS.base[1], AS.z0 + 1]], run ? '#f6b98a' : '#7d858b', .7));
+  return [...out, ...asCellParts(st)];
+}
+
+gtLv({
+  fig:'LV8', title:'LV Assembler', name:'ASSEMBLER', face: asFace, parts: asParts, inside: asInside, product: asProd,
+  shadowPts: [[50, 14, LV.ZT + 7], [64, 66, LV.ZT + 7]],
+  recipes:[{ id:'assemble_circuit_lv', name:'LV Circuit' }, { id:'assemble_vacuum_tube', name:'Vacuum Tube' }, { id:'assemble_lv_motor', name:'LV Motor' }],
+  loadLabel:'Load parts', outLabel:'Made',
+  callouts: st => [{ at: [57, 21, LV.ZT + 7], text: 'PARTS BINS', on: !!st.running },
+    ...(facing([1,0,0]) ? [{ at: [...asIK([...asCell(st).tip.slice(0, 2), asCell(st).tip[2] + AS.grip]).e], text: 'ROBOT ARM', on: !!st.running },
+      { at: [AS.cv[1], 20, AS.cv[2]], text: 'CONVEYOR', on: !!st.running && asCell(st).yb !== AS.board.stop },
+      ...(asCell(st).yb != null ? [{ at: [AS.board.x1, gtClamp(asCell(st).yb, 16, 64), AS.board.z + AS.board.h], text: 'BOARD', on: !!st.running }] : [])] : [])],
+  insideCallouts: st => [{ at: [66, 74, AS.z0 + 7.5], text: 'BOARD MAGAZINE', on: !!st.active && (st.progress || 0) < .12 },
+    { at: [66, 17, 12], text: 'CONVEYOR MOTOR', on: !!st.running }, { at: [30, 30, 50], text: 'ARM CABLE', on: !!st.running },
+    { at: [70, 24, 16], text: 'CHUTE', on: !!st.active && (st.progress || 0) > .9 }, { at: [AS.S[0], AS.S[1], AS.S[2]], text: 'ARM SERVOS', on: !!st.running },
+    { at: [57.5, 37.5, 25.5], text: 'PARTS TRAY', on: false }],
+});
+</script>
+<script src="cf-tail.js"></script>
+</body></html>

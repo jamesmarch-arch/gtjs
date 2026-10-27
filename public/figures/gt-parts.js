@@ -147,16 +147,25 @@ let Z_FLOOR = 6;   // the inside floor of the case: set by each figure
 
 /* ---------- gtMachine: mount the figure and wire it to the game ----------
    cfg: { fig, title, size, center, scene(st, m), tile, recipes (demo), demoSeconds, boiler (bool), emitters, labelsB,
-          state, params(st, q), heatTime }
+          state, params(st, q), heatTime, noRecipe (bool: generators, batteries, transformers run while EU flows) }
    State the game sends lands in st (see gt-bridge.js). st.lamp is derived here for gtLamp. */
 function gtMachine(cfg){
   const demo = !gtBridge.embedded;
   const st = Object.assign({ on:false, active:false, running:false, stalled:false, progress:0, steam:0, recipe:(cfg.recipes || [])[0] || null,
-    recipes: cfg.recipes || [], input:6, output:0, valve:0, puffs:[], t:0, heat:0, burn:0, burning:false, venting:false, emitT:{} }, cfg.state || {});
+    recipes: cfg.recipes || [], input:6, output:0, valve:0, puffs:[], t:0, heat:0, burn:0, burning:false, venting:false, emitT:{},
+    rate:0, energy:0, mode:'up' }, cfg.state || {});
   let ui, loop = false;
-  const lampOf = () => cfg.boiler ? (st.burning ? (st.venting ? 'idle' : 'on') : st.on ? (st.input > 0 ? 'idle' : 'stalled') : 'off')
+  const lampOf = () => cfg.noRecipe ? (st.running ? 'on' : st.on ? 'idle' : 'off') : cfg.boiler ? (st.burning ? (st.venting ? 'idle' : 'on') : st.on ? (st.input > 0 ? 'idle' : 'stalled') : 'off')
     : st.running ? 'on' : st.on ? 'stalled' : 'off';
   function demoStep(dt){
+    if (cfg.noRecipe){
+      st.running = st.on;
+      st.rate = gtClamp(st.rate + (st.on ? 1 : -1)*dt/1.2);
+      st.energy = gtClamp(st.energy + (st.on ? .08 : -.03)*dt);
+      st.steam = gtClamp(st.steam + ((st.on ? .82 : 0) - st.steam)*dt*1.5);
+      if (cfg.fuelled){ st.burning = st.running; st.burn = st.running ? .6 : 0; }
+      return;
+    }
     if (cfg.boiler){
       if (st.on && st.burn <= 0 && st.input > 0 && st.steam < .98){ st.input--; st.output++; st.burn = 1; }
       st.burning = st.burn > 0;
@@ -195,7 +204,8 @@ function gtMachine(cfg){
   const toggle = () => {
     gtBridge.send({ type:'gt:toggle' });
     st.on = !st.on;
-    if (cfg.boiler){ if (st.on && !(st.input > 0)) ui.flash('No fuel in storage'); }
+    if (cfg.noRecipe){}
+    else if (cfg.boiler){ if (st.on && !(st.input > 0)) ui.flash('No fuel in storage'); }
     else if (st.on && !st.recipe) ui.flash('Choose a recipe first');
     else if (st.on && !st.active && !(st.input > 0)) ui.flash('Nothing to work on');
     st.lamp = lampOf(); run();
@@ -206,7 +216,7 @@ function gtMachine(cfg){
     st.input = Math.min(16, st.input + 4); run();
   };
   const choose = r => { gtBridge.send({ type:'gt:setRecipe', id: r.id }); st.recipe = r; };
-  const buttons = cfg.boiler
+  const buttons = cfg.noRecipe ? [{ label: cfg.toggleLabel || 'Power', onClick: toggle }] : cfg.boiler
     ? [...(demo ? [{ label:'Add coal', onClick: load }] : []), { label: 'Fire', onClick: toggle }]
     : [{ label:'Recipe', choices: () => (st.recipes || []).map(r => ({ label: r.name, current: !!st.recipe && st.recipe.id === r.id, onClick: () => choose(r) })) },
        ...(demo ? [{ label: cfg.loadLabel || 'Load', onClick: load }] : []), { label: cfg.toggleLabel || 'Steam valve', onClick: toggle }];
@@ -220,8 +230,12 @@ function gtMachine(cfg){
     state: st, scene: cfg.scene, buttons, stats,
     acts: Object.assign({ valve: toggle, hopper: load, fire: toggle }, cfg.acts || {}),
     params: (s, q) => {
-      for (const k of ['progress', 'steam', 'input', 'output', 't', 'valve', 'heat', 'burn']) if (q.has(k)) s[k] = +q.get(k);
-      if (q.get('run') === '1'){ s.on = true; s.valve = 1; if (cfg.boiler){ s.burning = true; s.burn = s.burn || .7; } else s.active = s.running = true;
+      for (const k of ['progress', 'steam', 'input', 'output', 't', 'valve', 'heat', 'burn', 'rate', 'energy']) if (q.has(k)) s[k] = +q.get(k);
+      if (q.get('mode') === 'down') s.mode = 'down';
+      if (q.get('run') === '1' && cfg.noRecipe){ s.on = s.running = true; s.valve = 1;
+        for (const [k, v] of [['rate', 1], ['energy', .7], ['steam', .8], ['heat', 1]]) if (!q.has(k)) s[k] = v;
+        if (cfg.fuelled){ s.burning = true; s.burn = .6; } }
+      else if (q.get('run') === '1'){ s.on = true; s.valve = 1; if (cfg.boiler){ s.burning = true; s.burn = s.burn || .7; } else s.active = s.running = true;
         if (cfg.fuelled){ s.burning = true; s.burn = s.burn || .6; }
         if (!q.has('steam')) s.steam = .8; if (!q.has('heat')) s.heat = 1; }
       if (q.get('vent') === '1') s.venting = true;
@@ -237,7 +251,7 @@ function gtMachine(cfg){
   gtBridge.onState(mc => {
     Object.assign(st, { on: mc.enabled, active: mc.active, running: mc.running, stalled: mc.stalled, progress: mc.progress, steam: mc.steam,
       recipe: mc.recipe, recipes: mc.recipes, input: mc.input, output: mc.output, burn: mc.burn || 0, burning: !!mc.burning, venting: !!mc.venting,
-      energy: mc.energy || 0, needsMv: !!mc.lowVolts, fuel: mc.fuel || 0 });
+      energy: mc.energy || 0, needsMv: !!mc.lowVolts, fuel: mc.fuel || 0, rate: mc.rate || 0, mode: mc.mode || 'up' });
     st.lamp = lampOf();
     if ((cfg.boiler ? st.burning : st.running) || st.heat > 0 || st.puffs.length) run(); else ui.render();
   });

@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LV Electric Furnace</title>
+<script src="cf-head.js"></script></head><body>
+<script src="core.js"></script>
+<script src="gt-bridge.js"></script>
+<script src="gt-parts.js"></script>
+<script src="gt-lv.js"></script>
+<script>
+/* LV Electric Furnace (gtjs, LV): smelting with no fire. Current through resistance wire heats a lined box.
+
+   How it works (truth first)
+   1. The charge (crushed ore, a dust, clay or sand) goes in through the door onto a ceramic hearth in a box lined
+      with firebrick.
+   2. The control board switches current from the socket through heating elements: zigzags of resistance wire on the
+      side walls and across the roof of the chamber. They glow orange and heat the chamber by radiation; the firebrick
+      keeps the heat in, and a thermocouple tells the board when to switch the elements off and on.
+   3. The charge melts (or, for clay and sand, fires) on the hearth and sets as an ingot, a brick or a sheet of glass,
+      which leaves through the output slot into the tray.
+   Where the charge is: door -> hearth -> slot -> tray.
+   Where the power is: cable -> socket -> control board -> leads -> heating elements -> heat -> charge.
+
+   Parts
+   OUTSIDE  the LV case (see gt-lv.js) . heavy door standing off the face, on two hinges (low y side) . wide heat
+            window with the elements and the charge behind it . handle bar on two standoffs . heat leaking round the
+            door seal while it works . a flue on the roof
+   INSIDE   firebrick lining (floor block, far side wall) . ceramic hearth . two runs of element on each side wall,
+            a serpentine element across the roof . flue duct from the chamber top to the roof .
+            leads from the board . thermocouple . the charge
+
+   Contact checks (numbers)
+   - door x 74..77 (on the face, x = LV.W), y 12..68, z 18..58: inside the face recess (y 8..72, z 15..60).
+   - window y 17..63, z 31..53 on the door; handle bar at x 80.5, z 24, standoffs at y 22 and 58.
+   - hinges r 1.6 at (x 75.5, y 10.6): touching the door's low-y edge (y 12).
+   - hearth x 24..66, y 20..60, z 28..32 sits on the firebrick floor block (z 6..28); the charge sits on it at z 32,
+     level with the bottom of the heat window (z 31..53), so what is seen through the window is what is on the hearth.
+   - side elements on y 16 and y 64, x 24..66, z 37..49: clear of the hearth (y 20..60) by 4. Roof serpentine at z 56.
+   - far side wall y 10..14, z 28..60 carries the y 16 element; the lining starts at x 18, clear of the board (x 2..4).
+   - thermocouple from the roof (36, 50, 84) down to z 48.5, 16.5 above the hearth.
+   - flue r 3.5 (cap r 6.5) at (50, 40) on the roof, z 84..100.5; its duct r 2.5 from z 60 (over the roof
+     serpentine at z 56) up to the roof. Thermocouple at (36, 50) is 16 away.
+*/
+const EF_FLUE = { x: 50, y: 40 };
+const EF_DOOR = { x1: LV.W + 3, y0: 12, z0: 18, y1: 68, z1: 58 }, EF_WIN = [17, 31, 63, 53];
+const EF_IRON = { l:'#6b7177', m:'#4f555b', d:'#2a2f33' };
+const efRid = st => (st.recipe && st.recipe.id) || 'lv_smelt_crushed_iron';
+// what goes in and what comes out, by recipe
+function efStuff(st){
+  const id = efRid(st), metal = lvMetal(st);
+  if (/clay/.test(id)) return { inKind: 'dust', inCol: '#a9b4c2', kind: 'brick', col: GT.BRICK.m };
+  if (/sand/.test(id)) return { inKind: 'dust', inCol: '#e8d7a0', kind: 'glass', col: '#c4dfe4' };
+  return { inKind: /crushed/.test(id) ? 'crushed' : 'dust', inCol: /crushed/.test(id) ? (GT.ORE[metal] || GT.ORE.iron) : LV_COL[metal], kind: 'ingot', col: LV_COL[metal] };
+}
+// a little heap of dust (gt-lv.js's lvThing('dust') lofts a 14-point ring to an 8-point one and throws, so not that)
+function efDust([x, y, z], col){ const mm = matOf(col), a = on(PZ(z), ellUV(x, y, 3.6, 3.6, 14)), b = on(PZ(z + 2.4), ellUV(x, y, .9, .9, 14));
+  return loft(a, b, n => toneI(n, mm)) + fill(pd(b), mm.l) + hullInk([...a, ...b], .7); }
+const efProduct = st => { const s = efStuff(st); return { kind: s.kind, col: s.col }; };
+const efElCol = st => mix('#c9572f', '#ffcf5a', gtClamp(st.heat || 0));
+// a zigzag in u, v (on any plane): n teeth between u0 and u1, between v0 and v1
+function efZig(u0, u1, v0, v1, n){ const o = []; for (let i = 0; i <= n*2; i++) o.push([u0 + (u1 - u0)*i/(n*2), i % 2 ? v1 : v0]); return o; }
+const efStroke = (d, col, w) => `<path d="${d}" fill="none" stroke="${INK}" stroke-width="${f(w + 1)}" stroke-linejoin="round" stroke-linecap="round"/>`
+  + `<path d="${d}" fill="none" stroke="${col}" stroke-width="${f(w)}" stroke-linejoin="round" stroke-linecap="round"/>`;
+
+// heat leaking round the door seal, on the face recess (the door is a part standing off it)
+function efFace(st){
+  const h = st.heat || 0;
+  if (h < .05) return '';
+  return fill(pd(lvOn(rrUV(9.5, 15.5, 70.5, 59.5, 4), .45)), GT.GLOW, `opacity="${f(.45*h)}"`);
+}
+
+// what is behind the heat window: the chamber, its elements, the hearth and the charge, flat on the door's front
+function efWindow(st){
+  const X = EF_DOOR.x1, h = st.heat || 0, on2 = (uv, l) => on(PX(X + l), uv), [y0, z0, y1, z1] = EF_WIN;
+  const win = rrUV(y0 + 2, z0 + 2, y1 - 2, z1 - 2, 1.5);
+  let c = fill(pd(on2(win, .1)), mix('#4a2b22', '#d9561e', h*.8));
+  if (h > .05) c += fill(pd(on2(ellUV(40, 42, 18, 9, 24), .12)), GT.HOT, `opacity="${f(.35*h)}"`);
+  // two rows of element across the top, a short one down each side
+  const el = efElCol(st);
+  c += efStroke(pd(on2(efZig(21, 59, 46.5, 49.5, 9), .15), false), el, 1.8) + efStroke(pd(on2(efZig(21, 59, 41.5, 44.5, 9), .15), false), el, 1.8);
+  // the hearth and the charge on it
+  c += shape(on2(rectUV(20, 33, 60, 36.5), .2), CERAMIC.m, .9) + ink(pd(on2([[20, 35.6], [60, 35.6]], .22), false), .4);
+  if (st.active){
+    const p = st.progress || 0, s = efStuff(st), a = gtClamp(1 - (p - .35)/.2), b = gtClamp((p - .4)/.15);
+    if (a > 0){ const col = mix(s.inCol, GT.GLOW, h*gtClamp(p/.4)*.75), mound = [];
+      for (let i = 0; i <= 12; i++){ const t = Math.PI*i/12; mound.push([40 + 6.5*Math.cos(t), 36.5 + 3.8*a*Math.sin(t)]); }
+      c += shape(on2(mound, .3), col, .8);
+      if (s.inKind === 'crushed') c += shape(on2(rrUV(36, 37, 39, 39.6, .6), .32), mix(col, '#000000', .15), .5) + shape(on2(rrUV(41, 37.4, 44, 40.2, .6), .32), mix(col, '#000000', .15), .5); }
+    if (b > 0){ const col = mix(s.col, GT.HOT, h*.75), o = `opacity="${f(b)}"`;
+      const pts = s.kind === 'ingot' ? [[34.5, 36.5], [45.5, 36.5], [44.3, 39.6], [35.7, 39.6]] : s.kind === 'brick' ? rectUV(35, 36.5, 45, 40.2) : rectUV(33.5, 36.5, 46.5, 37.7);
+      c += `<g ${o}>` + shape(on2(pts, .34), col, .8) + (s.kind === 'ingot' ? fill(pd(on2(rectUV(36.5, 38.4, 43.5, 39.2), .36)), '#ffffff', 'opacity=".3"') : '') + `</g>`; }
+  }
+  // the glass: two streaks of light, then the frame
+  c += fill(pd(on2([[22, 50], [27, 50], [24, 45], [21, 45]], .4)), '#ffffff', 'opacity=".28"') + fill(pd(on2([[54, 37], [59, 41], [59, 38.5], [56, 35.5]], .4)), '#ffffff', 'opacity=".2"');
+  return shape(on2(rrUV(y0, z0, y1, z1, 2.5), .05), '#1d2125', 1.2) + clipTo(on2(win, .1), c) + ink(pd(on2(win, .45)), 1.2);
+}
+
+function efDoor(st){
+  const { x1, y0, z0, y1, z1 } = EF_DOOR, X0 = LV.W;
+  let s = '';
+  for (const z of [z0 + 5, z1 - 9]) s += cyl(X0 + 1.5, y0 - 1.4, z, z + 6, 1.6, GT.IRON, toneI, .8);
+  s += box(X0, y0, z0, x1, y1, z1, EF_IRON, toneI, 1.4);
+  if (!facing([1,0,0])) return s;
+  s += ink(pd(on(PX(x1 + .03), rrUV(y0 + 1.6, z0 + 1.6, y1 - 1.6, z1 - 1.6, 1.5))), .6);
+  s += gtRivets(PX(x1 + .05), [[y0 + 3, z0 + 3], [y1 - 3, z0 + 3], [y0 + 3, z1 - 2.6], [y1 - 3, z1 - 2.6]], EF_IRON.d);
+  s += efWindow(st);
+  // the handle bar on two standoffs
+  for (const y of [22, 58]) s += rod([x1, y, 24], [x1 + 3.5, y, 24], .9, GT.IRON, toneI, .7);
+  s += rod([x1 + 3.5, 20.5, 24], [x1 + 3.5, 59.5, 24], 1.3, matOf('#dfe4e7'), toneI, .9);
+  return s;
+}
+
+function efParts(st, k, fade){
+  const fl = gtStack(EF_FLUE.x, EF_FLUE.y, LV.ZT, 12, EF_IRON);
+  return [{ box:[[LV.W, EF_DOOR.y0 - 3.2, EF_DOOR.z0], [LV.W + 8, EF_DOOR.y1, EF_DOOR.z1]], svg: fade(efDoor(st)) }, { box: fl.box, svg: fade(fl.svg) }];
+}
+
+/* ---------- see-through: lining, hearth, elements, charge ---------- */
+const EF_BRK = { l:'#e3a07e', m:'#c27657', d:'#6a3422' };
+// brick courses on a face of the lining: plane, u range, v range
+function efCourses(plane, u0, u1, v0, v1){
+  let d = '';
+  for (let v = v0 + 5, r = 0; v < v1; v += 5, r++) d += pd(on(plane, [[u0, v], [u1, v]]), false);
+  for (let v = v0, r = 0; v < v1; v += 5, r++) for (let u = u0 + 5 + (r % 2)*5; u < u1; u += 10) d += pd(on(plane, [[u, v], [u, Math.min(v1, v + 5)]]), false);
+  return `<path d="${d}" fill="none" stroke="${EF_BRK.d}" stroke-width=".6" opacity=".7"/>`;
+}
+function efInside(st, k){
+  const out = [], put = (b, svg) => out.push({ box: b, svg }), run = !!st.running, h = st.heat || 0, el = efElCol(st);
+  // the firebrick lining: a floor block up to the hearth, and the far side wall
+  put([[18, 14, LV.Z0], [70, 66, 28]], box(18, 14, LV.Z0, 70, 66, 28, EF_BRK, toneI, 1)
+    + (facing([1,0,0]) ? efCourses(PX(70.05), 14, 66, LV.Z0, 28) : '') + (facing([0,1,0]) ? efCourses(PY(66.05), 18, 70, LV.Z0, 28) : ''));
+  put([[18, 10, 28], [70, 14, 60]], box(18, 10, 28, 70, 14, 60, EF_BRK, toneI, 1) + (facing([0,1,0]) ? efCourses(PY(14.05), 18, 70, 28, 60) : ''));
+  put([[24, 20, 28], [66, 60, 32]], box(24, 20, 28, 66, 60, 32, CERAMIC, toneI, 1));
+  // the charge on the hearth: the stuff going in, then what comes out
+  if (st.active){ const p = st.progress || 0, s = efStuff(st), col = mix(s.inCol, GT.GLOW, h*gtClamp(p/.45)*.7);
+    if (p < .45) put([[40, 34, 32], [52, 46, 36]], s.inKind === 'crushed'
+      ? gtLump([43, 38, 33.6], .8, null, matOf(col)) + gtLump([49, 42, 33.6], .8, null, matOf(col)) + gtLump([46, 40, 36], .7, null, matOf(col))
+      : efDust([46, 40, 32], col));
+    else put([[42, 36, 32], [50, 44, 35]], s.kind === 'ingot' ? gtIngot([46, 40, 32], s.col, h*.9, true) : lvThing(s.kind, [46, 40, 32], mix(s.col, GT.HOT, h*.5))); }
+  // heating elements: two runs of zigzag along each side wall, a serpentine across the roof, glowing
+  for (const y of [16, 64]) for (const z of [39, 47]) out.push(gtWire(efZig(24, 66, z - 2, z + 2, 10).map(([x, zz]) => [x, y, zz]), el, .8));
+  out.push(gtWire(efZig(26, 62, 24, 56, 4).map(([x, y]) => [x, y, 56]), el, .8));
+  if (h > .3) put([[30, 20, 34], [60, 60, 50]], fill(pd(on(PX(46), ellUV(40, 42, 14, 9, 20))), GT.GLOW, `opacity="${f(.18*h)}"`));
+  // the leads from the board to the elements, the thermocouple down from the roof
+  const lead = run ? '#f6b98a' : GT.COPPER.m;
+  out.push(gtWire([[4.5, 24, 48], [12, 24, 48], [12, 16, 47], [24, 16, 47]], lead, .7), gtWire([[4.5, 56, 48], [12, 56, 48], [12, 64, 47], [24, 64, 47]], lead, .7),
+    gtWire([[4.5, 40, 58], [26, 40, 58], [26, 56, 56]], lead, .7));
+  put([[34, 48, 48], [38, 52, LV.ZT]], rod([36, 50, LV.ZT], [36, 50, 50], .8, GT.IRON, toneI, .7) + rod([36, 50, 51], [36, 50, 48.5], 1.1, matOf('#e2483d'), toneI, .6));
+  out.push(gtWire([[36, 50, 80], [4.5, 50, 74]], '#e2483d', .5));
+  // the flue: hot air out of the top of the chamber, up through the roof
+  put([[EF_FLUE.x - 2.5, EF_FLUE.y - 2.5, 60], [EF_FLUE.x + 2.5, EF_FLUE.y + 2.5, LV.ZT]], rod([EF_FLUE.x, EF_FLUE.y, 60], [EF_FLUE.x, EF_FLUE.y, LV.ZT], 2.5, EF_IRON, toneI, .8)
+    + fill(pd(on(PZ(60), ellUV(EF_FLUE.x, EF_FLUE.y, 1.8, 1.8, 12))), GT.RECESS));
+  return out;
+}
+
+gtLv({
+  fig:'LV1', title:'LV Electric Furnace', name:'E-FURNACE', face: efFace, parts: efParts, inside: efInside, product: efProduct,
+  recipes:[{ id:'lv_smelt_crushed_iron', name:'Iron Ingot' }, { id:'lv_smelt_copper_dust', name:'Copper Ingot' }, { id:'lv_smelt_clay', name:'Brick' }, { id:'lv_smelt_sand', name:'Glass' }],
+  loadLabel:'Load charge', outLabel:'Made', heatTime: 2.5,
+  shadowPts: [[EF_FLUE.x, EF_FLUE.y, LV.ZT + 16.5]],
+  callouts: st => [{ at: [EF_FLUE.x, EF_FLUE.y, LV.ZT + 16.5], text: 'FLUE', on: !!st.running }, ...(facing([1,0,0]) ? [{ at: [EF_DOOR.x1, 62, 56], text: 'FURNACE DOOR', on: false },
+    { at: [EF_DOOR.x1, 40, 48], text: 'HEAT WINDOW', on: (st.heat || 0) > .3 }, { at: [EF_DOOR.x1 + 3.5, 30, 24], text: 'HANDLE', on: false }] : [])],
+  insideCallouts: st => [{ at: [56, 64, 49], text: 'HEATING ELEMENTS', on: (st.heat || 0) > .3 }, { at: [64, 24, 32], text: 'CERAMIC HEARTH', on: false },
+    { at: [46, 40, 36], text: 'CHARGE', on: !!st.active }, { at: [60, 66, 20], text: 'FIREBRICK', on: false },
+    { at: [36, 50, 66], text: 'THERMOCOUPLE', on: !!st.running }],
+});
+</script>
+<script src="cf-tail.js"></script>
+</body></html>

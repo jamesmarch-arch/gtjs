@@ -24,6 +24,8 @@ export interface FigureMachine {
   burning: boolean; // boilers and fire-heated machines: the firebox is lit
   fuel: number; // fire-heated machines: fuel in storage
   venting: boolean; // boilers: burning with the net full, so the safety valve lifts
+  rate: number; // generators and transformers: 0..1 of the most EU they can make or move a tick
+  mode: 'up' | 'down'; // transformers: stepping up (LV -> MV) or down
 }
 
 // named after what it makes ('Crushed Iron Ore', 'Bronze Ingot'), and what from when the same machine can make it two
@@ -46,7 +48,19 @@ export function figureMachine(w: World, m: MachineState): FigureMachine {
     return {
       name: def.name, enabled: m.enabled, active: m.burn > 0, running: m.burn > 0, stalled: m.stalled, progress: 0, steam,
       recipe: null, recipes: [], input: fuel, output: 0, energy: 0, lowVolts: false, fuel,
-      burn: m.burnMax ? m.burn / m.burnMax : 0, burning: m.burn > 0, venting: m.burn > 0 && steam > 0.995,
+      burn: m.burnMax ? m.burn / m.burnMax : 0, burning: m.burn > 0, venting: m.burn > 0 && steam > 0.995, rate: 0, mode: m.mode,
+    };
+  }
+  // generators, batteries and transformers have no recipe: they run while EU flows through them
+  const most = def.generator ? def.generator.maxEuPerTick : def.transformer ? def.transformer.amps * 32 : 0;
+  if (most || def.battery) {
+    const energy = euCapacity(m) > 0 ? m.eu / euCapacity(m) : 0, rate = most ? Math.min(1, m.rate / most) : 0;
+    const fuel = def.generator?.fuels ? Object.keys(def.generator.fuels).reduce((n, f) => n + count(w, f), 0) : 0;
+    const running = def.battery ? energy > 0 : m.enabled && rate > 0;
+    return {
+      name: def.name, enabled: m.enabled, active: running, running, stalled: m.enabled && !running && !def.battery, progress: 0, steam,
+      recipe: null, recipes: [], input: fuel, output: 0, energy, lowVolts: false, burn: 0, burning: running && !!def.generator?.fuels,
+      venting: false, fuel, rate, mode: m.mode,
     };
   }
   return {
@@ -64,6 +78,7 @@ export function figureMachine(w: World, m: MachineState): FigureMachine {
     energy: euCapacity(m) > 0 ? m.eu / euCapacity(m) : 0, lowVolts: !!m.lowVolts,
     burn: def.fuel && m.burnMax ? m.burn / m.burnMax : 0, burning: !!def.fuel && m.burn > 0, venting: false,
     fuel: def.fuel ? Object.keys(def.fuel).reduce((n, f) => n + count(w, f), 0) : 0,
+    rate: 0, mode: m.mode,
   };
 }
 

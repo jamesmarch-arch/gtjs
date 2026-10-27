@@ -17,7 +17,7 @@ const FIGS = join(ROOT, 'public', 'figures');
 const OUT = join(ROOT, 'public', 'sprites');
 const SIZE = [640, 480];
 // multi-tile machines get a bigger frame, so each tile keeps about as many pixels as a one-tile machine's
-const SIZES = { ebf: [1600, 1200] };
+const SIZES = { ebf: [1600, 1200], coke_oven: [1600, 1200] };
 const STATE = 'input=3&output=8'; // a machine that has been used: ore in the hopper, a pile in the tray
 
 const chrome = process.env.CHROME ?? [

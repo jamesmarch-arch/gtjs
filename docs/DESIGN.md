@@ -89,7 +89,15 @@ valve, vent stack, puffs, hoppers, ingots, the induction-crucible kit (turbine, 
 A new machine figure is its geometry plus one `gtMachine({...})` call. The steam macerator predates it and still has
 its own copies.
 
-Figures so far: steam macerator, steam furnace, steam alloy smelter, small coal boiler. Screenshot URLs take the
+**The LV look.** `gt-lv.js` (loaded after `gt-parts.js`) gives every LV machine one silver steel case: a dark band
+across the top of the front with the blue LV badge, the name plate and the lamp; the energy socket and its cable on
+the left side; louvres on the right; a vent grille on the roof; an output slot and tray. Machines are told apart by
+their **face**, the recess in the middle of the front, where each shows its own work (the macerator's crusher
+rollers, the washer's porthole, the bender's ram), and by what they carry on the roof. An LV figure is `gtLv({...})`
+with `face`, `parts`, `inside` and `product`. Generators, batteries and transformers pass `noRecipe: true`: they
+have only a power switch and read `rate` (0..1 of the EU they make or move), `energy` and `mode` from the game.
+
+Every machine has a figure. Screenshot URLs take the
 skill's `?yaw= &pitch= &xr=1 &labels=1` plus `run=1` (working), `freeze=1` (hold one still frame: headless Chrome
 can't keep up with a running loop), `progress=`, `heat=`, `vent=1`, `puffs=1`.
 
@@ -151,7 +159,7 @@ credit them on the game's About screen. Figures may set `credit:false` inside th
     stoking the boilers to the first tin cables. Goals: made in total, held at once, built, fuel burned. Completed
     quests show a toast and a badge; rewards are claimed in the book.
   - Save format 3 adds stats and quest progress; earlier saves load with none.
-  - The forge hammer, compressor, extractor and coke oven have no figures yet: plain boxes on the floor.
+  - The forge hammer, compressor, extractor and coke oven had no figures at first: plain boxes on the floor.
 - **M5** LV: generators, EU nets, explosions, LV machines, the full ore processing chain, circuits. Done:
   - EU nets (`src/sim/power.ts`): cables and EU machines that touch share one buffer. A net runs at the voltage
     that feeds it each tick; a machine above its tier explodes (lost, with what it was working on) and a cable above

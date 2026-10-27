@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LV Battery Buffer</title>
+<script src="cf-head.js"></script></head><body>
+<script src="core.js"></script>
+<script src="gt-bridge.js"></script>
+<script src="gt-parts.js"></script>
+<script src="gt-lv.js"></script>
+<script>
+/* LV Battery Buffer (gtjs, LV): four batteries in one LV case, 40,000 EU between them. It soaks up EU when the net
+   makes more than it uses and gives it back when it makes less, so the machines on the net keep running.
+
+   How it works (truth first)
+   1. The cable on the socket ties the buffer to the LV net in both directions (the socket is labelled EU IN/OUT: the
+      same cable carries EU back out).
+   2. The control board is the charge controller: it takes surplus EU from the cable and shares it between four cells
+      wired side by side (all + ends on the copper bus at the top, all - ends on the dark bus in the rack), and draws
+      from them when the net's voltage sags.
+   3. Every cell shows its charge through a window on the face: the green bars rise and fall together. The meter
+      strip under them adds them up.
+   4. Two terminal posts on the roof (+ red, - black) sit on the ends of the two buses, for testing and jump leads.
+   Where the power is: cable <-> socket <-> control board <-> buses <-> four cells; the roof posts tap the buses.
+
+   Parts
+   OUTSIDE  the LV case (see gt-lv.js) . four battery bays on the face with a charge window in each . charge meter strip .
+            + and - terminal posts on the roof
+   INSIDE   four cells on a rack . + bus (copper, top) . - bus (in the rack) . leads to the control board . posts
+
+   Contact checks (numbers)
+   - bays y 16, 32, 48, 64 (+-6.5, 3 apart) and z 23..57 in LV_FACE (8..72, 15..60); the meter strip z 16.5..21.
+   - cells r 6 at x 58 on those y, z 12..50 on the rack (x 50..66, y 8..72, z 6..12): 4 apart.
+   - caps z 50..52.5 under the + bus (x 56.5..59.5, y 14..71.5, z 52.5..54.5).
+   - posts r 5 at (58, 70) and (64, 10): on the flat roof (it rounds off 6 from each edge: x < 68, 6 < y < 74), in front of
+     the grille (x 6..26); the + post drops to the + bus's end (y 70, z 54.5); the - post drops at (64, 10), 8.5 from the
+     first cell's axis (r 6), to the rack's top (z 12).
+*/
+const BB_Y = [16, 32, 48, 64], BB_Z = [23, 57], BB_POS = [58, 70], BB_NEG = [64, 10], BB_CAP = 40000;
+const BB_CELL = { l:'#4f5d6e', m:'#36414e', d:'#1d242c' };
+const bbPct = v => `${Math.round((v || 0)*100)}%`;
+const bbBar = e => e < .15 ? '#e2483d' : e < .35 ? '#f4b829' : '#5fd06e';
+
+function bbFace(st){
+  const e = gtClamp(st.energy || 0), run = !!st.running, t = st.t || 0, col = bbBar(e);
+  let s = '';
+  for (const [i, c] of BB_Y.entries()){
+    // the bay, the cell in it with its terminal nub and label band
+    s += shape(lvOn(rrUV(c - 6.5, BB_Z[0], c + 6.5, BB_Z[1], 1.8), .42), '#262a2e', 1.1);
+    s += shape(lvOn(rrUV(c - 5, BB_Z[0] + 1.6, c + 5, BB_Z[1] - 4, 2.4), .5), BB_CELL.m, 1);
+    s += shape(lvOn(rrUV(c - 2.2, BB_Z[1] - 4, c + 2.2, BB_Z[1] - 1.6, .6), .5), GT.COPPER.m, .7);
+    s += fill(pd(lvOn(rectUV(c + 2.6, BB_Z[0] + 2.5, c + 4.2, BB_Z[1] - 5.5), .55)), BB_CELL.l, 'opacity=".7"');
+    // the charge window and its green bar
+    const z0 = BB_Z[0] + 4.5, z1 = BB_Z[1] - 8, zl = z0 + (z1 - z0)*e;
+    s += shape(lvOn(rrUV(c - 2.8, z0 - .6, c + 2.8, z1 + .6, .8), .55), '#14181c', .8);
+    if (e > .005) s += fill(pd(lvOn(rectUV(c - 2.1, z0, c + 2.1, zl), .6)), col);
+    // charging: a bright band sweeps up the bar
+    if (run && e > .05){ const zz = z0 + ((t*.6 + i*.23) % 1)*(zl - z0);
+      s += fill(pd(lvOn(rectUV(c - 2.1, Math.max(z0, zz - 1.4), c + 2.1, Math.min(zl, zz + 1.4)), .62)), '#ffffff', 'opacity=".45"'); }
+    let tk = ''; for (let k = 1; k < 4; k++){ const z = z0 + (z1 - z0)*k/4; tk += pd([lvAt(c - 2.8, z, .65), lvAt(c - 1.4, z, .65)], false); }
+    s += `<path d="${tk}" fill="none" stroke="#e8edf0" stroke-width=".55"/>`;
+  }
+  // the meter strip: ten segments
+  s += shape(lvOn(rrUV(10, 16.5, 70, 21, 1), .45), '#14181c', 1);
+  for (let k = 0; k < 10; k++){ const y0 = 67.5 - k*5.7, lit = e > (k + .5)/10;
+    s += fill(pd(lvOn(rectUV(y0 - 4.6, 17.4, y0, 20.1), .5)), lit ? bbBar((k + 1)/10) : '#323a40'); }
+  return s;
+}
+
+function bbPost(x, y, cap, label){
+  const ZT = LV.ZT;
+  return { box:[[x - 5, y - 5, ZT], [x + 5, y + 5, ZT + 13]], svg:
+    cyl(x, y, ZT, ZT + 3, 5, CERAMIC, toneI, 1.1)
+    + cyl(x, y, ZT + 3, ZT + 9, 2, GT.COPPER, toneI, .9)
+    + cyl(x, y, ZT + 5, ZT + 7, 3.6, GT.IRON, toneI, .8, 6)
+    + cyl(x, y, ZT + 9, ZT + 13, 3.6, cap, toneI, 1.1) };
+}
+function bbParts(st, k, fade){
+  const p = bbPost(...BB_POS, GT.REDW), n = bbPost(...BB_NEG, DARK);
+  return [{ ...p, svg: fade(p.svg) }, { ...n, svg: fade(n.svg) }];
+}
+
+function bbInside(st, k){
+  const out = [], put = (b, svg) => out.push({ box: b, svg }), run = !!st.running, e = gtClamp(st.energy || 0);
+  const leads = run ? '#f6b98a' : GT.COPPER.m;
+  // the rack, with the - bus along it
+  put([[50, 6, LV.Z0], [66, 74, 12]], box(50, 6, LV.Z0, 66, 74, 12, GT_TRIM, toneI, .9)
+    + (facing([0,0,1]) ? shape(on(PZ(12.05), rectUV(56.5, 7, 59.5, 70)), DARK.l, .6) : ''));
+  // four cells, each with a charge stripe up its front
+  for (const y of BB_Y){
+    let c = cyl(58, y, 12, 50, 6, BB_CELL, toneI, 1.1, 24) + cyl(58, y, 50, 52.5, 2.2, GT.COPPER, toneI, .8, 12);
+    if (facing([1,0,0])){ const zl = 15 + 32*e;
+      c += fill(pd(on(PX(64.1), rectUV(y - 1.4, 15, y + 1.4, 47))), '#14181c') + (e > .005 ? fill(pd(on(PX(64.2), rectUV(y - 1, 15.4, y + 1, zl))), bbBar(e)) : ''); }
+    put([[52, y - 6, 12], [64, y + 6, 52.5]], c);
+  }
+  // the + bus over the caps, the posts down from the roof
+  put([[56.5, 14, 52.5], [59.5, BB_POS[1] + 1.5, 54.5]], box(56.5, 14, 52.5, 59.5, BB_POS[1] + 1.5, 54.5, GT.COPPER, toneI, .8));
+  put([[57, BB_POS[1] - 1, 54.5], [59, BB_POS[1] + 1, LV.ZT]], rod([58, BB_POS[1], 54.5], [58, BB_POS[1], LV.ZT], 1.2, GT.COPPER, toneI, .8));
+  put([[BB_NEG[0] - 1, BB_NEG[1] - 1, 12], [BB_NEG[0] + 1, BB_NEG[1] + 1, LV.ZT]], rod([BB_NEG[0], BB_NEG[1], 12], [BB_NEG[0], BB_NEG[1], LV.ZT], 1.2, DARK, toneI, .8));
+  // the charge controller's leads to the two buses
+  out.push(gtWire([[5, 34, 60], [30, 34, 60], [58, 34, 55]], leads, .9));
+  out.push(gtWire([[4.5, 26, 46], [20, 26, 9], [50, 26, 9]], '#3d3935', .9));
+  return out;
+}
+
+gtLv({
+  fig:'LV11', title:'LV Battery Buffer', name:'BATTERY BUFFER', nameSize: 4, socket:'both', noRecipe: true,
+  face: bbFace, parts: bbParts, inside: bbInside,
+  shadowPts: [[BB_POS[0], BB_POS[1], LV.ZT + 13], [BB_NEG[0], BB_NEG[1], LV.ZT + 13]],
+  stats: st => [{ label:'Charge', value: bbPct(st.energy) },
+    { label:'Stored', value: `${(gtClamp(st.energy || 0)*BB_CAP/1000).toFixed(1)}k EU`, small:true }, { label:'Holds', value: '40k EU', small:true }],
+  callouts: st => [
+    ...(facing([1,0,0]) ? [{ at: [LV.W, BB_Y[2], BB_Z[1] - 2], text: 'BATTERY CELLS', on: !!st.running },
+      { at: [LV.W, 30, 18.8], text: 'CHARGE METER', on: (st.energy || 0) > 0 }] : []),
+    { at: [BB_POS[0], BB_POS[1], LV.ZT + 13], text: '+ TERMINAL', on: !!st.running },
+    { at: [BB_NEG[0], BB_NEG[1], LV.ZT + 13], text: '- TERMINAL', on: !!st.running }],
+  insideCallouts: st => [{ at: [58, BB_Y[1], 46], text: 'CELLS', on: !!st.running },
+    { at: [58, 40, 54.5], text: '+ BUS', on: !!st.running }, { at: [60, 60, 12], text: '- BUS (RACK)', on: !!st.running },
+    { at: [30, 34, 60], text: 'CHARGE LEADS', on: !!st.running }],
+});
+</script>
+<script src="cf-tail.js"></script>
+</body></html>

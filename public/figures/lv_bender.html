@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LV Bender</title>
+<script src="cf-head.js"></script></head><body>
+<script src="core.js"></script>
+<script src="gt-bridge.js"></script>
+<script src="gt-parts.js"></script>
+<script src="gt-lv.js"></script>
+<script>
+/* LV Bender (gtjs, LV): presses an ingot out flat into a plate, one plate per ingot.
+
+   How it works (truth first)
+   1. A pusher slides the ingot in through the feed slot in the left wall of the press bay, onto the lower die.
+   2. An electric motor drives a hydraulic pump. The pump pushes oil from the tank up two hoses into the cylinder on
+      the roof; oil on top of the piston drives it down, oil underneath lifts it back.
+   3. The piston rod comes down through the roof into the bay and carries the ram, guided by two columns at the back.
+      The upper die on the ram strikes the ingot on the lower die. Every stroke squeezes it thinner and spreads it
+      wider; after five strokes it is a plate.
+   4. The plate is pushed off the front of the die and drops down the chute in the bay floor to the output slot and
+      the tray.
+   Where the metal is: feed slot -> lower die -> (pressed under the upper die) -> chute -> slot -> tray.
+   Where the power is: cable -> socket -> control board -> motor -> pump -> oil -> hoses -> cylinder -> rod -> ram.
+
+   Parts
+   OUTSIDE  the LV case (see gt-lv.js) . yellow-and-black chevron guard round the press bay . the bay: back wall, floor
+            with the chute, sides . two guide columns . bed and lower die . ram (yellow) with its upper
+            die . piston rod . hydraulic cylinder on the roof with its base flange, end cap and two hoses to the roof fittings
+   INSIDE   motor . pump . oil tank . two oil pipes up to the roof fittings . piston rod down from the cylinder . ram . dies
+
+   Contact checks (numbers)
+   - bay opening y 15..65, z 21..54 in the face; the bay runs back to x 54.
+   - bed x 57..69, y 21..59, z 21..27 on the bay floor (z 21); lower die x 59..67, y 24..56, z 27..30 on the bed.
+   - ingot 8 x 12 x 4 on the die top (z 30); it ends 13 x 28 x 1.2 (same volume to within a tenth).
+   - the upper die (x 59..67, 2 thick) is under the ram (x 57..69, 8 thick); at the bottom of a stroke its face is on the
+     work's top (z 30 + thickness); at the top of a stroke it is at z 40, the ram's top at z 50, under the ceiling (z 54).
+   - columns r 1.4 at x 56, y 18.5 and 61.5 stand on the floor and reach the ceiling, just behind the ram (x 57).
+   - piston rod r 2.2 at x 63, y 40: from the ram's top up through the ceiling (z 54) and the roof (z 84) into the cylinder
+     (r 7, z 87..103 on a flange z 84..87): the rod line is the centre line of both ram and cylinder.
+   - hoses leave the back of the cylinder (x 56) and end in the roof fittings at x 40, y 37 and 43; inside, the oil pipes
+     rise from the pump (x 20/22) to those same points.
+   - chute: the floor gap x 69.6..73.4 in front of the bed; the plate falls through it toward the slot (z 8.5..12.5).
+*/
+const BDW = LV.W;
+const BD = { y0: 15, z0: 21, y1: 65, z1: 54, xb: 54,          // the press bay
+  bed: [57, 21, 69, 59, 21, 27], die: [59, 24, 67, 56, 27, 30], zTop: 40, cx: 63, cy: 40,
+  rod: [63, 40], cyl: { x: 63, y: 40, r: 7, z0: LV.ZT + 3, z1: LV.ZT + 19 }, strokes: 5 };
+const BD_YEL = { l:'#f6cd3c', m:'#dca821', d:'#6e5310' };
+const BD_DIE = { l:'#8a939a', m:'#636c73', d:'#33393e' };
+const BD_CHROME = { l:'#f4f7f8', m:'#c9d1d6', d:'#6d777e' };
+const bdCol = st => lvCol(st);
+const bdProd = st => ({ kind: 'plate', col: bdCol(st) });
+const bdSm = (a, b, x) => { const k = gtClamp((x - a)/(b - a)); return k*k*(3 - 2*k); };
+
+/* the press, from progress: where the work is, how flat it is, where the ram is, whether it is striking */
+function bdPress(st){
+  const o = { work: null, zr: BD.zTop, hit: 0 };
+  if (!st.active) return o;
+  const p = st.progress || 0, N = BD.strokes;
+  let s = 0, cx = BD.cx, cy = BD.cy, cz = BD.die[5], op = 1;
+  if (p < .12) cy = BD.cy + (70 - BD.cy)*(1 - ease(p/.12));          // slid in from the feed slot
+  else if (p < .88){
+    const k = (p - .12)/.76*N, n = Math.min(N - 1, Math.floor(k)), ph = k - n;
+    s = (n + bdSm(.3, .5, ph))/N;
+    const down = ph < .4 ? ease(ph/.4) : ph < .55 ? 1 : 1 - ease((ph - .55)/.45);
+    const h = 4 - 2.8*s;
+    o.zr = BD.zTop - (BD.zTop - (cz + h))*down;
+    o.hit = ph > .38 && ph < .58 ? 1 : 0;
+  } else { s = 1; const u = (p - .88)/.12, fall = Math.max(0, u - .5)/.5;   // pushed off the front, then down the chute
+    cx = BD.cx + 11*ease(Math.min(1, u*1.6)); cz = BD.die[5] - 14*fall*fall; op = 1 - bdSm(.55, 1, u); }
+  const h = 4 - 2.8*s, lx = 8 + 5*s, ly = 12 + 16*s;
+  o.work = { b: [cx - lx/2, cy - ly/2, cz, cx + lx/2, cy + ly/2, cz + h], op };
+  return o;
+}
+
+// yellow-and-black guard: stripes leaning out from the middle, so they make chevrons
+function bdChevron(plane, y0, z0, y1, z1, r, w){
+  const base = on(plane, rrUV(y0, z0, y1, z1, r)), H = z1 - z0, ym = (y0 + y1)/2;
+  let a = '', b = '';
+  for (let u = ym; u < y1 + H; u += 2*w) a += pd(on(plane, [[u, z0], [u + w, z0], [u + w - H, z1], [u - H, z1]]));
+  for (let u = ym; u > y0 - H; u -= 2*w) b += pd(on(plane, [[u, z0], [u - w, z0], [u - w + H, z1], [u + H, z1]]));
+  return fill(pd(base), BD_YEL.l) + clipTo(on(plane, rectUV(ym, z0 - 1, y1 + 1, z1 + 1)), clipTo(base, `<path d="${a}" fill="${INK}"/>`))
+    + clipTo(on(plane, rectUV(y0 - 1, z0 - 1, ym, z1 + 1)), clipTo(base, `<path d="${b}" fill="${INK}"/>`)) + ink(pd(base), 1.1);
+}
+
+/* the press in its bay: parts for byDepth (the bay contents on the face, and the same parts in the see-through) */
+function bdPressParts(st){
+  const out = [], put = (b, svg) => out.push({ box: b, svg }), pr = bdPress(st), col = bdCol(st);
+  const [bx0, by0, bx1, by1, bz0, bz1] = BD.bed, [dx0, dy0, dx1, dy1, dz0, dz1] = BD.die;
+  for (const y of [18.5, 61.5]) put([[54.6, y - 1.4, BD.z0], [57.4, y + 1.4, BD.z1]], rod([56, y, BD.z0], [56, y, BD.z1], 1.4, BD_CHROME, toneI, .8, 1.4, 12));
+  put([[bx0, by0, bz0], [bx1, by1, bz1]], box(bx0, by0, bz0, bx1, by1, bz1, GT_TRIM, toneI, 1));
+  put([[dx0, dy0, dz0], [dx1, dy1, dz1]], box(dx0, dy0, dz0, dx1, dy1, dz1, BD_DIE, toneI, .9));
+  if (pr.work){ const [x0, y0, z0, x1, y1, z1] = pr.work.b, m = matOf(col);
+    const hot = pr.hit ? fill(pd(on(PZ(z1 + .05), rectUV(x0 + .8, y0 + .8, x1 - .8, y1 - .8))), '#ffffff', 'opacity=".35"') : '';
+    put([[x0, y0, z0], [x1, y1, z1]], `<g opacity="${f(pr.work.op)}">${box(x0, y0, z0, x1, y1, z1, m, toneI, .8) + hot}</g>`); }
+  // the ram: upper die, the yellow beam with its chevrons, the piston rod up to the ceiling
+  const zr = pr.zr;
+  put([[dx0, dy0, zr], [dx1, dy1, zr + 2]], box(dx0, dy0, zr, dx1, dy1, zr + 2, BD_DIE, toneI, .9));
+  put([[bx0, 20, zr + 2], [bx1, 60, zr + 10]], box(bx0, 20, zr + 2, bx1, 60, zr + 10, BD_YEL, toneI, 1.1)
+    + (facing([1,0,0]) ? gtRivets(PX(bx1 + .05), [[23, zr + 6], [57, zr + 6]], BD_YEL.d) + ink(pd([[bx1 + .05, 21, zr + 3.2], [bx1 + .05, 59, zr + 3.2]], false), .7) : ''));
+  put([[BD.rod[0] - 2.2, BD.rod[1] - 2.2, zr + 10], [BD.rod[0] + 2.2, BD.rod[1] + 2.2, LV.ZT]], rod([BD.rod[0], BD.rod[1], zr + 10], [BD.rod[0], BD.rod[1], LV.ZT], 2.2, BD_CHROME, toneI, .9, 2.2, 16));
+  // the strike: short lines flying off the sides of the work
+  if (pr.hit && st.running && pr.work){ const [x0, y0, , x1, y1, z1] = pr.work.b; let d = '';
+    for (const [y, dy] of [[y0, -1], [y1, 1]]) for (let i = 0; i < 3; i++){ const zz = z1 - .4, xx = x0 + (x1 - x0)*(.25 + .25*i);
+      d += pd([[xx, y + dy*1, zz], [xx + (i - 1)*1.2, y + dy*4, zz + 1.6 + i*.6]], false); }
+    put([[x0, y0 - 5, z1], [x1, y1 + 5, z1 + 3]], `<path d="${d}" fill="none" stroke="#fff3b0" stroke-width="1.1" stroke-linecap="round"/>`); }
+  return out;
+}
+
+function bdFace(st){
+  const W = BDW, { y0, z0, y1, z1, xb } = BD;
+  let s = bdChevron(PX(W + .5), 9.6, 16.6, 70.4, 58.4, 2.5, 3.2);
+  // the bay: back wall, floor (with the chute), the visible side, then the press
+  const q = (pts, n, col) => facing(n) ? fill(pd(pts), col) + ink(pd(pts), .6) : '';
+  let bay = q([[xb, y0, z0], [xb, y1, z0], [xb, y1, z1], [xb, y0, z1]], [1,0,0], '#8a939a')
+    + q([[xb, y0, z0], [W, y0, z0], [W, y1, z0], [xb, y1, z0]], [0,0,1], '#a3abb0')
+    + q([[xb, y0, z1], [W, y0, z1], [W, y1, z1], [xb, y1, z1]], [0,0,-1], '#3a4147')
+    + q([[xb, y0, z0], [W, y0, z0], [W, y0, z1], [xb, y0, z1]], [0,1,0], '#b4bbc0')
+    + q([[xb, y1, z0], [W, y1, z0], [W, y1, z1], [xb, y1, z1]], [0,-1,0], '#7d868c');
+  if (facing([0,0,1])) bay += shape(on(PZ(z0 + .05), rectUV(69.6, 24, 73.4, 56)), GT.RECESS, .7);
+  // the feed slot in the left wall (seen when the bay's left wall faces us: from the right of the front)
+  if (facing([0,-1,0])) bay += shape(on(PY(y1 - .05), rectUV(59, 29.5, 66, 35.5)), GT.RECESS, .6);
+  // a lamp strip under the ceiling lights the back wall
+  bay += fill(pd(on(PX(xb + .05), rectUV(y0 + 2, z1 - 4, y1 - 2, z1 - 1))), '#fff3c8', 'opacity=".25"');
+  bay += byDepth(bdPressParts(st));
+  const open = lvOn(rrUV(y0, z0, y1, z1, 2), .55);
+  s += fill(pd(lvOn(rrUV(y0, z0, y1, z1, 2), .5)), '#2b3035') + clipTo(open, bay);
+  // the glass: two streaks of light
+  s += fill(pd(lvOn([[y0 + 3, z1 - 9], [y0 + 11, z1 - 2], [y0 + 7, z1 - 2], [y0 + 3, z1 - 5.5]], .65)), '#ffffff', 'opacity=".22"');
+  return s + ink(pd(open), 1.6);
+}
+
+function bdParts(st, k, fade){
+  const { x, y, r, z0, z1 } = BD.cyl, ZT = LV.ZT, run = !!st.running, out = [];
+  // the hydraulic cylinder: base flange, the yellow barrel, the end cap, and a fill mark that shows the oil side
+  let s = cyl(x, y, ZT, z0, r + 2, GT_TRIM, toneI, 1.1, 28) + cyl(x, y, z0, z1, r, BD_YEL, toneI, 1.4, 28) + cyl(x, y, z1, z1 + 2, r + 1, GT_TRIM, toneI, 1.1, 28);
+  let bolts = ''; for (let i = 0; i < 6; i++){ const a = i*Math.PI/3 + .3, px = x + (r + 1.1)*Math.cos(a), py = y + (r + 1.1)*Math.sin(a);
+    bolts += pd(on(PZ(ZT + 3.05), ellUV(px, py, .55, .55, 8))); }
+  s += fill(bolts, GT_TRIM.l);
+  // a black band round the barrel
+  const band = (za, zb) => { const A = on(PZ(za), ellUV(x, y, r + .08, r + .08, 28)), B = on(PZ(zb), ellUV(x, y, r + .08, r + .08, 28));
+    return loft(A, B, () => INK); };
+  s += band(z1 - 4, z1 - 2.6) + band(z0 + 2.6, z0 + 4);
+  out.push({ box: [[x - r - 2, y - r - 2, ZT], [x + r + 2, y + r + 2, z1 + 2]], svg: fade(s) });
+  // the hoses: from the back of the cylinder over the roof to two fittings
+  for (const [yy, zz] of [[37, z1 - 3], [43, z0 + 3]]){
+    const pts = [[x - r + .5, yy, zz], [46, yy, zz], [40, yy, ZT + 6], [40, yy, ZT + 1.5]];
+    out.push({ box: [[39, yy - 1, ZT], [x - r + .5, yy + 1, zz + 1]], svg: fade(cyl(40, yy, ZT, ZT + 1.6, 1.8, GT_TRIM, toneI, .8, 12) + gtWire(pts, run ? '#3a3632' : '#4a4540', 1).svg) });
+  }
+  return out;
+}
+
+function bdInside(st, k){
+  const out = [], put = (b, svg) => out.push({ box: b, svg }), run = !!st.running, t = st.t || 0;
+  // the oil tank, the pump on it, the motor beside the pump
+  put([[8, 8, LV.Z0], [32, 28, 26]], box(8, 8, LV.Z0, 32, 28, 26, matOf('#c0503a'), toneI, 1.1)
+    + (facing([1,0,0]) ? tx(32.1, 18, 15, 'OIL', 4, GT.CREAM, 800) : ''));
+  put([[14, 32, LV.Z0], [28, 44, 24]], box(14, 32, LV.Z0, 28, 44, 24, matOf('#6f8a9c'), toneI, 1));
+  put([[13, 46, LV.Z0], [27, 68, 23]], rod([20, 46, 16], [20, 68, 16], 7, GT.IRON, toneI, 1, 7, 24) + box(14, 49, LV.Z0, 26, 65, 9, GT_TRIM, toneI, .8));
+  put([[18, 44, 14], [22, 46, 18]], rod([20, 46, 16], [20, 44, 16], 1.8, GT_TRIM, toneI, .7, 1.8, 12));
+  // the oil pipes up to the roof fittings (pressure side bright while the press works)
+  const oil = run ? '#e0a050' : '#9a6a2a';
+  out.push(gtWire([[20, 37, 24], [20, 37, 72], [40, 37, 72], [40, 37, LV.ZT]], oil, .9));
+  out.push(gtWire([[24, 41, 24], [24, 43, 66], [40, 43, 66], [40, 43, LV.ZT]], '#9a6a2a', .9));
+  return [...out, ...bdPressParts(st)];
+}
+
+gtLv({
+  fig:'LV7', title:'LV Bender', name:'BENDER', face: bdFace, parts: bdParts, inside: bdInside, product: bdProd, height: 108,
+  shadowPts: [[BD.cyl.x - 9, BD.cyl.y - 9, BD.cyl.z1 + 2], [BD.cyl.x + 9, BD.cyl.y + 9, BD.cyl.z1 + 2]],
+  recipes:[{ id:'bend_iron_plate', name:'Iron Plate' }, { id:'bend_copper_plate', name:'Copper Plate' }, { id:'bend_bronze_plate', name:'Bronze Plate' }],
+  loadLabel:'Load ingots', outLabel:'Made',
+  callouts: st => [{ at: [BD.cyl.x, BD.cyl.y - BD.cyl.r, BD.cyl.z1 - 3], text: 'HYDRAULIC CYLINDER', on: !!st.running },
+    ...(facing([1,0,0]) ? [{ at: [69, 58, bdPress(st).zr + 8], text: 'RAM', on: !!st.running },
+      { at: [67, 24, 29], text: 'DIE', on: !!(st.active && bdPress(st).work) },
+      { at: [BDW, 9.6, 30], text: 'GUARD', on: false }] : [])],
+  insideCallouts: st => [{ at: [20, 60, 23], text: 'MOTOR', on: !!st.running }, { at: [21, 38, 24], text: 'PUMP', on: !!st.running },
+    { at: [20, 10, 26], text: 'OIL TANK', on: false }, { at: [40, 43, 66], text: 'OIL PIPES', on: !!st.running },
+    { at: [63, 40, 70], text: 'PISTON ROD', on: !!st.running }, { at: [69, 58, bdPress(st).zr + 6], text: 'RAM', on: !!st.running },
+    { at: [67, 30, 28], text: 'DIES', on: !!st.active }],
+});
+</script>
+<script src="cf-tail.js"></script>
+</body></html>

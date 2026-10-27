@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>High Pressure Coal Boiler</title>
+<script src="cf-head.js"></script></head><body>
+<script src="core.js"></script>
+<script src="gt-bridge.js"></script>
+<script src="gt-parts.js"></script>
+<script>
+/* High Pressure Coal Boiler (gtjs, LV): the small coal boiler's big steel brother. Fire-tube boiler, brick-set firebox,
+   a second drum on the roof for the steam. 15 L of steam a tick: two and a half small boilers.
+
+   How it works (truth first)
+   1. Coal or coke waits in the hopper on the roof and slides down the coal chute onto the grate. The firebox is set in
+      firebrick, which takes the heat a steel box could not; the fire door is cast iron. Ash falls into the ash pan.
+   2. The hot gas rises into the brick combustion chamber at the front, then runs back through nine fire tubes that pass
+      through the water drum, into the smokebox at the back and up the tall chimney.
+   3. The water boils. The steam rises through two risers into the steam drum on the roof, where it collects dry, at
+      much higher pressure than in the small boiler (the gauge reads further round). It leaves down the dry pipe to the
+      left wall, through the stop valve and into the floor: the steam net.
+   4. Feed water comes in through the right wall; the water gauge glass on the front shows the level. When the net is
+      full, pressure lifts the safety valve on the steam drum's dome and the spare steam vents.
+   Where the coal is: hopper -> chute -> grate -> ash pan (ash) and chimney (smoke). Coke burns twice as long.
+   Where the water and steam are: feed pipe -> water drum -> risers -> steam drum -> dry pipe -> stop valve -> steam
+   net (or the safety valve).
+
+   x = depth (front at x = W), y = width (+y = viewer-left: the steam side), z = up. 1 unit = 1 cm.
+
+   Parts
+   CASE     firebrick setting (z 0..40) . steel shell with double rows of heavy rivets . cast-iron firebox front . fire
+            door on hinges, with draught slits and a handle . ash pan drawer . water gauge glass with two cocks . big
+            high pressure gauge . running lamp . name plate . steel coal hopper with feed flap . tall chimney with a band
+            and a flared cap . steam drum on two saddles . dome . lever safety valve with fulcrum and weight
+   FIRE     brick floor . back wall . grate bars . coal bed . flames . ash pan . coal chute . combustion chamber (brick)
+   WATER    drum shell . two tube plates . nine fire tubes . water . bubbles . feed pipe (right wall, check valve)
+   STEAM    two risers . steam drum . dry pipe . steam outlet riser with stop valve (left wall) . smokebox . chimney flue
+
+   Contact checks (numbers)
+   - water drum r 18 at y 37, z 62, from x 8 to 62: z 44..80 sits above the firebox (top z 40) and under the roof (z 96).
+   - fire tubes at z 52/59/66, y 29/37/45: all under the water line (z 72) and inside the drum (within 12.8 of its axis).
+   - tubes run from the front combustion chamber (x 63..69) to the smokebox (x 1..7) through the tube plates at x 8 / 62.
+   - coal chute (50, 12, 96) -> (60, 20, 22): at z 62 it is at y 15.7, clear of the drum (y from 19).
+   - risers at x 22 / 48, y 44: from the drum's top (z 78.6) to the steam drum's underside (z 101.1).
+   - steam drum r 8 at y 48, z 108, x 12..58, on saddles (x 13..18, 52..57, z 96..101): clear of the hopper (y to 26)
+     and the chimney (y to 22).
+   - dry pipe: steam drum (30, 52, 101) -> down through the roof to z 86 -> left wall (30, 74, 86): at y 52 the drum
+     only reaches z 71.9.
+   - feed pipe: right wall (50, 0, 58) -> drum side (50, 19.6, 58).
+*/
+const W = 70, D = 74, ZB = 40, ZT = 96;
+Z_FLOOR = 0;
+// the whole case's profile (square at the foot, rounded at the roof) and the steel shell's above the brick setting
+const hpProf = z0 => [[0, z0], [D, z0], ...arcUV(D - 6, ZT - 6, 6, 0, 90, 6), ...arcUV(6, ZT - 6, 6, 90, 180, 6)];
+const HP_OUT = hpProf(0), HP_SHELL = hpProf(ZB);
+const HP_STEEL = { l:'#d3d9dc', m:'#9ea7ad', d:'#5d676e' }, HP_STEELD = { l:'#aab3b9', m:'#7b858b', d:'#353d42' };
+const HP_MORTAR = { l:'#b9a99a', m:'#958475', d:'#4c3f35' };
+const HP = {
+  drum: { x0:8, x1:62, y:37, z:62, r:18 }, water: 72,
+  tubes: [[29, 52], [37, 52], [45, 52], [29, 59], [37, 59], [45, 59], [29, 66], [37, 66], [45, 66]],
+  grateZ: 12, grate: [33, 19, 65, 55],
+  hopBot: [44, 6, 56, 18], hopTop: [38, 2, 62, 26], hopH: 12,
+  chim: [9, 16], chimH: 48,
+  sd: { x0:12, x1:58, y:48, z:108, r:8 }, dome: [36, 48], risers: [22, 48],
+  door: [24, 14, 50, 32],
+};
+const hpLift = st => st.venting ? .9 + .1*Math.sin((st.t || 0)*30) : 0;   // the safety valve's lever, 0..1
+const hpRand = (a, b) => { const s = Math.sin(a*12.9898 + b*78.233)*43758.5453; return s - Math.floor(s); };
+
+/* ---------- firebrick: running bond on a face of the setting ---------- */
+function hpBricks(n, plane, u0, u1, v0, v1, m = GT.BRICK, shade = tone){
+  const base = shade(n, m), cols = [mix(base, '#ffe6d6', .12), base, mix(base, '#4a1c10', .14)], ROW = 5, LEN = 11, GAP = .45;
+  const fl = ['', '', ''];
+  let lines = '';
+  for (let v = v0, row = 0; v < v1 - .3; v += ROW, row++){
+    const off = row % 2 ? LEN/2 : 0;
+    for (let u = u0 - off; u < u1 - .3; u += LEN){
+      const a = Math.max(u0, u), b = Math.min(u1, u + LEN);
+      if (b - a < 1.5) continue;
+      const d = pd(on(plane, rectUV(a + GAP, v + GAP, b - GAP, Math.min(v1, v + ROW) - GAP)));
+      fl[Math.floor(hpRand(u*.31 + u0, row + v0)*3)] += d; lines += d;
+    }
+  }
+  return fl.map((d, i) => d ? fill(d, cols[i]) : '').join('') + `<path d="${lines}" fill="none" stroke="${INK}" stroke-width=".35" opacity=".45"/>`;
+}
+
+/* ---------- the case: brick setting below, steel shell above ---------- */
+const hpRivets = (plane, pts, col) => fill(pts.map(([u, v]) => pd(on(plane, ellUV(u, v, 1.05, 1.05, 10)))).join(''), col);
+function hpCase(st){
+  const m = HP_STEEL, FRONT = facing([1,0,0]), BACK = facing([-1,0,0]), LEFT = facing([0,1,0]), RIGHT = facing([0,-1,0]);
+  const rc = mix(m.d, m.m, .3);
+  // the firebrick setting
+  let s = box(0, 0, 0, W, D, ZB, HP_MORTAR, tone, 1.2);
+  if (FRONT) s += hpBricks([1,0,0], PX(W + .2), 0, D, 0, ZB);
+  if (BACK) s += hpBricks([-1,0,0], PX(-.2), 0, D, 0, ZB);
+  if (LEFT) s += hpBricks([0,1,0], PY(D + .2), 0, W, 0, ZB);
+  if (RIGHT) s += hpBricks([0,-1,0], PY(-.2), 0, W, 0, ZB);
+  // the steel shell
+  if (FRONT) s += fill(pd(on(PX(W), HP_SHELL)), tone([1,0,0], m));
+  if (BACK) s += fill(pd(on(PX(0), HP_SHELL)), tone([-1,0,0], m));
+  s += extrude(HP_SHELL, 0, W, m);
+  if (FRONT){ const rv = [];
+    s += ink(pd(on(PX(W + .25), rrUV(3.5, ZB + 3.5, D - 3.5, ZT - 3.5, 3))), 1.1);
+    for (let y = 6; y <= D - 6; y += 5) rv.push([y, ZT - 1.8], [y + 2.5, ZT - 5.2], [y, ZB + 1.8]);
+    s += hpRivets(PX(W + .3), rv, rc);
+    // the cast-iron firebox front, set in the brick
+    s += shape(on(PX(W + .25), rrUV(14, 1, 60, 37, 2)), mix(GT.IRON.d, DARK.m, .4), 1.6);
+    s += hpRivets(PX(W + .3), [[16.5, 3.5], [57.5, 3.5], [16.5, 34.5], [57.5, 34.5], [37, 34.5]], GT.IRON.m);
+    s += gtNamePlate(W, 23, 74, 53, 90, 'BOILER', 'HIGH PRESSURE', 5.6, HP_STEEL);
+  }
+  if (BACK) s += shape(on(PX(-.25), rrUV(16, 48, 58, 88, 3)), mix(m.m, m.d, .25), 1.4) + hpRivets(PX(-.3), [[19, 51], [55, 51], [19, 85], [55, 85], [37, 51], [37, 85]], m.d);
+  for (const [on_, plane, y] of [[LEFT, PY(D + .3), D], [RIGHT, PY(-.3), 0]]){
+    if (!on_) continue;
+    const rv = []; for (let x = 6; x <= W - 6; x += 5) rv.push([x, ZB + 1.8], [x, ZT - 1.8], [x + 2.5, ZT - 5.2]);
+    s += hpRivets(plane, rv, rc);
+    s += y ? shape(on(PY(D + .25), ellUV(30, 86, 5.5, 5.5, 18)), mix(m.d, m.m, .2), 1) : shape(on(PY(-.25), ellUV(50, 58, 4.6, 4.6, 16)), mix(m.d, m.m, .2), 1);
+  }
+  if (FRONT) s += ink(pd(on(PX(W), HP_OUT)), 2.2) + ink(pd([[W, 0, ZB], [W, D, ZB]], false), 1.6);
+  if (BACK) s += ink(pd(on(PX(0), HP_OUT)), 2.2);
+  if (LEFT) s += ink(pd([[0, D, ZB], [W, D, ZB]], false), 1.6);
+  if (RIGHT) s += ink(pd([[0, 0, ZB], [W, 0, ZB]], false), 1.6);
+  return s + hullInk([...on(PX(0), HP_OUT), ...on(PX(W), HP_OUT)], 2.8);
+}
+// fire door: an iron plate on two hinges (low y) with three draught slits that glow while the fire burns
+function hpDoor(st){
+  const [y0, z0, y1, z1] = HP.door, x1 = W + 2, glow = st.burning ? .55 + .35*(st.heat || 0) + .1*Math.sin((st.t || 0)*9) : 0;
+  let s = box(W, y0, z0, x1, y1, z1, GT.IRON, toneI, 1.4);
+  for (const z of [z0 + 4, z1 - 4]) s += cyl(W + 1, y0 - 1, z - 2.5, z + 2.5, 1.5, GT.IRON, toneI, .8);
+  if (!facing([1,0,0])) return s;
+  for (const z of [25.5, 27.8, 30.1]) s += shape(on(PX(x1 + .05), rectUV(30, z - .6, 44, z + .6)), glow > 0 ? mix('#3a2a22', GT.GLOW, glow) : GT.RECESS, .6);
+  s += rod([x1, 46, 21], [x1 + 2.4, 46, 21], .7, GT.IRON, toneI, .6) + rod([x1, 46, 17], [x1 + 2.4, 46, 17], .7, GT.IRON, toneI, .6)
+    + rod([x1 + 2.4, 46, 16], [x1 + 2.4, 46, 22], 1, GT.IRON, toneI, .8);
+  return s;
+}
+function hpAshDrawer(){
+  let s = box(W, 22, 3, W + 1.5, 52, 7.5, GT.IRON, toneI, 1.1);
+  if (facing([1,0,0])) s += rod([W + 1.5, 32, 5.2], [W + 3.2, 32, 5.2], .5, GT.IRON, toneI, .5) + rod([W + 1.5, 42, 5.2], [W + 3.2, 42, 5.2], .5, GT.IRON, toneI, .5)
+    + rod([W + 3.2, 31.5, 5.2], [W + 3.2, 42.5, 5.2], .8, GT.IRON, toneI, .7);
+  return s;
+}
+// the water gauge glass: two cocks and a glass tube with the water level in it
+function hpGlass(st){
+  const y = 63, zb = 46, zt = 72, gx = W + 2.4, lvl = zb + 2 + (zt - zb - 4)*.6 + (st.burning ? .6*Math.sin((st.t || 0)*4) : 0);
+  const cock = z => box(W, y - 1.7, z - 1.7, gx + 1.2, y + 1.7, z + 1.7, GT.BRZD, toneI, .8);
+  const tube = rod([gx, y, zb + 1.7], [gx, y, zt - 1.7], 1.1, { l:'#eef6f8', m:'#cfe2e8', d:'#9fb9c0' }, toneI, .8);
+  const water = rod([gx, y, zb + 1.8], [gx, y, lvl], .75, { l:'#a8d6ea', m: GT.WATER, d:'#4f8fb0' }, toneI, 0);
+  return cock(zb) + tube + water + cock(zt);
+}
+// the high pressure gauge: bigger than the small boiler's, ten divisions over 270 degrees, a wide red zone, HP on the dial
+function hpGauge(fx, gy, gz, R, frac){
+  let s = cylX(fx, fx + 3.5, gy, gz, R, HP_STEELD, toneI, 1.3, 28) + cylX(fx + 3.5, fx + 4, gy, gz, R - .6, GT.BRZD, toneI, .8, 28);
+  if (!facing([1,0,0])) return s;
+  const gx = fx + 4.05, at = (a, r) => [gx, gy - r*Math.sin(a), gz + r*Math.cos(a)], ang = v => (-135 + 270*v)*Math.PI/180;
+  s += shape(on(PX(gx), ellUV(gy, gz, R - 1.5, R - 1.5, 28)), '#fbf7ea', .8);
+  let tk = ''; for (let i = 0; i <= 10; i++) tk += pd([at(ang(i/10), R*(i % 2 ? .6 : .52)), at(ang(i/10), R*.72)], false);
+  let red = ''; for (let i = 0; i < 6; i++) red += pd([at(ang(.8 + .04*i), R*.66), at(ang(.84 + .04*i), R*.66)], false);
+  s += `<path d="${tk}" fill="none" stroke="${INK}" stroke-width=".6"/><path d="${red}" fill="none" stroke="#e2483d" stroke-width="1.6"/>`;
+  s += tx(gx + .05, gy, gz - R*.48, 'HP', R*.24, INK, 800);
+  const a = ang(gtClamp(frac || 0));
+  return s + ink(pd([at(a + Math.PI, R*.16), at(a, R*.66)], false), 1.2) + shape(on(PX(gx + .05), ellUV(gy, gz, .9, .9, 8)), INK, 0);
+}
+// the coal hopper on the roof, steel, with its flap
+function hpHopper(st){
+  const zt = ZT, bot = HP.hopBot, top = HP.hopTop, h = HP.hopH;
+  const A = on(PZ(zt), rectUV(...bot)), Bt = on(PZ(zt + h), rectUV(...top));
+  const [x0, y0, x1, y1] = bot, ym = (y0 + y1)/2;
+  let inner = fill(pd(on(PZ(zt + .2), rectUV(...bot))), GT.RECESS)
+    + shape(on(PZ(zt + .4), rectUV(x0 + .5, y0 + .5, x1 - .5, y1 - .5)), HP_STEELD.m, .9) + ink(pd([[x0 + .5, ym, zt + .45], [x1 - .5, ym, zt + .45]], false), .6);
+  inner += byDepth([[47, 9, zt + 2.2], [53, 14, zt + 2.2], [49, 15, zt + 3.4], [53, 9, zt + 3.4], [46, 13, zt + 4.6], [51, 11, zt + 4.6]].slice(0, Math.min(6, st.input | 0))
+    .map(at => ({ at, svg: gtLump(at, .8, null, GT.COAL) })));
+  let rim = ''; for (const [u, v] of [[38, 2], [62, 2], [62, 26], [38, 26]]) rim += pd(on(PZ(zt + h + .05), ellUV(u + (u < 50 ? 1.6 : -1.6), v + (v < 14 ? 1.6 : -1.6), .6, .6, 8)));
+  return openShell(A, Bt, n => tone(n, HP_STEEL), inner) + ink(pd(Bt), 1.6) + fill(rim, HP_STEEL.d) + hullInk([...A, ...Bt], 2.4);
+}
+// the tall chimney: a collar on the roof, the stack, a band half way, a flared cap
+function hpChimney(){
+  const [x, y] = HP.chim, z1 = ZT + HP.chimH;
+  return cyl(x, y, ZT, ZT + 3, 6.5, HP_STEELD, toneI, 1.2) + cyl(x, y, ZT + 3, z1, 4.8, DARK, toneI, 1.4)
+    + cyl(x, y, ZT + HP.chimH*.5, ZT + HP.chimH*.5 + 2, 5.4, HP_STEELD, toneI, 1)
+    + loft(on(PZ(z1), ellUV(x, y, 4.8, 4.8, 24)), on(PZ(z1 + 3), ellUV(x, y, 6.6, 6.6, 24)), n => toneI(n, DARK)) + hullInk([...on(PZ(z1), ellUV(x, y, 4.8, 4.8, 24)), ...on(PZ(z1 + 3), ellUV(x, y, 6.6, 6.6, 24))], 1.2)
+    + shape(on(PZ(z1 + 3), ellUV(x, y, 6.6, 6.6, 24)), DARK.m, 1) + fill(pd(on(PZ(z1 + 3.05), ellUV(x, y, 4.6, 4.6, 20))), GT.RECESS);
+}
+// the steam drum on its saddles, with the dome and the lever safety valve
+function hpSteamDrum(st){
+  const d = HP.sd, [dx, dy] = HP.dome;
+  const saddle = x => box(x, d.y - 6, ZT, x + 5, d.y + 6, ZT + 4.5, HP_STEELD, toneI, 1);
+  let s = saddle(13) + saddle(52);
+  s += rod([d.x0, d.y, d.z], [d.x1, d.y, d.z], d.r, HP_STEEL, tone, 1.8, d.r, 28);
+  // the end caps' rivet rings and the girth seams
+  for (const x of [d.x0 + 3, d.x1 - 3]){ const pts = []; for (let i = 0; i < 14; i++){ const a = i/14*2*Math.PI, n = [0, Math.cos(a), Math.sin(a)];
+      if (facing(n)) pts.push(pd(on(PX(x), ellUV(d.y + (d.r + .1)*Math.cos(a), d.z + (d.r + .1)*Math.sin(a), .7, .7, 8)))); }
+    s += fill(pts.join(''), HP_STEEL.d); }
+  // the dome
+  const ring = (z, r) => on(PZ(z), ellUV(dx, dy, r, r, 24)), z0 = d.z + d.r - 1.5;
+  const rs = [[0, 6.5], [3, 6.2], [5, 5], [6.5, 3.2], [7.2, 0]];
+  for (let i = 0; i < rs.length - 1; i++) s += loft(ring(z0 + rs[i][0], rs[i][1]), ring(z0 + rs[i + 1][0], Math.max(.01, rs[i + 1][1])), n => tone(n, HP_STEEL));
+  s += hullInk([...ring(z0, 6.5), ...ring(z0 + 3, 6.2), ...ring(z0 + 6.5, 3.2), [dx, dy, z0 + 7.2]], 1.6);
+  const lift = hpLift(st), a = lift*.16, top = z0 + 10 + lift*1.2, fx = dx - 4.5, fz = z0 + 11;
+  const end = [fx + 15*Math.cos(a), dy, fz + 15*Math.sin(a)];
+  s += byDepth([
+    { box:[[fx - 1, dy - 1, z0 + 5], [fx + 1, dy + 1, fz + 1]], svg: rod([fx, dy, z0 + 5], [fx, dy, fz], .8, GT.IRON, toneI, .6) },
+    { box:[[dx - 1.5, dy - 1.5, z0 + 6.5], [dx + 1.5, dy + 1.5, top]], svg: cyl(dx, dy, z0 + 6.5, top, 1.4, GT.BRZD, toneI, .8) },
+    { box:[[fx, dy - .8, fz - 1], [end[0], dy + .8, end[2] + 1]], svg: rod([fx, dy, fz], end, .6, GT.IRON, toneI, .7) },
+    { box:[[end[0] - 2.2, dy - 2.2, end[2] - 2], [end[0] + 2.2, dy + 2.2, end[2] + 2]], svg: rod([end[0], dy, end[2] - 1.8], [end[0], dy, end[2] + 1.8], 2.1, DARK, toneI, .9) } ]);
+  return s;
+}
+// feed water: from the floor up the right wall, through a check valve, into the wall
+function hpFeed(){
+  const x = 50, y = -8, z = 58;
+  return byDepth([
+    { box:[[x - 4, y - 4, 0], [x + 4, y + 4, 1.5]], svg: cyl(x, y, 0, 1.5, 4, GT.IRON, toneI, 1) },
+    { box:[[x - 2, y - 2, 1.5], [x + 2, y + 2, 28]], svg: cyl(x, y, 1.5, 28, 2, GT.IRON, toneI, 1) },
+    { box:[[x - 3, y - 3, 28], [x + 3, y + 3, 35]], svg: box(x - 3, y - 3, 28, x + 3, y + 3, 35, HP_STEELD, toneI, 1) },
+    { box:[[x - 2, y - 2, 35], [x + 2, y + 2, z + 2]], svg: cyl(x, y, 35, z + 2, 2, GT.IRON, toneI, 1) },
+    { box:[[x - 3.5, y + 2, z - 3.5], [x + 3.5, 0, z + 3.5]], svg: rod([x, y + 2, z], [x, -1.2, z], 2, GT.IRON, toneI, 1) + rod([x, -1.2, z], [x, 0, z], 3.5, GT.IRON, toneI, .8) } ]);
+}
+
+/* ---------- see-through: firebox, drum, tubes, smokebox, risers ---------- */
+let HP_LABELS = '';
+function hpFlames(st){
+  if (!st.burning) return '';
+  const t = st.t || 0, k = .6 + .4*(st.heat || 0);
+  let s = '';
+  for (const [x, y, ph] of [[44, 27, 0], [52, 38, 1.7], [59, 30, 3.1], [46, 47, 4.4], [57, 50, 2.3], [50, 33, 5.2]]){
+    const h = (8 + 3.5*Math.sin(t*7 + ph))*k*(.5 + .5*(st.burn || 0)), [X, Y] = P(x, y, HP.grateZ + 3), [, Yt] = P(x, y, HP.grateZ + 3 + h), w = 2.7*k;
+    const tip = Yt + Math.sin(t*11 + ph)*.8, sway = Math.sin(t*5 + ph)*1.2;
+    s += `<path d="M${f(X - w)} ${f(Y)}Q${f(X - w)} ${f((Y + tip)/2)} ${f(X + sway)} ${f(tip)}Q${f(X + w)} ${f((Y + tip)/2)} ${f(X + w)} ${f(Y)}Z" fill="${GT.GLOW}" stroke="${INK}" stroke-width=".8" opacity=".92"/>`
+      + `<path d="M${f(X - w*.45)} ${f(Y)}Q${f(X)} ${f((Y + tip)/2 + 1.5)} ${f(X + sway*.6)} ${f(tip + (Y - tip)*.4)}Q${f(X + w*.45)} ${f((Y + tip)/2 + 1.5)} ${f(X + w*.45)} ${f(Y)}Z" fill="${GT.HOT}"/>`;
+  }
+  return s;
+}
+function hpDrum(st){
+  const d = HP.drum, ringAt = (x, r, n = 32) => on(PX(x), ellUV(d.y, d.z, r, r, n));
+  const A = ringAt(d.x0, d.r), B = ringAt(d.x1, d.r);
+  // the water: the part of the drum's section under the water line, swept along the drum
+  const ri = d.r - 1, sec = ellUV(d.y, d.z, ri, ri, 40).filter(([, z]) => z <= HP.water), half = Math.sqrt(ri*ri - (HP.water - d.z)**2);
+  const seg = hull([...sec, [d.y - half, HP.water], [d.y + half, HP.water]].map(([y, z]) => [y, -z])).map(([y, z]) => [y, -z]);
+  const WM = { l:'#bfe2f0', m: GT.WATER, d:'#5c9cbc' };
+  const water = `<g opacity=".62">${loft(on(PX(d.x0 + .6), seg), on(PX(d.x1 - .6), seg), n => toneI(n, WM))}</g>`;
+  let tubes = '';
+  const hot = st.burning ? mix(GT.IRON.m, '#c8603a', .5*(st.heat || 0)) : GT.IRON.m;
+  for (const [y, z] of HP.tubes) tubes += rod([d.x0, y, z], [d.x1, y, z], 1.6, { l: GT.IRON.l, m: hot, d: GT.IRON.d }, toneI, .7);
+  let bubbles = '';
+  if (st.burning){ const t = st.t || 0;
+    for (let i = 0; i < 20; i++){ const x = d.x0 + 4 + (i*37 % 46), y = HP.tubes[i % 9][0] + ((i*13) % 5) - 2, ph = (t*.9 + i*.137) % 1, z = 53 + (HP.water - 53)*ph;
+      const [X, Y] = P(x, y, z); bubbles += `<circle cx="${f(X)}" cy="${f(Y)}" r="${f(.6 + .5*ph)}" fill="#ffffff" stroke="${INK}" stroke-width=".4" opacity=".85"/>`; } }
+  const far = loft(A, B, n => mix(toneI(n.map(v => -v), HP_STEEL), '#f2efe7', .35), true);
+  const capF = facing([1,0,0]) ? B : A;
+  const plate = fill(pd(capF), GT.IRON.l, 'opacity=".25"') + ink(pd(capF), .9)
+    + HP.tubes.map(([y, z]) => fill(pd(on(PX(capF[0][0] + (facing([1,0,0]) ? .05 : -.05)), ellUV(y, z, 1.6, 1.6, 12))), GT.RECESS)).join('');
+  const near = `<g opacity=".3">${loft(A, B, n => toneI(n, HP_STEEL))}</g>`;
+  return far + tubes + water + bubbles + near + plate + hullInk([...A, ...B], 1.6);
+}
+function hpMech(st, k){
+  const parts = [], put = (b, svg) => parts.push({ box: b, svg }), bx = (x0, y0, z0, x1, y1, z1, m, w = .8) => put([[x0, y0, z0], [x1, y1, z1]], box(x0, y0, z0, x1, y1, z1, m, toneI, w));
+  const burning = !!st.burning, heat = st.heat || 0, [gx0, gy0, gx1, gy1] = HP.grate;
+  // firebox: brick floor, back wall, ash pan, grate, coal bed and flames
+  bx(28, 14, 0, 66, 60, 3, GT.BRICK, .9);
+  bx(28, 14, 3, 30, 60, 40, GT.BRICK, .9);
+  bx(32, 20, 3, 66, 54, 6, GT.IRON, .8);
+  { let g = ''; for (let y = gy0; y <= gy1; y += 4.5) g += rod([gx0, y, HP.grateZ], [gx1, y, HP.grateZ], .8, GT.IRON, toneI, .5);
+    put([[gx0, gy0 - 1, HP.grateZ - 1], [gx1, gy1 + 1, HP.grateZ + .8]], g); }
+  { const h = 1.5 + 6*gtClamp(st.burn || 0)*(st.burning ? 1 : 0) + (st.input > 0 ? 1 : 0);
+    const a = on(PZ(HP.grateZ + .8), ellUV(50, 37, 14, 16, 22)), b = on(PZ(HP.grateZ + .8 + h), ellUV(50, 37, 8, 10, 22));
+    const CM = burning ? { l: mix(GT.COAL.l, GT.GLOW, .55*heat), m: mix(GT.COAL.m, '#a8401c', .5*heat), d: GT.COAL.d } : GT.COAL;
+    put([[36, 21, HP.grateZ + .8], [64, 53, HP.grateZ + 1 + h + 13]], loft(a, b, n => toneI(n, CM)) + fill(pd(b), burning ? mix(GT.COAL.l, GT.HOT, .7*heat) : GT.COAL.l) + hullInk([...a, ...b], .9) + hpFlames(st)); }
+  // coal chute from the hopper to the front of the grate
+  put([[47, 9, 20], [63, 23, ZT]], rod([50, 12, ZT], [60, 20, 22], 2.6, GT.IRON, toneI, .8) + fill(pd(on(PZ(ZT - .1), ellUV(50, 12, 1.8, 1.8, 12))), GT.RECESS));
+  // the drum with its tubes and water; combustion chamber in front, smokebox behind, chimney flue
+  const d = HP.drum;
+  put([[d.x0, d.y - d.r, d.z - d.r], [d.x1, d.y + d.r, d.z + d.r]], hpDrum(st));
+  put([[63, 17, 40], [69, 57, 84]], `<g opacity=".38">${box(63, 17, 40, 69, 57, 84, GT.BRICK, toneI, .9)}</g>`);
+  put([[1, 17, 42], [7, 57, 88]], `<g opacity=".45">${box(1, 17, 42, 7, 57, 88, DARK, toneI, .9)}</g>`);
+  put([[HP.chim[0] - 3.5, HP.chim[1] - 3.5, 88], [HP.chim[0] + 3.5, HP.chim[1] + 3.5, ZT]], cyl(HP.chim[0], HP.chim[1], 88, ZT, 3.5, DARK, toneI, .8));
+  // steam: two risers from the drum up to the steam drum, the dry pipe down to the left wall; feed water into the drum
+  for (const x of HP.risers) put([[x - 2.4, 41.6, 78], [x + 2.4, 46.4, ZT]], rod([x, 44, 78], [x, 44, ZT], 2.4, HP_STEELD, toneI, .9));
+  const pm = HP_STEELD;
+  put([[28.4, 50.4, 86], [31.6, 53.6, ZT]], rod([30, 52, ZT], [30, 52, 86], 1.6, pm, toneI, .7));
+  put([[28.4, 53.6, 84.4], [31.6, D, 87.6]], rod([30, 52, 86], [30, D, 86], 1.6, pm, toneI, .7));
+  put([[48.6, 0, 56.6], [51.4, 19.6, 59.4]], rod([50, 0, 58], [50, 19.6, 58], 1.4, GT.IRON, toneI, .7));
+  const sb = byDepth(parts);
+  HP_LABELS = k <= .6 ? '' : xrCallouts([
+    { at: [gx1, 37, HP.grateZ], text: 'GRATE', on: burning },
+    { at: [50, 46, HP.grateZ + 5], text: 'FIRE', on: burning },
+    { at: [66, 54, 5], text: 'ASH PAN', on: false },
+    { at: [29, 60, 30], text: 'FIREBRICK', on: burning },
+    { at: [56, 17, 40], text: 'COAL CHUTE', on: burning },
+    { at: [35, d.y + d.r, d.z + 6], text: 'WATER DRUM', on: burning },
+    { at: [d.x1, 45, 52], text: 'FIRE TUBES', on: burning },
+    { at: [1, 57, 66], text: 'SMOKEBOX', on: burning },
+    { at: [HP.risers[1], 44, 88], text: 'RISERS', on: burning },
+    { at: [30, 64, 86], text: 'DRY PIPE', on: burning },
+    { at: [50, 10, 58], text: 'FEED WATER', on: false },
+    { at: [66, 17, 78], text: 'COMBUSTION CHAMBER', on: burning } ], [0, 96, -12, 96, 0, ZT + HP.chimH + 3]);
+  return sb;
+}
+
+/* ---------- scene ---------- */
+function scene(st, m){
+  const k = ease(st.xr || 0);
+  const fade = svg => k > 0 ? `<g opacity="${f(1 - .7*k)}">${svg}</g>` : svg;
+  let s = castShadow([...on(PX(0), HP_OUT), ...on(PX(W), HP_OUT), [HP.chim[0], HP.chim[1], ZT + HP.chimH + 3], [HP.dome[0], HP.dome[1], ZT + 30], [30, D + 10, 86]]);
+  let body = hpCase(st);
+  if (k > 0) body = xrGhost(body, '', k, HP_OUT, 0, W, HP_STEEL) + `<g opacity="${f(k)}">${hpMech(st, k)}</g>`;
+  const riser = gtRiser(30, D, 86, 1, 'outlet');
+  // three layers, each sorted on its own: what hangs on the walls turned away from the viewer (sorted with the body, a
+  // part beside a far wall can come out in front of it when the view is square to a side); the body with what stands
+  // beside it; then what stands on the roof, which the camera always looks down on (one sort for all of them goes round
+  // in circles, as in the small boiler)
+  const side = [
+    { n:[1,0,0], box:[[W, HP.door[0] - 2.5, HP.door[1]], [W + 4.4, HP.door[2], HP.door[3]]], svg: act('fire', fade(hpDoor(st))) },
+    { n:[1,0,0], box:[[W, 22, 3], [W + 3.2, 52, 7.5]], svg: fade(hpAshDrawer()) },
+    { n:[1,0,0], box:[[W, 61.3, 44.3], [W + 3.6, 64.7, 73.7]], svg: hpGlass(st) },
+    { n:[1,0,0], box:[[W, 1.5, 72.5], [W + 4, 20.5, 91.5]], svg: hpGauge(W, 11, 82, 9.5, st.steam) },
+    { n:[1,0,0], box:[[W, 8.6, 63.6], [W + 2, 13.4, 68.4]], svg: gtLamp(W, 11, 66, st) },
+    { n:[0,1,0], box: riser.box, svg: fade(riser.svg) },
+    { n:[0,-1,0], box:[[46, -12, 0], [54, 0, 62]], svg: fade(hpFeed()) } ];
+  s += byDepth(side.filter(p => !facing(p.n)));
+  s += byDepth([{ box:[[0, 0, 0], [W, D, ZT]], svg: body }, ...side.filter(p => facing(p.n))]);
+  s += byDepth([
+    { box:[[HP.hopTop[0], HP.hopTop[1], ZT], [HP.hopTop[2], HP.hopTop[3], ZT + HP.hopH]], svg: act('hopper', fade(hpHopper(st))) },
+    { box:[[HP.chim[0] - 6.6, HP.chim[1] - 6.6, ZT], [HP.chim[0] + 6.6, HP.chim[1] + 6.6, ZT + HP.chimH + 3]], svg: fade(hpChimney()) },
+    { box:[[HP.sd.x0, HP.sd.y - HP.sd.r, ZT], [HP.sd.x1, HP.sd.y + HP.sd.r, ZT + 32]], svg: hpSteamDrum(st) } ]);
+  s += gtPuffsSvg(st);
+  if (k > .6) s += HP_LABELS;
+  else s += xrCallouts([
+    { at: [50, 14, ZT + HP.hopH], text: 'COAL HOPPER', on: !!st.burning },
+    { at: [HP.chim[0], HP.chim[1], ZT + HP.chimH + 3], text: 'CHIMNEY', on: !!st.burning },
+    { at: [HP.dome[0] + 10, HP.dome[1], HP.sd.z + HP.sd.r + 10], text: 'SAFETY VALVE', on: !!st.venting },
+    { at: [HP.sd.x0 + 4, HP.sd.y + HP.sd.r, HP.sd.z], text: 'STEAM DRUM', on: (st.steam || 0) > .05 },
+    ...(facing([0,1,0]) ? [{ at: [30, D + 18, 26], text: 'STEAM OUTLET', on: (st.steam || 0) > .05 }, { at: [40, D, 20], text: 'BRICK SETTING', on: false }] : []),
+    ...(facing([1,0,0]) ? [{ at: [W + 2, 37, HP.door[3]], text: 'FIRE DOOR', on: !!st.burning }, { at: [W + 3, 63, 72], text: 'WATER GAUGE', on: false },
+                           { at: [W + 4, 11, 91.5], text: 'PRESSURE GAUGE', on: (st.steam || 0) > .05 }] : []),
+    ...(facing([0,-1,0]) ? [{ at: [50, -8, 30], text: 'FEED WATER', on: false }] : []) ], [0, 96, -12, 96, 0, ZT + HP.chimH + 3]);
+  return s;
+}
+
+gtMachine({
+  fig:'B2', title:'High Pressure Coal Boiler', size:[90, 106, 150], center:[45, 43], scene, boiler: true, demoSeconds: 8, heatTime: 3,
+  state:{ input: 6 },
+  emitters:[
+    { id:'smoke', kind:'smoke', at: () => [HP.chim[0], HP.chim[1], ZT + HP.chimH + 4], when: st => !!st.burning, every:.25, life:2.4, rise:30, r0:3.6 },
+    { id:'vent', at: () => [HP.dome[0], HP.dome[1], HP.sd.z + HP.sd.r + 11], when: st => !!st.venting, every:.14, life:1.3, rise:18, r0:2.2 } ],
+  tile:[[-3, -15, 0], [99, -15, 0], [99, 87, 0], [-3, 87, 0]],
+});
+</script>
+<script src="cf-tail.js"></script>
+</body></html>

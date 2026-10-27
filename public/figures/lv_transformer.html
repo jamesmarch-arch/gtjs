@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LV/MV Transformer</title>
+<script src="cf-head.js"></script></head><body>
+<script src="core.js"></script>
+<script src="gt-bridge.js"></script>
+<script src="gt-parts.js"></script>
+<script src="gt-lv.js"></script>
+<script>
+/* LV/MV Transformer (gtjs, LV): joins an LV net (32 V) to an MV net (128 V), up to 4 amps of MV (128 EU a tick).
+   Its HIGH (MV) side is the tile in front of it (+x); its LOW (LV) side is the other three. STEP UP takes LV in and gives
+   MV out of the front; STEP DOWN takes MV in at the front and gives LV out.
+
+   How it works (truth first)
+   1. Two windings sit on the two limbs of a square iron core: the LV winding (few turns of thick wire) and the MV
+      winding (four times the turns of thinner wire).
+   2. Current changing in one winding sends a changing magnetic flux round the core (the dashes running round it on the
+      face); the flux makes a voltage in the other winding in proportion to its turns, so 32 V in the LV winding is
+      128 V in the MV winding, and the other way round.
+   3. The windings' ends come out through ceramic bushings on the roof (one tall MV bushing, two short LV ones) and run
+      on inside to the terminals: the MV winding to the thick MV terminal at the foot of the front, the LV winding to the
+      LV socket on the side. The core hums while current flows; the coils warm and glow.
+   Where the power is (step up): cable -> LV socket -> LV winding -> core flux -> MV winding -> MV terminal -> MV cable.
+   (step down: the same path backwards.)
+
+   Parts
+   OUTSIDE  the LV case (see gt-lv.js) . grille window on the face over the core and its two coils, tagged LV and MV .
+            mode strip (STEP UP / STEP DOWN, LV > MV) . MV terminal and its thick cable at the foot of the front .
+            LV socket on the side . MV and LV bushings on the roof
+   INSIDE   iron core . MV winding . LV winding . leads to the terminals and the bushings
+
+   Contact checks (numbers)
+   - face: window y 10..70, z 26..58; core yokes z 28.5..33 and 51..55.5, limbs y 22..30 and 50..58; coils y 15..37
+     (MV) and 43..65 (LV), z 34..50; mode strip z 16.5..23.5: all inside LV_FACE (8..72, 15..60).
+   - MV terminal x 74..79, y 31..49, z 7..14: under the face recess (z 15), on the front's foot; its cable leaves the gland
+     at y 44.5, z 10.5 (the MV tag at y 32..40.5 beside it), drops to the floor at x 88 and runs out to the tile edge (x 100).
+   - inside: core x 48..60, y 13..67, z 10..56; coils r 10.5 at (54, 26) and (54, 54): y 15.5..36.5 and 43.5..64.5, 7 apart.
+   - bushings: MV r 6 at (58, 24) (flat roof: x < 68, 6 < y < 74), 25 tall; LV r 4.5 at (42, 50) and (42, 64), 14 tall;
+     all in front of the roof grille (x 6..26).
+   - LV socket as gt-lv's (x 26, z 46 on the +y wall), drawn here with its own label.
+   - bushing leads leave the coils' sides (MV at x 64.5, in front of the yokes x 48..60; LV at x 43.5, behind them) and
+     rise to the bushings' feet, so they never cross the top yoke (z 50..56).
+*/
+const TF_MVC = '#f0a040', TF_LVC = GT_LVBLUE;
+const TF_MV = [58, 24], TF_LV = [[42, 50], [42, 64]];
+const TF_CORE = { x0: 48, x1: 60, yMV: 26, yLV: 54, r: 10.5 };
+const tfUp = st => st.mode !== 'down';
+const tfHum = st => st.running ? gtClamp(st.rate || 0) : 0;
+
+function tfFace(st){
+  const run = !!st.running, hum = tfHum(st), t = st.t || 0, up = tfUp(st);
+  // the window behind the grille
+  let s = shape(lvOn(rrUV(10, 26, 70, 58, 2.5), .42), '#23272b', 1.3);
+  // the core: two yokes and two limbs, laminated
+  const core = GT.IRON;
+  s += shape(lvOn(rectUV(13, 28.5, 67, 33), .5), core.m, .9) + shape(lvOn(rectUV(13, 51, 67, 55.5), .5), core.m, .9);
+  s += shape(lvOn(rectUV(22, 33, 30, 51), .5), core.d, .8) + shape(lvOn(rectUV(50, 33, 58, 51), .5), core.d, .8);
+  let lam = ''; for (const z of [30, 31.5, 52.5, 54]) lam += pd([lvAt(13.5, z, .55), lvAt(66.5, z, .55)], false);
+  s += `<path d="${lam}" fill="none" stroke="${core.l}" stroke-width=".5"/>`;
+  // the flux running round the core while it works
+  if (run){ const loop = [lvAt(26, 30.75, .6), lvAt(26, 53.25, .6), lvAt(54, 53.25, .6), lvAt(54, 30.75, .6)];
+    s += `<path d="${pd(up ? loop : [...loop].reverse())}" fill="none" stroke="#ffe27a" stroke-width="1.3" stroke-dasharray="3 4" stroke-dashoffset="${f(-t*30)}" stroke-linecap="round" opacity="${f(.4 + .6*hum)}"/>`; }
+  // the two coils: MV many fine turns, LV few thick ones
+  const coil = (y0, y1, step, w) => { let d = '', s2 = shape(lvOn(rrUV(y0, 34, y1, 50, 2.5), .6), GT.COPPER.m, 1.1);
+    for (let z = 35 + step/2; z < 49.5; z += step) d += pd([lvAt(y0 + .8, z, .65), lvAt(y1 - .8, z, .65)], false);
+    s2 += `<path d="${d}" fill="none" stroke="${GT.COPPER.d}" stroke-width="${w}"/>`;
+    s2 += fill(pd(lvOn(rectUV(y0 + 1.5, 35, y0 + 3.5, 49), .66)), GT.COPPER.l, 'opacity=".7"');
+    return s2; };
+  s += coil(15, 37, 1.6, .45) + coil(43, 65, 3.6, 1);
+  if (hum > 0){ const g = (.18 + .14*Math.sin(t*44))*hum;
+    for (const [y0, y1] of [[15, 37], [43, 65]]) s += fill(pd(lvOn(rrUV(y0 - 1.5, 32.5, y1 + 1.5, 51.5, 3.5), .7)), '#ffb347', `opacity="${f(g)}"`); }
+  // the tags on the coils
+  for (const [yc, txt, col] of [[26, 'MV', TF_MVC], [54, 'LV', TF_LVC]])
+    s += shape(lvOn(rrUV(yc - 6, 39, yc + 6, 45, 1.2), .72), col, .9) + tx(...lvAt(yc, 40.4, .75), txt, 4.6, INK, 800);
+  // the grille: three bars across the window
+  for (const z of [37, 47]) s += shape(lvOn(rectUV(10.5, z - .6, 69.5, z + .6), .8), GT_STEEL.m, .6);
+  // the mode strip: STEP UP / STEP DOWN, and which way the power goes
+  s += shape(lvOn(rrUV(10, 16.5, 70, 23.5, 1.4), .45), GT.CREAM, 1);
+  s += tx(...lvAt(49.5, 18.6, .5), up ? 'STEP UP' : 'STEP DOWN', 4, INK, 800);
+  const [a, b] = up ? ['LV', 'MV'] : ['MV', 'LV'], ac = up ? '#3d9a50' : '#d0602a';
+  s += tx(...lvAt(33.5, 18.6, .5), a, 4, INK, 800) + tx(...lvAt(15.5, 18.6, .5), b, 4, INK, 800);
+  const zc = 20, pulse = run ? .55 + .45*Math.abs(Math.sin(t*4)) : 1;
+  s += fill(pd(lvOn([[28.5, zc - .7], [23, zc - .7], [23, zc - 2.1], [20, zc], [23, zc + 2.1], [23, zc + .7], [28.5, zc + .7]], .52)), ac, `opacity="${f(pulse)}"`);
+  s += shape(lvOn(up ? [[67, 18], [63, 18], [65, 22]] : [[67, 22], [63, 22], [65, 18]], .52), ac, .6);
+  return s;
+}
+
+// the LV socket on the +y wall (gt-lv's, with its own label), and the MV terminal on the front
+function tfSocket(st){
+  const { x, z } = LV_SOCK, D = LV.D;
+  if (!facing([0,1,0])) return null;
+  return { box:[[x - 9, D, z - 9], [x + 9, D + .6, z + 13]], svg:
+    shape(on(PY(D + .25), rrUV(x - 9, z - 9, x + 9, z + 9, 2)), GT_TRIM.m, 1.2)
+    + shape(on(PY(D + .35), ellUV(x, z, 5.5, 5.5, 18)), GT.COPPER.m, 1) + fill(pd(on(PY(D + .4), ellUV(x, z, 2.4, 2.4, 12))), GT.RECESS)
+    + shape(on(PY(D + .3), rrUV(x - 8.5, z + 9.8, x + 8.5, z + 14.4, 1)), TF_LVC, .8) + txY(x, D + .4, z + 11, 'LV SIDE', 3, INK, 800) };
+}
+function tfTerminal(st){
+  const W = LV.W, run = !!st.running;
+  const blk = box(W, 31, 7, W + 5, 49, 14, GT_TRIM, toneI, 1.1)
+    + (facing([1,0,0]) ? shape(on(PX(W + 5.1), rrUV(32, 8, 40.5, 13, 1)), TF_MVC, .8) + tx(W + 5.2, 36.25, 9.3, 'MV', 3.4, INK, 800)
+      + shape(on(PX(W + 5.1), ellUV(44.5, 10.5, 3.2, 3.2, 14)), GT.COPPER.m, .8) : '')
+    + (facing([0,0,1]) ? [36, 44].map(y => cyl(W + 2.5, y, 14, 15.6, 1.6, GT.COPPER, toneI, .7, 10)).join('') : '');
+  const p = [[W + 5, 44.5, 10.5], [88, 44.5, 10.5], [88, 44.5, 3], [100, 44.5, 3]], d = pd(p, false);
+  const cab = `<path d="${d}" fill="none" stroke="${INK}" stroke-width="9" stroke-linejoin="round" stroke-linecap="round"/>`
+    + `<path d="${d}" fill="none" stroke="#3d3935" stroke-width="7" stroke-linejoin="round" stroke-linecap="round"/>`
+    + `<path d="${d}" fill="none" stroke="${run ? '#ffc070' : TF_MVC}" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>`;
+  return [{ box:[[W, 31, 7], [W + 5, 49, 15.6]], svg: blk }, { box:[[W + 5, 41, 0], [100, 48, 13]], svg: cab }];
+}
+// a ceramic bushing: flange, a stack of sheds, a coloured collar and a copper stud
+function tfBushing(x, y, h, r, sheds, col){
+  const ZT = LV.ZT; let s = cyl(x, y, ZT, ZT + 1.8, r, GT_TRIM, toneI, 1);
+  const core = r*.45, top = ZT + h - 4;
+  s += cyl(x, y, ZT + 1.8, top, core, CERAMIC, toneI, .9, 16);
+  for (let i = 0; i < sheds; i++){ const z = ZT + 3 + i*(top - ZT - 4)/sheds; s += cyl(x, y, z, z + 1.3, r*.9, CERAMIC, toneI, .9, 20); }
+  s += cyl(x, y, top, top + 1.6, core + .8, matOf(col), toneI, .9, 14) + cyl(x, y, top + 1.6, ZT + h, core*.5, GT.COPPER, toneI, .8, 10);
+  return { box:[[x - r, y - r, ZT], [x + r, y + r, ZT + h]], svg: s };
+}
+function tfParts(st, k, fade){
+  const out = [tfBushing(...TF_MV, 25, 6, 5, TF_MVC), ...TF_LV.map(([x, y]) => tfBushing(x, y, 14, 4.5, 2, TF_LVC))];
+  const sock = tfSocket(st);
+  return [...out.map(p => ({ ...p, svg: fade(p.svg) })), sock && { ...sock, svg: fade(sock.svg) }, lvCable(st), ...tfTerminal(st).map(p => ({ ...p, svg: fade(p.svg) }))];
+}
+
+function tfInside(st, k){
+  const out = [], put = (b, svg) => out.push({ box: b, svg }), run = !!st.running, hum = tfHum(st), { x0, x1, yMV, yLV, r } = TF_CORE;
+  const xc = (x0 + x1)/2, core = GT.IRON;
+  // the core: two yokes and two limbs
+  put([[x0, 13, 10], [x1, 67, 16]], box(x0, 13, 10, x1, 67, 16, core, toneI, .9));
+  for (const y of [yMV, yLV]) put([[x0 + 2, y - 4, 16], [x1 - 2, y + 4, 50]], box(x0 + 2, y - 4, 16, x1 - 2, y + 4, 50, core, toneI, .8));
+  put([[x0, 13, 50], [x1, 67, 56]], box(x0, 13, 50, x1, 67, 56, core, toneI, .9));
+  // the coils round the limbs, their turns drawn on the near side
+  const hot = hum > 0 ? { l: mix(GT.COPPER.l, '#ffcf8a', .5*hum), m: mix(GT.COPPER.m, '#f09050', .4*hum), d: GT.COPPER.d } : GT.COPPER;
+  for (const [y, step, w] of [[yMV, 1.6, .45], [yLV, 3.6, 1]]){
+    let c = cyl(xc, y, 17, 49, r, hot, toneI, 1.1, 28), d = '';
+    for (let z = 18 + step/2; z < 48.5; z += step){ const pts = ellUV(xc, y, r + .05, r + .05, 28).filter(([px, py]) => facing([px - xc, py - y, 0])).map(([px, py]) => [px, py, z]);
+      if (pts.length > 1) d += pd(pts, false); }
+    c += `<path d="${d}" fill="none" stroke="${GT.COPPER.d}" stroke-width="${w}"/>`;
+    put([[xc - r, y - r, 17], [xc + r, y + r, 49]], c);
+  }
+  // leads: MV winding -> front terminal (thick), LV winding -> socket, both windings -> their bushings
+  out.push(gtWire([[xc + r - 1, yMV + 4, 22], [70, yMV + 4, 12], [LV.W - 1, 40, 10.5]], run ? '#ffc070' : TF_MVC, 1.3));
+  out.push(gtWire([[xc, yLV + r - 1, 44], [xc, 72, 44], [LV_SOCK.x, 72, LV_SOCK.z], [LV_SOCK.x, LV.D - 1, LV_SOCK.z]], run ? '#f6b98a' : GT.COPPER.m, .9));
+  out.push(gtWire([[xc + r, yMV, 46], [xc + r + 1, TF_MV[1], 64], [TF_MV[0], TF_MV[1], 70], [TF_MV[0], TF_MV[1], LV.ZT]], TF_MVC, .7));
+  for (const [x, y] of TF_LV) out.push(gtWire([[xc - r, yLV + (y > 57 ? 4 : -4), 46], [x, y, 64], [x, y, LV.ZT]], TF_LVC, .7));
+  return out;
+}
+
+gtLv({
+  fig:'LV12', title:'LV/MV Transformer', name:'TRANSFORMER', sub:'32 V / 128 V', nameSize: 4.6, socket:'none', board: false, noRecipe: true,
+  face: tfFace, parts: tfParts, inside: tfInside,
+  shadowPts: [[TF_MV[0], TF_MV[1], LV.ZT + 25], ...TF_LV.map(([x, y]) => [x, y, LV.ZT + 14]), [100, 44, 0]],
+  stats: st => [{ label:'Through', value: `${Math.round(tfHum(st)*128)} EU/t` },
+    { label:'Mode', value: tfUp(st) ? 'Step up' : 'Step down', small:true }, { label:'Load', value: `${Math.round(tfHum(st)*100)}%`, small:true }],
+  callouts: st => [
+    ...(facing([1,0,0]) ? [{ at: [LV.W, 26, 50], text: 'MV COIL', on: !!st.running }, { at: [LV.W, 54, 50], text: 'LV COIL', on: !!st.running },
+      { at: [LV.W, 51, 20], text: tfUp(st) ? 'STEP UP' : 'STEP DOWN', on: !!st.running },
+      { at: [LV.W + 5, 40, 14], text: 'MV TERMINAL', on: !!st.running }] : []),
+    ...(facing([0,1,0]) ? [{ at: [LV_SOCK.x, LV.D, LV_SOCK.z + 9], text: 'LV SOCKET', on: !!st.running }] : []),
+    { at: [TF_MV[0], TF_MV[1], LV.ZT + 25], text: 'MV BUSHING', on: false },
+    { at: [TF_LV[1][0], TF_LV[1][1], LV.ZT + 14], text: 'LV BUSHINGS', on: false }],
+  insideCallouts: st => [{ at: [TF_CORE.x1, 40, 56], text: 'IRON CORE', on: !!st.running },
+    { at: [54, TF_CORE.yMV, 49], text: 'MV WINDING', on: !!st.running }, { at: [54, TF_CORE.yLV, 49], text: 'LV WINDING', on: !!st.running },
+    { at: [70, 30, 12], text: 'MV LEAD', on: !!st.running }, { at: [40, 72, 45], text: 'LV LEAD', on: !!st.running }],
+});
+</script>
+<script src="cf-tail.js"></script>
+</body></html>

@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Steam Extractor</title>
+<script src="cf-head.js"></script></head><body>
+<script src="core.js"></script>
+<script src="gt-bridge.js"></script>
+<script src="gt-parts.js"></script>
+<script>
+/* Steam Extractor (gtjs, steam age). A roller press on the roof squeezes the latex out of sticky resin; the latex runs
+   down through a glass sight tube into a steam-heated pan, where it dries into raw rubber (1 resin -> 3 raw rubber).
+
+   How it works (truth first)
+   1. Steam comes up the riser beside the left wall, through the steam valve, into the case. One branch goes up into a
+      small horizontal steam engine on the roof; the other runs through a heating coil under the drying pan.
+   2. The engine's piston drives a crosshead and a connecting rod to the crank pin on a flywheel. The flywheel is on the
+      front roller's shaft, so the two rollers of the press turn toward each other. Spent steam leaves the engine
+      into the vent stack.
+   3. A ball of sticky resin drops from the hopper on top of the press into the nip between the rollers and is
+      squeezed flat. Its latex runs off the front roller and drips into the funnel under the press.
+   4. From the funnel it runs down a pipe, out through the glass sight tube on the front (you can watch it drip), back
+      in, and into the drying pan. The coil under the pan dries the latex into crumbs of raw rubber.
+   5. A scraper sweeps the crumbs over the pan's front lip, down the chute, out of the slot, down the spout, into the
+      output tray.
+   Where the rubber is: hopper -> nip -> front roller -> funnel -> pipe -> sight tube -> pan -> chute -> slot -> spout ->
+   tray. Where the steam is: riser -> valve -> inside pipe -> engine -> stack -> air, and -> heating coil.
+
+   x = depth (front at x = W), y = width (+y = viewer-left: the steam side), z = up. 1 unit = 1 cm.
+
+   Parts
+   CASE     bronze case on four feet . riveted front . inspection door with hinges and handle . name plate . pressure
+            gauge . running lamp . output slot . glass sight tube with two elbows, ferrules and drops . service hatch
+            (back) . louvres (right side) . vent stack . spout . output tray
+   PRESS    two side frames (two legs and a bearing block each) . two rollers . hopper on the bearing blocks . funnel
+            with its neck . shaft . flywheel with crank pin
+   ENGINE   cylinder on two saddles . piston rod . crosshead . connecting rod . exhaust stub into the stack
+   INSIDE   drain pipe from the funnel to the sight tube . return pipe to the pan . drying pan . heating coil . scraper
+            with its push rod . chute
+   STEAM    riser with floor flange, valve and handwheel . wall flange . inside pipe up to the engine, branch to the coil
+
+   Contact checks (numbers)
+   - rollers r 6 on axes (34, z 100) and (46.5, z 100) along y 24..52: surfaces at x 40 and 40.5, a 0.5 nip at x 40.25.
+   - side frames at y 20.5..23.5 and 52.5..55.5 hold the roller ends; their bearing blocks rise to z 106.5, where the
+     hopper (bottom x 37..44 over the nip) stands. Roller tops are z 106.
+   - funnel top x 26..56, y 24..52 at z 90, under the roller bellies (z 94); neck (40, 38) into the roof.
+   - flywheel R 10 at (46.5, z 100) on y 58..60.5: z 90..110, clear of the roof (z 78) and the cylinder (x <= 18).
+   - crank pin r 6.5, connecting rod 20: the crosshead runs x 20..36 at z 96; the cylinder (x 2..18, r 4.3 at y 63,
+     z 96) ends at x 18.
+   - stack at (10, 74), base y 69..79; the cylinder reaches y 67.3, the exhaust stub joins them.
+   - sight tube r 2.6 at (W + 3.5, y 64), glass z 40..68, elbows into the front at z 72 and z 36.
+   - drying pan x 30..60, y 26..54, z 15..21; coil at z 12.5 under it; chute: lip (60, 21) -> slot (70, 11), slot z 9..15.
+*/
+const W = 70, D = 80, Z0 = 6, ZT = 78;
+Z_FLOOR = Z0;
+const OUT = rrUV(0, Z0, D, ZT, 5);
+const EX = {
+  rol: [{ x:34, dir: 1 }, { x:46.5, dir: -1 }], RZ: 100, RR: 6, ry: [24, 52], cheeks: [[20.5, 23.5], [52.5, 55.5]], BZ: 106.5,
+  hopBot: [37, 28, 44, 48], hopTop: [30, 24, 51, 52], hopH: 9,
+  fun: { z0:80, h:10, bot:[36, 34, 44, 42], top:[26, 24, 56, 52] },
+  fly: { x:46.5, z:100, y0:58, y1:60.5, R:10, r:8, crank:6.5 }, cyl: { x0:2, x1:18, y:63, z:96, r:4.3 }, conn: 20,
+  stk: [10, 74], riserX: 10,
+  tube: { x: W + 3.5, y:64, z0:40, z1:68, r:2.6, zin:72, zout:36 },
+  door: [22, 18, 52, 54], slot: [32, 9, 48, 15], sy: [32, 48],
+  pan: [30, 26, 60, 54, 15, 21], tray: [74, 26, 96, 54], trayH: 7, spout: [W + 8, 8],
+};
+const EX_TOP = EX.BZ + EX.hopH + 1;
+const EX_RESIN = '#d98f2b', EX_LATEX = '#f3eedc', EX_CRUMB = '#e6cf8f';
+
+/* ---------- the resin, the latex and the crumbs, from progress ---------- */
+function exPath(keys, t){
+  for (let i = 1; i < keys.length; i++) if (t <= keys[i][0]){ const a = keys[i - 1], b = keys[i], u = (t - a[0])/(b[0] - a[0] || 1);
+    return [a[1] + (b[1] - a[1])*u, a[2] + (b[2] - a[2])*u, a[3] + (b[3] - a[3])*u]; }
+  const k = keys[keys.length - 1]; return [k[1], k[2], k[3]];
+}
+function exFlow(st){
+  const p = st.progress || 0, o = { ball:null, squash:0, drip:0, pool:0, layer:0, dry:0, xs:31, clump:null };
+  if (!st.active) return o;
+  if (p < .1) o.ball = [40.25, 38, EX.BZ + 2 - 4*ease(p/.1)];
+  else if (p < .5) o.squash = (p - .1)/.4;
+  o.drip = p > .12 && p < .56 ? Math.min(1, (p - .12)/.04, (.56 - p)/.06) : 0;
+  o.pool = p > .1 && p < .62 ? Math.min(1, (p - .1)/.1, (.62 - p)/.1) : 0;
+  o.layer = p < .2 ? 0 : p < .58 ? (p - .2)/.38 : 1;
+  o.dry = gtClamp((p - .5)/.25);
+  if (p >= .75 && p < .9) o.xs = 31 + 27*ease((p - .75)/.15);
+  else if (p >= .9) o.xs = 58 - 27*ease((p - .9)/.1);
+  if (p >= .86){ o.layer = 0; const t = (p - .86)/.14, n = (st.output | 0) % 9, cx = 79 + (n % 3)*6, cy = 32 + Math.floor(n/3)*8;
+    const at = exPath([[0, 61, 40, 20.5], [.35, W, 40, 11.5], [.55, W + 7, 40, 8.8], [1, cx, cy, .7]], t);
+    if (t > .55){ const u = (t - .55)/.45; at[2] = 8.8 - 8.1*u*u; }
+    o.clump = { at, out: t > .55 }; }
+  return o;
+}
+
+/* ---------- small builders ---------- */
+// a mound (dust, crumbs, a resin blob): a frustum of an ellipse
+function exMound(x, y, z, r, h, col, w = .8){
+  const A = on(PZ(z), ellUV(x, y, r, r*.85, 14)), B = on(PZ(z + h), ellUV(x, y, r*.4, r*.34, 14)), m = matOf(col);
+  return loft(A, B, n => toneI(n, m)) + fill(pd(B), m.l) + hullInk([...A, ...B], w);
+}
+// a resin ball: a round blob with a glint
+function exBall([x, y, z], r){
+  const q = P(x, y, z), [hx, hy] = P(x - r*.3, y + r*.2, z + r*.45);
+  return `<circle cx="${f(q[0])}" cy="${f(q[1])}" r="${f(r*1.15)}" fill="${EX_RESIN}" stroke="${INK}" stroke-width=".9"/>`
+    + `<circle cx="${f(hx)}" cy="${f(hy)}" r="${f(r*.32)}" fill="#ffe2a6" opacity=".85"/>`;
+}
+// a drop of latex
+function exDrop([x, y, z], s = 1){
+  const q = P(x, y, z);
+  return `<ellipse cx="${f(q[0])}" cy="${f(q[1])}" rx="${f(.9*s)}" ry="${f(1.3*s)}" fill="${EX_LATEX}" stroke="${INK}" stroke-width=".6"/>`;
+}
+// a roller: a rod along y with stripes that turn
+function exRoller(x, z, y0, y1, r, ang){
+  let s = rod([x, y0, z], [x, y1, z], r, GT.IRON, toneI, 1.2, r, 28), d = '';
+  for (let i = 0; i < 8; i++){ const a = ang + i*Math.PI/4, n = [Math.cos(a), 0, Math.sin(a)];
+    if (facing(n) && rotV(n)[0] + rotV(n)[1] + rotV(n)[2] > .25) d += pd([[x + r*n[0], y0 + 1.5, z + r*n[2]], [x + r*n[0], y1 - 1.5, z + r*n[2]]], false); }
+  return s + `<path d="${d}" fill="none" stroke="${INK}" stroke-width=".6" opacity=".6"/>`;
+}
+// a wheel in a y-plane (the flywheel): rim, six spokes, hub
+function exFlywheel(c, ang, M){
+  const ring = (y, rr) => on(PY(y), ellUV(c.x, c.z, rr, rr, 40)), A = ring(c.y0, c.R), B = ring(c.y1, c.R), Ai = ring(c.y0, c.r), Bi = ring(c.y1, c.r);
+  const ym = (c.y0 + c.y1)/2, front = facing([0,1,0]), FA = front ? B : A, FI = front ? Bi : Ai, fy = front ? c.y1 : c.y0;
+  let s = loft(Ai, Bi, n => toneI(n, M), true);
+  for (let i = 0; i < 6; i++){ const a = ang + i*Math.PI/3; s += rod([c.x + 2.5*Math.cos(a), ym, c.z + 2.5*Math.sin(a)], [c.x + (c.r + .4)*Math.cos(a), ym, c.z + (c.r + .4)*Math.sin(a)], .9, M, toneI, .6); }
+  s += rod([c.x, c.y0 - .5, c.z], [c.x, c.y1 + .8, c.z], 2.6, M, toneI, .9);
+  s += loft(A, B, n => toneI(n, M));
+  s += `<path d="${pd(FA)}${pd(FI.slice().reverse())}" fill="${toneI([0, front ? 1 : -1, 0], M)}" fill-rule="evenodd"/>` + ink(pd(FA), 1) + ink(pd(FI), .8);
+  return s + hullInk([...A, ...B], 1.6);
+}
+const exWire = (pts, col, w = .7) => { const d = pd(pts, false);
+  return { box: [[0,1,2].map(i => Math.min(...pts.map(p => p[i])) - 1), [0,1,2].map(i => Math.max(...pts.map(p => p[i])) + 1)],
+    svg: `<path d="${d}" fill="none" stroke="${INK}" stroke-width="${f(2*w + 1)}" stroke-linejoin="round" stroke-linecap="round"/><path d="${d}" fill="none" stroke="${col}" stroke-width="${f(2*w)}" stroke-linejoin="round" stroke-linecap="round"/>` }; };
+
+/* ---------- the case ---------- */
+function exCase(st, m){
+  const FRONT = facing([1,0,0]), BACK = facing([-1,0,0]), LEFT = facing([0,1,0]), RIGHT = facing([0,-1,0]);
+  let s = '';
+  if (FRONT) s += fill(pd(on(PX(W), OUT)), tone([1,0,0], m));
+  if (BACK) s += fill(pd(on(PX(0), OUT)), tone([-1,0,0], m));
+  s += extrude(OUT, 0, W, m);
+  if (FRONT){ const dk = mix(m.d, m.m, .35), rv = [];
+    s += ink(pd(on(PX(W + .25), rrUV(3.5, Z0 + 3.5, D - 3.5, ZT - 3.5, 3))), 1);
+    for (let y = 7; y <= D - 7; y += 7) rv.push([y, Z0 + 1.8], [y, ZT - 1.8]);
+    s += gtRivets(PX(W + .3), rv, dk);
+    s += gtNamePlate(W, 20, 61, 56, 73, 'EXTRACTOR', 'STEAM AGE', 4.8);
+    s += shape(on(PX(W + .25), rrUV(...EX.slot, 1.5)), GT.RECESS, 1.7);
+    for (const z of [EX.tube.zin, EX.tube.zout]) s += shape(on(PX(W + .25), ellUV(EX.tube.y, z, 3.6, 3.6, 16)), mix(m.d, m.m, .3), .9);
+  }
+  if (BACK) s += shape(on(PX(-.25), rrUV(18, 18, 62, 58, 3)), mix(m.m, m.d, .25), 1.4) + gtRivets(PX(-.3), [[21, 21], [59, 21], [21, 55], [59, 55]], m.d);
+  if (LEFT){ const rv = []; for (let x = 7; x <= W - 7; x += 7) rv.push([x, Z0 + 1.8], [x, ZT - 1.8]);
+    s += gtRivets(PY(D + .3), rv, mix(m.d, m.m, .35)) + shape(on(PY(D + .25), ellUV(EX.riserX, 34, 5.2, 5.2, 18)), mix(m.d, m.m, .2), .9); }
+  if (RIGHT){ let v = ''; for (let z = 30; z <= 60; z += 5) v += pd([[14, -.25, z], [56, -.25, z]], false);
+    s += `<path d="${v}" fill="none" stroke="${INK}" stroke-width="1.5" opacity=".75"/>`; }
+  if (FRONT) s += ink(pd(on(PX(W), OUT)), 2.2);
+  if (BACK) s += ink(pd(on(PX(0), OUT)), 2.2);
+  return s + hullInk([...on(PX(0), OUT), ...on(PX(W), OUT)], 2.8);
+}
+// the inspection door: a riveted plate on two hinges with a handle
+function exDoor(){
+  const [y0, z0, y1, z1] = EX.door, x1 = W + 1.6;
+  let s = box(W, y0, z0, x1, y1, z1, GT.BRZD, toneI, 1.3);
+  for (const z of [z0 + 6, z1 - 6]) s += cyl(W + .8, y0 - 1, z - 3, z + 3, 1.5, GT.IRON, toneI, .8);
+  if (!facing([1,0,0])) return s;
+  s += gtRivets(PX(x1 + .05), [[y0 + 3, z0 + 3], [y1 - 3, z0 + 3], [y0 + 3, z1 - 3], [y1 - 3, z1 - 3], [(y0 + y1)/2, z0 + 3], [(y0 + y1)/2, z1 - 3]], GT.BRZD.d);
+  s += ink(pd(on(PX(x1 + .05), rrUV(y0 + 6, z0 + 7, y1 - 9, z1 - 7, 2))), .8);
+  s += rod([x1, y1 - 4, 39], [x1 + 2.5, y1 - 4, 39], .7, GT.IRON, toneI, .6) + rod([x1, y1 - 4, 33], [x1 + 2.5, y1 - 4, 33], .7, GT.IRON, toneI, .6)
+    + rod([x1 + 2.5, y1 - 4, 32], [x1 + 2.5, y1 - 4, 40], 1, GT.IRON, toneI, .8);
+  return s;
+}
+// the glass sight tube: latex drips down it, a little pool at the bottom
+function exTube(st, flow){
+  const T = EX.tube, M = GT.BRZD, X = T.x, pm = M;
+  let s = rod([W, T.y, T.zin], [X, T.y, T.zin], 1.9, pm, toneI, .8) + rod([X, T.y, T.zin + 1.9], [X, T.y, T.z1], 1.9, pm, toneI, .8)
+    + cyl(X, T.y, T.z1 - .5, T.z1 + 1.5, T.r + .7, M, toneI, .9);
+  // inside the glass: dark, a pool, drops
+  const gA = on(PZ(T.z0), ellUV(X, T.y, T.r, T.r, 16)), gB = on(PZ(T.z1 - .5), ellUV(X, T.y, T.r, T.r, 16)), out = hull([...gA, ...gB].map(p => P(...p)));
+  s += fill(sp(out), '#3a3330', 'opacity=".55"');
+  const lvl = T.z0 + 1 + 4*flow.drip;
+  if (flow.drip > 0 || flow.pool > 0) s += cyl(X, T.y, T.z0, lvl, T.r - .5, matOf(EX_LATEX), toneI, .4, 14);
+  if (flow.drip > 0) for (let i = 0; i < 3; i++){ const u = ((st.t || 0)*1.6 + i/3) % 1; s += exDrop([X, T.y, T.z1 - 1.5 - (T.z1 - 1.5 - lvl)*u*u], .9); }
+  s += fill(sp(out), '#d8f0f6', 'opacity=".22"') + ink(sp(out), 1);
+  { const v = norm([CAM_V[0], CAM_V[1], 0]), px = -v[1], py = v[0], o = .45*T.r;
+    s += `<path d="${pd([[X + o*px, T.y + o*py, T.z1 - 3], [X + o*px, T.y + o*py, T.z0 + 6]], false)}" fill="none" stroke="#ffffff" stroke-width="1.3" stroke-linecap="round" opacity=".6"/>`; }
+  s += cyl(X, T.y, T.zout + 1.5, T.z0 + .5, T.r + .7, M, toneI, .9) + rod([X, T.y, T.zout + 1.5], [X, T.y, T.zout], 1.9, pm, toneI, .8) + rod([X, T.y, T.zout], [W, T.y, T.zout], 1.9, pm, toneI, .8);
+  return s;
+}
+function exSpout(st, flow){
+  const [x1, z1] = EX.spout, z0 = 11, [y0, y1] = EX.sy, sm = GT.BRZD;
+  const lip = y => shape([[W, y, z0], [x1, y, z1], [x1, y, z1 + 3], [W, y, z0 + 5]], tone([0, y > 40 ? 1 : -1, 0], sm), 1);
+  let plate = shape([[W, y0, z0], [x1, y0, z1], [x1, y1, z1], [W, y1, z0]], tone(norm([3, 0, 8]), sm), 1);
+  if (facing([1,0,0])) plate += shape([[x1, y0, z1], [x1, y1, z1], [x1, y1, z1 - 1], [x1, y0, z1 - 1]], sm.d, .9);
+  const c = flow.clump; if (c && !c.out && c.at[0] >= W) plate += exMound(c.at[0], c.at[1], c.at[2], 3.4, 2.8, EX_CRUMB);
+  return byDepth([
+    { box:[[W, y0 - .5, z1], [x1, y0 + .5, z0 + 5]], svg: lip(y0) },
+    { box:[[W, y0 + .5, z1 - 1], [x1, y1 - .5, z0 + 1]], svg: plate },
+    { box:[[W, y1 - .5, z1], [x1, y1 + .5, z0 + 5]], svg: lip(y1) } ]);
+}
+function exTray(st, flow){
+  const [x0, y0, x1, y1] = EX.tray, A = on(PZ(0), rectUV(x0, y0, x1, y1)), B = on(PZ(EX.trayH), rectUV(x0, y0, x1, y1)), pl = [];
+  let inner = fill(pd(on(PZ(.6), rectUV(x0 + .6, y0 + .6, x1 - .6, y1 - .6))), GT.IRON.d);
+  for (let i = 0; i < Math.min(9, st.output | 0); i++){ const x = 79 + (i % 3)*6, y = 32 + Math.floor(i/3)*8;
+    pl.push({ box:[[x - 3.2, y - 2.8, .7], [x + 3.2, y + 2.8, 3.3]], svg: exMound(x, y, .7, 3.2, 2.6, EX_CRUMB) }); }
+  const c = flow.clump; if (c && c.out) pl.push({ box:[[c.at[0] - 3.4, c.at[1] - 3, c.at[2]], [c.at[0] + 3.4, c.at[1] + 3, c.at[2] + 2.8]], svg: exMound(c.at[0], c.at[1], c.at[2], 3.4, 2.8, EX_CRUMB) });
+  inner += byDepth(pl);
+  return openShell(A, B, n => toneI(n, GT.IRON), inner) + ink(pd(B), 1.4) + hullInk([...A, ...B], 1.8);
+}
+function exFeet(){
+  return [[4, 4], [58, 4], [4, 68], [58, 68]].map(([x, y]) => ({ box:[[x, y, 0], [x + 8, y + 8, Z0]], svg: box(x, y, 0, x + 8, y + 8, Z0, DARK, toneI, 1) }));
+}
+
+/* ---------- the roof: roller press, hopper, funnel, flywheel, engine, stack ---------- */
+function exRoof(st, flow, k, m, fade){
+  const parts = [], put = (b, svg) => parts.push({ box: b, svg }), M = GT.BRZD, [ry0, ry1] = EX.ry, run = !!st.running, ang = (st.t || 0)*2.4;
+  // side frames: two legs and a bearing block
+  for (const [y0, y1] of EX.cheeks){ const y = (y0 + y1)/2;
+    put([[22, y0, ZT], [59, y1, EX.BZ]], fade(rod([22, y, ZT], [30, y, EX.RZ - 2], 1.5, M, toneI, .9) + rod([59, y, ZT], [51, y, EX.RZ - 2], 1.5, M, toneI, .9)
+      + box(27, y0, EX.RZ - 4, 53.5, y1, EX.BZ, M, toneI, 1.1)
+      + (facing([0, y > 40 ? 1 : -1, 0]) ? gtRivets(PY(y > 40 ? y1 + .1 : y0 - .1), EX.rol.map(r => [r.x, EX.RZ]), M.d) : ''))); }
+  // the rollers turn toward each other (the resin is drawn down into the nip)
+  for (const r of EX.rol) put([[r.x - EX.RR, ry0, EX.RZ - EX.RR], [r.x + EX.RR, ry1, EX.RZ + EX.RR]], exRoller(r.x, EX.RZ, ry0, ry1, EX.RR, -r.dir*ang));
+  // the squeezed resin in the nip (the hopper hides it, the see-through shows it)
+  if (flow.squash > 0 && k > 0) put([[38, 30, EX.RZ + 3], [42.5, 46, EX.RZ + 6]], `<g opacity="${f(k)}">${exMound(40.25, 38, EX.RZ + 3.5, 2.5 + 4*flow.squash, 2.4*(1 - flow.squash) + .5, mix(EX_RESIN, EX_LATEX, .3*flow.squash))}</g>`);
+  // hopper on the bearing blocks, resin balls waiting in it
+  const rest = [[40.5, 33, EX.BZ + 2.2], [40.5, 43, EX.BZ + 2.2], [40.5, 38, EX.BZ + 5]].slice(0, Math.min(3, st.input | 0)).map(at => ({ at, svg: exBall(at, 2.2) }));
+  if (flow.ball && flow.ball[2] > EX.BZ - .5) rest.push({ at: flow.ball, svg: exBall(flow.ball, 2.2) });
+  put([[EX.hopTop[0], EX.hopTop[1], EX.BZ], [EX.hopTop[2], EX.hopTop[3], EX.BZ + EX.hopH]], act('hopper', fade(gtHopper(EX.BZ, EX.hopBot, EX.hopTop, EX.hopH, m, rest, !!flow.ball))));
+  // funnel under the rollers: latex pool, drops off the front roller
+  { const F = EX.fun, lv = F.z0 + .8 + 3*flow.pool, u = (lv - F.z0)/F.h, lerp = (a, b) => a + (b - a)*u;
+    const inside = [];
+    if (flow.pool > 0) inside.push({ at:[40, 38, lv], svg: fill(pd(on(PZ(lv), rectUV(lerp(F.bot[0], F.top[0]) + .4, lerp(F.bot[1], F.top[1]) + .4, lerp(F.bot[2], F.top[2]) - .4, lerp(F.bot[3], F.top[3]) - .4))), EX_LATEX) });
+    if (flow.drip > 0) for (let i = 0; i < 3; i++){ const q = ((st.t || 0)*1.4 + i/3) % 1, y = 32 + i*6; inside.push({ at:[51, y, 94], svg: exDrop([51, y, 94 - (94 - lv)*q*q]) }); }
+    put([[F.top[0], F.top[1], ZT], [F.top[2], F.top[3], F.z0 + F.h]], fade(cyl(40, 38, ZT, F.z0 + .5, 3.2, M, toneI, .9) + gtHopper(F.z0, F.bot, F.top, F.h, m, inside, true))); }
+  // the shaft out to the flywheel, the flywheel with its crank pin, the connecting rod, crosshead, piston rod
+  const fw = EX.fly, c = EX.cyl, th = -ang;
+  put([[fw.x - 1.5, EX.cheeks[1][1], fw.z - 1.5], [fw.x + 1.5, fw.y0, fw.z + 1.5]], rod([fw.x, EX.cheeks[1][1], fw.z], [fw.x, fw.y0, fw.z], 1.5, GT.IRON, toneI, .7));
+  put([[fw.x - fw.R, fw.y0, fw.z - fw.R], [fw.x + fw.R, fw.y1, fw.z + fw.R]], exFlywheel(fw, th, GT_BRZ));
+  const pin = [fw.x + fw.crank*Math.cos(th), fw.z + fw.crank*Math.sin(th)], xc = pin[0] - Math.sqrt(EX.conn**2 - (pin[1] - c.z)**2);
+  put([[Math.min(xc, pin[0]) - 1.5, fw.y1, Math.min(c.z, pin[1]) - 1.5], [Math.max(xc, pin[0]) + 1.5, c.y + 1.5, Math.max(c.z, pin[1]) + 1.5]],
+    rod([pin[0], fw.y1, pin[1]], [pin[0], c.y + 1, pin[1]], 1, GT.IRON, toneI, .7) + rod([xc, c.y, c.z], [pin[0], c.y, pin[1]], 1.1, GT.IRON, toneI, .8)
+    + box(xc - 1.6, c.y - 1.4, c.z - 1.4, xc + 1.6, c.y + 1.4, c.z + 1.4, GT.BRZD, toneI, .8));
+  put([[c.x1, c.y - 1, c.z - 1], [xc, c.y + 1, c.z + 1]], rod([c.x1, c.y, c.z], [xc, c.y, c.z], .9, GT.IRON, toneI, .7));
+  // the engine's cylinder on two saddles
+  put([[c.x0, c.y - c.r, ZT], [c.x1, c.y + c.r, c.z + c.r]], fade(box(5, c.y - 3, ZT, 8, c.y + 3, c.z - 2, M, toneI, .9) + box(12, c.y - 3, ZT, 15, c.y + 3, c.z - 2, M, toneI, .9)
+    + rod([c.x0, c.y, c.z], [c.x1, c.y, c.z], c.r, GT_BRZ, toneI, 1.2, c.r, 24) + rod([c.x1 - 1.5, c.y, c.z], [c.x1, c.y, c.z], c.r + 1, M, toneI, .9, c.r + 1, 24)
+    + rod([c.x0, c.y, c.z], [c.x0 + 1.5, c.y, c.z], c.r + 1, M, toneI, .9, c.r + 1, 24)));
+  // the stack, with the exhaust stub from the cylinder
+  const [sx, sy] = EX.stk, stack = gtStack(sx, sy, ZT);
+  put([[sx - 6.5, c.y + c.r, ZT], [sx + 6.5, sy + 6.5, ZT + 26.5]], fade(rod([sx, c.y + c.r - .5, c.z], [sx, sy - 2.5, c.z], 1.5, M, toneI, .8) + stack.svg));
+  return parts;
+}
+
+/* ---------- see-through: drain pipe, pan, coil, scraper, chute ---------- */
+let EX_LABELS = '';
+function exMech(st, k, flow){
+  const parts = [], put = (b, svg) => parts.push({ box: b, svg }), T = EX.tube, run = !!st.running;
+  const lat = matOf(flow.drip > 0 ? '#e9e2cc' : GT.BRZD.m), pm = matOf(st.valve > .5 ? '#d9d2c2' : GT.BRZD.m);
+  // drain: funnel neck down, across, out to the sight tube; return from the tube into the pan
+  put([[38.5, 36.5, 70.5], [41.5, 39.5, ZT]], rod([40, 38, ZT], [40, 38, 72], 1.5, lat, toneI, .7));
+  put([[38.5, 38, 70.5], [41.5, T.y, 73.5]], rod([40, 38, 72], [40, T.y, 72], 1.5, lat, toneI, .7));
+  put([[40, T.y - 1.5, 70.5], [W, T.y + 1.5, 73.5]], rod([40, T.y, 72], [W, T.y, 72], 1.5, lat, toneI, .7));
+  put([[56, T.y - 1.5, 34.5], [W, T.y + 1.5, 37.5]], rod([W, T.y, 36], [56, T.y, 36], 1.5, lat, toneI, .7));
+  put([[54.5, 50, 26], [57.5, T.y + 1.5, 37.5]], rod([56, T.y, 36], [56, 50, 26], 1.5, lat, toneI, .7));
+  // steam: in from the wall, up to the engine; a branch down to the coil under the pan
+  const rx = EX.riserX;
+  put([[rx - 1.8, 66, 32], [rx + 1.8, D, 36]], rod([rx, D, 34], [rx, 66, 34], 1.8, pm, toneI, .7));
+  put([[rx - 1.8, 64.2, 34], [rx + 1.8, 67.8, ZT]], rod([rx, 66, 34], [rx, 66, ZT], 1.8, pm, toneI, .7));
+  const coil = [[rx, 66, 34], [rx, 66, 12.5], [32, 66, 12.5], [32, 52, 12.5], [58, 52, 12.5], [58, 46, 12.5], [32, 46, 12.5], [32, 40, 12.5], [58, 40, 12.5], [58, 34, 12.5], [32, 34, 12.5], [32, 28, 12.5], [58, 28, 12.5]];
+  parts.push(exWire(coil, run ? '#f0a070' : GT.COPPER.m, .8));
+  // the drying pan, the latex layer drying to crumbs, the scraper and its push rod
+  const [px0, py0, px1, py1, pz0, pz1] = EX.pan, xs = flow.xs;
+  { let inner = fill(pd(on(PZ(pz0 + .3), rectUV(px0 + .5, py0 + .5, px1 - .5, py1 - .5))), GT.IRON.d);
+    if (flow.layer > 0){ const x0 = Math.max(px0 + .5, xs), h = Math.min(5, (.4 + 1.4*flow.layer)*(px1 - px0)/Math.max(2, px1 - .5 - x0)), col = mix(EX_LATEX, EX_CRUMB, flow.dry);
+      inner += box(x0, py0 + .5, pz0 + .3, px1 - .5, py1 - .5, pz0 + .3 + h, matOf(col), toneI, .5);
+      if (flow.dry > .3) { let dots = ''; for (let i = 0; i < 14; i++){ const q = P(x0 + ((i*7.3) % 1)*(px1 - .5 - x0), py0 + 2 + (i*1.9) % (py1 - py0 - 4), pz0 + .4 + h); dots += `<circle cx="${f(q[0])}" cy="${f(q[1])}" r=".6" fill="${mix(EX_CRUMB, '#8a6f2c', .6)}"/>`; } inner += dots; } }
+    inner += box(xs - 2, py0 + .7, pz0 + .5, xs, py1 - .7, pz1 + 1, GT.BRZD, toneI, .7);
+    const A = on(PZ(pz0), rectUV(px0, py0, px1, py1)), B = on(PZ(pz1), rectUV(px0, py0, px1, py1));
+    put([[px0, py0, pz0], [px1, py1, pz1]], openShell(A, B, n => toneI(n, GT.IRON), inner) + ink(pd(B), 1) + hullInk([...A, ...B], 1.4)); }
+  put([[4, 39, 18], [px0, 41, 20]], rod([4, 40, 19], [xs - 2, 40, 19], .9, GT.IRON, toneI, .6));
+  // chute from the pan lip to the slot
+  { const [ya, yb] = EX.sy, sm = GT.IRON, top = pz1;
+    const lip = y => shape([[px1, y, top], [W, y, 11], [W, y, 14], [px1, y, top + 3]], toneI([0, y > 40 ? 1 : -1, 0], sm), .7);
+    put([[px1, ya - .5, 11], [W, ya + .5, top + 3]], lip(ya));
+    put([[px1, ya + .5, 10], [W, yb - .5, top]], shape([[px1, ya, top], [W, ya, 11], [W, yb, 11], [px1, yb, top]], toneI(norm([10, 0, 10]), sm), .9));
+    put([[px1, yb - .5, 11], [W, yb + .5, top + 3]], lip(yb)); }
+  const cl = flow.clump; if (cl && !cl.out && cl.at[0] < W) put([[cl.at[0] - 3.4, cl.at[1] - 3, cl.at[2]], [cl.at[0] + 3.4, cl.at[1] + 3, cl.at[2] + 2.8]], exMound(cl.at[0], cl.at[1], cl.at[2], 3.4, 2.8, EX_CRUMB));
+  const sb = byDepth(parts);
+  EX_LABELS = k <= .6 ? '' : xrCallouts([
+    { at: [EX.fun.top[2], 38, EX.fun.z0 + EX.fun.h], text: 'FUNNEL', on: flow.pool > 0 },
+    { at: [EX.rol[1].x, EX.ry[0], EX.RZ], text: 'ROLLERS', on: run },
+    { at: [40.25, 40, EX.RZ + 5], text: 'NIP', on: flow.squash > 0 },
+    { at: [40, T.y, 72], text: 'DRAIN PIPE', on: flow.drip > 0 },
+    { at: [px1, py0, pz1], text: 'DRYING PAN', on: flow.layer > 0 },
+    { at: [45, 28, 12.5], text: 'HEATING COIL', on: run },
+    { at: [xs, py0, pz1 + 1], text: 'SCRAPER', on: xs > 31.5 },
+    { at: [66, EX.sy[0], 16], text: 'CHUTE', on: !!cl && !cl.out && cl.at[0] < W },
+    { at: [rx, D - 3, 34], text: 'STEAM PIPE', on: st.valve > .5 } ], [0, 96, 0, 100, 0, EX_TOP]);
+  return sb;
+}
+
+/* ---------- scene ---------- */
+function scene(st, m){
+  const flow = exFlow(st), k = ease(st.xr || 0);
+  const fade = svg => k > 0 ? `<g opacity="${f(1 - .7*k)}">${svg}</g>` : svg;
+  let s = castShadow([...on(PX(0), OUT), ...on(PX(W), OUT), ...on(PZ(EX.BZ + EX.hopH), rectUV(...EX.hopTop)), [EX.fly.x, EX.fly.y1, EX.fly.z + EX.fly.R],
+    [EX.stk[0], EX.stk[1], ZT + 26.5], [EX.riserX, D + 10, 34]]);
+  let body = exCase(st, m);
+  if (k > 0) body = xrGhost(body, '', k, OUT, 0, W, m) + `<g opacity="${f(k)}">${exMech(st, k, flow)}</g>`;
+  const riser = gtRiser(EX.riserX, D, 34, st.valve), T = EX.tube;
+  s += byDepth(exFeet());
+  s += byDepth([
+    { box:[[0, 0, Z0], [W, D, ZT]], svg: body },
+    ...exRoof(st, flow, k, m, fade),
+    { box:[[W, EX.door[0] - 3, EX.door[1]], [W + 5, EX.door[2], EX.door[3]]], svg: fade(exDoor()) },
+    { box:[[W, T.y - T.r - 1, T.zout - 2], [T.x + T.r + 1, T.y + T.r + 1, T.zin + 2]], svg: exTube(st, flow) },
+    { box:[[W, 5, 58], [W + 3, 17, 70]], svg: gtGauge(W, 11, 64, 6, st.steam) },
+    { box:[[W, 8.6, 47.6], [W + 2, 13.4, 52.4]], svg: gtLamp(W, 11, 50, st) },
+    { box:[[W, EX.sy[0] - .5, 7], [EX.spout[0], EX.sy[1] + .5, 16]], svg: exSpout(st, flow) },
+    { box:[[EX.tray[0], EX.tray[1], 0], [EX.tray[2], EX.tray[3], EX.trayH]], svg: exTray(st, flow) },
+    { box: riser.box, svg: fade(riser.svg) } ]);
+  s += gtPuffsSvg(st);
+  if (k > .6) s += EX_LABELS;
+  else s += xrCallouts([
+    { at: [40.5, EX.hopTop[1], EX.BZ + EX.hopH], text: 'HOPPER', on: !!flow.ball },
+    { at: [EX.rol[1].x + EX.RR, 30, EX.RZ], text: 'ROLLERS', on: !!st.running },
+    { at: [EX.fly.x, EX.fly.y1, EX.fly.z + EX.fly.R], text: 'FLYWHEEL', on: !!st.running },
+    { at: [EX.cyl.x0 + 6, EX.cyl.y + EX.cyl.r, EX.cyl.z], text: 'STEAM ENGINE', on: !!st.running },
+    { at: [EX.stk[0], EX.stk[1], ZT + 26.5], text: 'VENT STACK', on: !!st.running },
+    ...(facing([0,1,0]) ? [{ at: [EX.riserX, D + 18, 26], text: 'STEAM VALVE', on: st.valve > .5 }] : []),
+    ...(facing([1,0,0]) ? [{ at: [T.x, T.y - T.r, 56], text: 'SIGHT TUBE', on: flow.drip > 0 }, { at: [W + 3, 11, 70], text: 'PRESSURE GAUGE', on: (st.steam || 0) > .05 }] : []),
+    { at: [EX.tray[2], 40, EX.trayH], text: 'OUTPUT TRAY', on: (st.output || 0) > 0 } ], [0, 96, 0, 100, 0, EX_TOP]);
+  return s;
+}
+
+gtMachine({
+  fig:'S7', title:'Steam Extractor', size:[96, 100, 118], center:[48, 50], scene,
+  recipes:[{ id:'extract_resin', name:'Raw Rubber' }],
+  demoSeconds: 6, loadLabel:'Load resin', inLabel:'Resin', outLabel:'Raw rubber',
+  emitters:[{ id:'vent', at: () => [EX.stk[0], EX.stk[1], ZT + 27], when: st => !!st.running }],
+  tile:[[-3, -1, 0], [99, -1, 0], [99, 101, 0], [-3, 101, 0]],
+});
+</script>
+<script src="cf-tail.js"></script>
+</body></html>

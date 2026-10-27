@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LV Semi-Fluid Generator</title>
+<script src="cf-head.js"></script></head><body>
+<script src="core.js"></script>
+<script src="gt-bridge.js"></script>
+<script src="gt-parts.js"></script>
+<script src="gt-lv.js"></script>
+<script>
+/* LV Semi-Fluid Generator (gtjs, LV): burns the coke oven's creosote in a small one-cylinder engine. 8 EU a litre,
+   at most 32 EU a tick.
+
+   How it works (truth first)
+   1. Creosote waits in the brown tank on the roof; the sight glass in its end shows how much is left.
+   2. A fuel line drops from the tank through the roof to the injector on the cylinder head. The engine lies on its
+      side: a finned cylinder along y, its piston pushing a crosshead that slides in a guide, and a connecting rod
+      from the crosshead to the crank. Each firing shoves the piston; the rod turns the crank.
+   3. The crankshaft runs along x: at the front it carries the red flywheel (on the face, behind the glass-less
+      opening, with the rod drawn on it), at the back it turns the generator, whose leads go to the control board,
+      the buffer and the EU OUT socket.
+   4. The burnt gas leaves the head by the exhaust pipe, through the muffler on the roof, as grey smoke.
+   Where the fuel is: tank -> sight glass -> fuel line -> injector -> cylinder -> exhaust -> muffler -> air.
+   Where the power is: piston -> crosshead -> rod -> crank -> shaft -> generator -> board -> socket -> cable.
+
+   Parts
+   OUTSIDE  the LV case (see gt-lv.js) . the engine on the face: red spoked flywheel, crosshead guide, finned
+            cylinder, injector . creosote tank on saddles with a sight glass and filler cap . exhaust muffler on the roof
+   INSIDE   generator . crankshaft . crank disc and rod . crosshead in its guide . finned cylinder and head .
+            injector and fuel line . exhaust pipe . leads
+
+   Contact checks (numbers)
+   - face: flywheel r 11.5 at (y 21, z 36): y 9.5..32.5, z 24.5..47.5, in LV_FACE (8..72, 15..60); crank pin r 6.
+   - rod 20 long: the crosshead's centre runs y 35..47 (block +-2.5: 32.5..49.5) in the guide (y 32..50); cylinder from y 50.
+   - fins y 52..69 every 3, z 23..49; head y 69..71.5; injector on the head at z 49..54, under the face top (60).
+   - bed plate z 16..21 under it all; the shaft's centre is z 36 inside and on the face.
+   - tank r 9 along x 34..66 at y 24, centre z 95: sits on two saddles (x 38..42, 58..62) from the roof (84) to z 87.5,
+     its bottom at 86; clear of the roof grille (x 6..26).
+   - muffler at (52, 64): pipe from the roof, muffler z 92..102, outlet bend to (47, 64, 112); 40 from the tank's side (33).
+   - inside: generator r 10 at y 21, x 12..34; crank disc x 58..61; cylinder x 59.5 axis at z 36, head y 69..71.5,
+     exhaust from the head (59.5, 66, 44) up to the muffler's foot (52, 64, 84).
+*/
+const SG = { fy: 21, fz: 36, fr: 11.5, crank: 6, rod: 20, cx: 59.5 };
+const SG_TANK = { x0: 34, x1: 66, y: 24, r: 9, z: LV.ZT + 11 }, SG_MUF = [52, 64];
+const SG_TANKM = { l:'#b5865a', m:'#87603d', d:'#40291a' }, SG_CREO = '#3d2616';
+const sgPct = v => `${Math.round((v || 0)*100)}%`;
+const sgFuel = st => st.fuel != null && st.fuel > 0 ? st.fuel : (st.input || 0);
+const sgLevel = st => sgFuel(st) > 0 ? gtClamp(.35 + sgFuel(st)/8000) : 0;
+// the crank angle, and where the crank pin and the crosshead are (u = y, v = z)
+const sgAng = st => (st.t || 0)*(4 + 8*(st.rate || 0));
+function sgCrank(st){
+  const a = sgAng(st), p = [SG.fy + SG.crank*Math.cos(a), SG.fz + SG.crank*Math.sin(a)];
+  return { a, pin: p, xh: SG.fy + SG.crank*Math.cos(a) + Math.sqrt(SG.rod**2 - (SG.crank*Math.sin(a))**2) };
+}
+// a firing flash: just after the crosshead is at its far end
+const sgFiring = st => !!st.running && Math.cos(sgCrank(st).a) > .75;
+
+function sgFace(st){
+  const run = !!st.running, c = sgCrank(st), sh = run ? .25*Math.sin((st.t || 0)*47) : 0, { fy, fz, fr } = SG;
+  // the bed plate, the opening behind it all
+  let s = shape(lvOn(rrUV(10, 23, 70, 52, 2.5), .42), '#2a2e32', 1.2);
+  s += shape(lvOn(rrUV(10, 16, 70, 21.5, 1), .45), GT.IRON.d, 1.1) + gtRivets(PX(LV.W + .5), [[14, 18.7], [30, 18.7], [50, 18.7], [66, 18.7]], GT.IRON.l);
+  // the cylinder: a dark barrel with cooling fins, the head and its injector
+  s += shape(lvOn(rrUV(50, fz - 7 + sh, 71, fz + 7 + sh, 1.5), .5), GT.GRAPHITE.m, 1);
+  for (let y = 52; y < 69; y += 3) s += shape(lvOn(rrUV(y, 23 + sh, y + 1.6, 49 + sh, .7), .55), y % 2 ? GT.IRON.l : GT.IRON.m, .7);
+  s += shape(lvOn(rrUV(69, 26 + sh, 71.5, 46 + sh, .8), .58), GT.IRON.m, .9);
+  s += shape(lvOn(rrUV(57, 49 + sh, 63, 51.5 + sh, .6), .58), GT.IRON.d, .7) + shape(lvOn(rrUV(58.3, 51.5 + sh, 61.7, 55 + sh, .8), .6), GT.REDW.m, .8);
+  if (sgFiring(st)) s += fill(pd(lvOn(ellUV(60, 53 + sh, 4.5, 4.5, 14), .62)), '#ffcf5a', 'opacity=".55"');
+  // the crosshead guide: two rails, the crosshead sliding between them
+  s += shape(lvOn(rectUV(32, fz - 5.5, 50, fz - 3.8), .55), GT.IRON.l, .7) + shape(lvOn(rectUV(32, fz + 3.8, 50, fz + 5.5), .55), GT.IRON.l, .7);
+  // the flywheel: a red rim, six spokes, a hub, turning
+  s += shape(lvOn(ellUV(fy, fz, fr, fr, 36), .55), GT.REDW.m, 1.3);
+  s += fill(pd(lvOn(ellUV(fy, fz, fr - 2.6, fr - 2.6, 32), .58)), '#2a2e32');
+  for (let i = 0; i < 6; i++){ const b = c.a + i*Math.PI/3, w = .2;
+    s += shape(lvOn([[fy + 2*Math.cos(b - w*2), fz + 2*Math.sin(b - w*2)], [fy + (fr - 2.4)*Math.cos(b - w*.45), fz + (fr - 2.4)*Math.sin(b - w*.45)],
+      [fy + (fr - 2.4)*Math.cos(b + w*.45), fz + (fr - 2.4)*Math.sin(b + w*.45)], [fy + 2*Math.cos(b + w*2), fz + 2*Math.sin(b + w*2)]], .6), GT.REDW.m, .6); }
+  s += fill(pd(lvOn(arcUV(fy, fz, fr - .6, 95, 165, 8).concat(arcUV(fy, fz, fr - 2, 165, 95, 8)), .6)), GT.REDW.l, 'opacity=".9"');
+  s += shape(lvOn(ellUV(fy, fz, 3, 3, 14), .62), GT.IRON.m, .8);
+  // the crosshead and the connecting rod to the crank pin
+  s += shape(lvOn(rrUV(c.xh - 2.5, fz - 3.6, c.xh + 2.5, fz + 3.6, .8), .64), GT.IRON.l, .9);
+  s += shape(lvOn((() => { const [py, pz] = c.pin, dy = c.xh - py, dz = fz - pz, L = Math.hypot(dy, dz), ny = -dz/L*1.2, nz = dy/L*1.2;
+    return [[py + ny, pz + nz], [c.xh + ny, fz + nz], [c.xh - ny, fz - nz], [py - ny, pz - nz]]; })(), .66), GT.IRON.m, .8);
+  s += shape(lvOn(ellUV(...c.pin, 1.7, 1.7, 10), .7), GT.IRON.l, .7) + shape(lvOn(ellUV(c.xh, fz, 1.2, 1.2, 8), .7), GT.IRON.d, .5);
+  return s;
+}
+
+function sgTank(st){
+  const { x0, x1, y, r, z } = SG_TANK, ZT = LV.ZT, parts = [], put = (b, svg) => parts.push({ box: b, svg });
+  // the saddles are always under the tank: draw them first
+  let t = [38, 58].map(sx => box(sx, y - 7, ZT, sx + 4, y + 7, z - 7.5, GT_TRIM, toneI, .8)).join('');
+  t += rod([x0, y, z], [x1, y, z], r, SG_TANKM, toneI, 1.3, r, 28);
+  // two bands round it: only the half toward the viewer
+  for (const x of [44, 56]){ const as = Array.from({ length: 32 }, (_, i) => i/32*2*Math.PI), vis = as.map(a => facing([0, Math.cos(a), Math.sin(a)]));
+    const st0 = vis.findIndex((v, i) => v && !vis[(i + 31) % 32]), ring = [];
+    for (let i = 0; st0 >= 0 && i < 32 && vis[(st0 + i) % 32]; i++){ const a = as[(st0 + i) % 32]; ring.push([x, y + (r + .2)*Math.cos(a), z + (r + .2)*Math.sin(a)]); }
+    if (ring.length > 1) t += `<path d="${pd(ring, false)}" fill="none" stroke="${INK}" stroke-width="2.6" stroke-linecap="round"/><path d="${pd(ring, false)}" fill="none" stroke="${SG_TANKM.d}" stroke-width="1.4" stroke-linecap="round"/>`; }
+  if (facing([1,0,0])){ const lv = sgLevel(st), w = on(PX(x1 + .15), ellUV(y, z, 5.6, 5.6, 24)), z0 = z - 5.6, zl = z0 + 11.2*lv;
+    t += shape(w, '#efe6d2', 1) + clipTo(w, fill(pd(on(PX(x1 + .2), rectUV(y - 6, z0 - .5, y + 6, zl))), SG_CREO)
+      + fill(pd(on(PX(x1 + .22), rectUV(y - 6, zl - .8, y + 6, zl))), '#7a5030'))
+      + fill(pd(on(PX(x1 + .25), [[y + 3.6, z + 3.6], [y + 1.2, z + 4.8], [y + 2.6, z + 1]])), '#ffffff', 'opacity=".55"')
+      + ink(pd(on(PX(x1 + .3), ellUV(y, z, 5.6, 5.6, 24))), 1.1); }
+  put([[x0, y - r, z - r], [x1, y + r, z + r]], t);
+  put([[45, y - 2.6, z + r - 1], [49, y + 2.6, z + r + 3]], cyl(47, y, z + r - 1, z + r + 2.6, 2.6, GT.IRON, toneI, .9));
+  return { box:[[x0, y - r, ZT], [x1, y + r, z + r + 3]], svg: byDepth(parts) };
+}
+function sgMuffler(st){
+  const [x, y] = SG_MUF, ZT = LV.ZT, G = GT.GRAPHITE, hot = st.heat > 0 ? { l: mix(G.l, '#b06a3a', .35*st.heat), m: mix(G.m, '#8a4a2a', .35*st.heat), d: G.d } : G;
+  const parts = [
+    { box:[[x - 3.6, y - 3.6, ZT], [x + 3.6, y + 3.6, ZT + 1.6]], svg: cyl(x, y, ZT, ZT + 1.6, 3.6, GT_TRIM, toneI, .9) },
+    { box:[[x - 2.2, y - 2.2, ZT + 1.6], [x + 2.2, y + 2.2, ZT + 8]], svg: cyl(x, y, ZT + 1.6, ZT + 8, 2.2, G, toneI, 1) },
+    { box:[[x - 4.6, y - 4.6, ZT + 8], [x + 4.6, y + 4.6, ZT + 18]], svg: cyl(x, y, ZT + 8, ZT + 18, 4.6, hot, toneI, 1.2)
+      + [11, 15].map(zz => ink(pd(on(PZ(ZT + zz), arcUV(x, y, 4.6, 0, 360, 24)).filter(p => facing([p[0] - x, p[1] - y, 0])), false), .6)).join('') },
+    { box:[[x - 2.2, y - 2.2, ZT + 18], [x + 2.2, y + 2.2, ZT + 24]], svg: cyl(x, y, ZT + 18, ZT + 24, 2.2, G, toneI, 1) },
+    { box:[[x - 6, y - 2.4, ZT + 22], [x + 1, y + 2.4, ZT + 29]], svg: rod([x, y, ZT + 23], [x - 5, y, ZT + 28], 2.2, G, toneI, 1) } ];
+  return { box:[[x - 6, y - 4.6, ZT], [x + 4.6, y + 4.6, ZT + 29]], svg: byDepth(parts) };
+}
+function sgParts(st, k, fade){
+  const t = sgTank(st), m = sgMuffler(st);
+  return [{ ...t, svg: fade(t.svg) }, { ...m, svg: fade(m.svg) }];
+}
+
+function sgInside(st, k){
+  const out = [], put = (b, svg) => out.push({ box: b, svg }), run = !!st.running, c = sgCrank(st), { fy, fz, cx } = SG;
+  const leads = run ? '#f6b98a' : GT.COPPER.m;
+  // the generator at the back, its commutator, the shaft
+  put([[10, fy - 10, LV.Z0], [34, fy + 10, fz + 10]], box(13, fy - 8, LV.Z0, 31, fy + 8, fz - 9, GT_TRIM, toneI, .8)
+    + cylX(10, 34, fy, fz, 10, GT.IRON, toneI, 1.2, 28) + [16, 22, 28].map(x => cylX(x, x + 1.4, fy, fz, 10.3, GT.IRON, toneI, .6, 28)).join(''));
+  put([[34, fy - 5, fz - 5], [37, fy + 5, fz + 5]], cylX(34, 37, fy, fz, 5, run ? matOf('#f6b98a') : GT.COPPER, toneI, .8, 18));
+  put([[37, fy - 2.2, fz - 2.2], [66, fy + 2.2, fz + 2.2]], cylX(37, 66, fy, fz, 2.2, GT_TRIM, toneI, .8, 12));
+  // the flywheel at the front of the shaft
+  let fw = cylX(66, 70, fy, fz, SG.fr, GT.REDW, toneI, 1.2, 32);
+  if (facing([1,0,0])) fw += fill(pd(on(PX(70.1), ellUV(fy, fz, SG.fr - 2.6, SG.fr - 2.6, 28))), GT.REDW.d) + shape(on(PX(70.2), ellUV(fy, fz, 3, 3, 12)), GT.IRON.m, .7);
+  put([[66, fy - SG.fr, fz - SG.fr], [70, fy + SG.fr, fz + SG.fr]], fw);
+  // the crank disc, the rod, the crosshead in its guide
+  put([[57, fy - 7, fz - 7], [60, fy + 7, fz + 7]], cylX(57, 60, fy, fz, 7, GT.IRON, toneI, 1, 24));
+  out.push({ box:[[60, Math.min(c.pin[0], c.xh) - 1, fz - 7], [61.5, Math.max(c.pin[0], c.xh) + 1, fz + 7]],
+    svg: rod([60.8, ...c.pin], [60.8, c.xh, fz], 1.2, GT.IRON, toneI, .8) });
+  for (const dz of [-4.6, 4.6]) put([[56, 32, fz + dz - .8], [64, 50, fz + dz + .8]], box(56, 32, fz + dz - .8, 64, 50, fz + dz + .8, GT.IRON, toneI, .7));
+  put([[57, c.xh - 2.5, fz - 3.8], [63, c.xh + 2.5, fz + 3.8]], box(57, c.xh - 2.5, fz - 3.6, 63, c.xh + 2.5, fz + 3.6, GT.IRON, toneI, .8));
+  // the cylinder: barrel and fins, nearest fin last, then the head and injector
+  let cyl1 = rod([cx, 50, fz], [cx, 69, fz], 6.5, GT.GRAPHITE, toneI, 1, 6.5, 20), fins = [];
+  for (let y = 52; y < 69; y += 3) fins.push(y);
+  if (!facing([0,1,0])) fins.reverse();
+  cyl1 += fins.map(y => rod([cx, y, fz], [cx, y + 1.4, fz], 10, GT.IRON, toneI, .7, 10, 20)).join('');
+  cyl1 += rod([cx, 69, fz], [cx, 71.5, fz], 8, GT.IRON, toneI, 1, 8, 20);
+  put([[cx - 10, 50, fz - 10], [cx + 10, 71.5, fz + 10]], cyl1);
+  put([[cx - 2, 64, fz + 9], [cx + 2, 68, fz + 15]], cyl(cx, 66, fz + 9.5, fz + 14, 1.6, GT.REDW, toneI, .8));
+  if (sgFiring(st)) put([[cx - 6, 52, fz - 6], [cx + 6, 66, fz + 6]], fill(pd(on(PX(cx + 10.2), ellUV(60, fz, 4, 4, 12))), '#ffcf5a', 'opacity=".5"'));
+  // the fuel line from the tank to the injector, the exhaust to the muffler
+  out.push(gtWire([[50, SG_TANK.y, LV.ZT], [50, SG_TANK.y, 68], [cx, 58, 68], [cx, 66, fz + 14]], SG_CREO, .9));
+  put([[50, 62, 42], [62, 70, 66]], rod([cx, 66, fz + 8], [SG_MUF[0], SG_MUF[1], 64], 2.4, GT.GRAPHITE, toneI, 1));
+  put([[50, 62, 64], [54, 66, LV.ZT]], rod([SG_MUF[0], SG_MUF[1], 64], [SG_MUF[0], SG_MUF[1], LV.ZT], 2.4, GT.GRAPHITE, toneI, 1));
+  // the generator's leads to the control board
+  out.push(gtWire([[20, fy + 3, fz + 9.6], [20, fy + 3, 60], [5, fy + 3, 60]], leads, .8));
+  out.push(gtWire([[25, fy - 3, fz + 9.6], [25, fy - 3, 66], [5, 20, 66]], leads, .8));
+  return out;
+}
+
+gtLv({
+  fig:'LV10', title:'LV Semi-Fluid Generator', name:'SEMI-FLUID', socket:'out', noRecipe: true, fuelled: true,
+  face: sgFace, parts: sgParts, inside: sgInside,
+  shadowPts: [[SG_TANK.x0, SG_TANK.y - 9, SG_TANK.z + 9], [SG_TANK.x1, SG_TANK.y + 9, SG_TANK.z + 9], [SG_MUF[0], SG_MUF[1], LV.ZT + 28]],
+  emitters:[{ id:'smoke', kind:'smoke', at: () => [SG_MUF[0] - 6, SG_MUF[1], LV.ZT + 29], when: st => !!st.burning, every: .26, life: 2.2, rise: 24, r0: 2.4 }],
+  stats: st => [{ label:'Output', value: `${Math.round((st.running ? st.rate || 0 : 0)*32)} EU/t` },
+    { label:'Creosote', value: `${Math.round(sgFuel(st))} L`, small:true }, { label:'Buffer', value: sgPct(st.energy), small:true }],
+  callouts: st => [
+    ...(facing([1,0,0]) ? [{ at: [LV.W, SG.fy, SG.fz + SG.fr], text: 'FLYWHEEL', on: !!st.running }, { at: [LV.W, 60, 49], text: 'FINNED CYLINDER', on: !!st.running },
+      { at: [SG_TANK.x1, SG_TANK.y, SG_TANK.z - 3], text: 'SIGHT GLASS', on: sgFuel(st) > 0 }] : []),
+    { at: [44, SG_TANK.y, SG_TANK.z + SG_TANK.r], text: 'CREOSOTE TANK', on: sgFuel(st) > 0 },
+    { at: [SG_MUF[0], SG_MUF[1], LV.ZT + 18], text: 'EXHAUST', on: !!st.burning }],
+  insideCallouts: st => [{ at: [22, SG.fy, SG.fz + 10], text: 'GENERATOR', on: !!st.running },
+    { at: [68, SG.fy, SG.fz + SG.fr], text: 'FLYWHEEL', on: !!st.running }, { at: [60, 40, SG.fz + 5], text: 'CROSSHEAD', on: !!st.running },
+    { at: [SG.cx, 60, SG.fz + 10], text: 'CYLINDER', on: !!st.running }, { at: [SG.cx, 66, SG.fz + 14], text: 'INJECTOR', on: !!st.burning },
+    { at: [50, SG_TANK.y, 74], text: 'FUEL LINE', on: !!st.running }],
+});
+</script>
+<script src="cf-tail.js"></script>
+</body></html>

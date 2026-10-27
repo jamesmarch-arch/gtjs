@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LV Wiremill</title>
+<script src="cf-head.js"></script></head><body>
+<script src="core.js"></script>
+<script src="gt-bridge.js"></script>
+<script src="gt-parts.js"></script>
+<script src="gt-lv.js"></script>
+<script>
+/* LV Wiremill (gtjs, LV): draws an ingot down into wire, two lengths of wire per ingot.
+
+   How it works (truth first)
+   1. An ingot sits on the feed rest at the left of the face, its point pushed into the mouth of the first drawing die.
+   2. Each die is a hard ring with a cone-shaped bore: the metal is pulled through it and comes out thinner and longer.
+      Three dies in a row, each smaller than the last, take the bar down to wire. The volume stays the same, so the
+      wire runs faster after every die.
+   3. What pulls it is the capstan: a drum the wire wraps round, turned by the motor behind the face through a gearbox.
+   4. From the capstan the wire runs down onto the take-up spool, which the same gearbox turns; the wire walks back and
+      forth along the barrel so the coil winds evenly. When the ingot is used up the wire is cut and the coil drops
+      through the output slot into the tray. Between jobs the tail of the last wire stays threaded through the dies
+      and a first layer stays on the spool, ready for the next ingot.
+   Where the metal is: ingot -> feed rest -> die 1 -> die 2 -> die 3 -> capstan -> spool -> slot -> tray.
+   Where the power is: cable -> socket -> control board -> motor -> gearbox -> capstan shaft / spool shaft.
+
+   Parts
+   OUTSIDE  the LV case (see gt-lv.js) . slate face plate with the die rail . feed rest with the ingot . three die
+            blocks with brass cone dies (numbered 1 2 3) . capstan (wound drum, spoked flange) . take-up spool on two
+            arms with its axle . the wire between them
+   INSIDE   motor . gearbox . capstan shaft . spool shaft
+
+   Contact checks (numbers)
+   - the wire line is x 78 (4 in front of the face), z 49; every die cone and the ingot are centred on it.
+   - die blocks y 58..62, 43..47, 28..32 (x 74..82, z 42..56); their cones run from the block (y +2) to the mouth (y +6),
+     so the ingot (y 66..72, z 47.4..50.6) starts at die 1's mouth (y 66), and each wire span ends at the next mouth.
+   - the ingot rests on the feed rest (z 44..47.4): rest top = ingot bottom.
+   - capstan r 6 at y 18, z 43: its top is z 49, the wire line, so the wire from die 3 arrives on its top.
+   - motor r 7 at x 31, z 18, y 30..54; its shaft enters the gearbox (x 24..40, y 10..27, z 6..50) at y 27.
+   - the capstan shaft (y 18, z 43) and the spool shaft (y 24.5, z 27) leave the gearbox front (x 40) and meet the face at x 74.
+     The spool arm on the right is y 23..26: the spool shaft runs into it and its chain turns the spool axle at z 27.
+   - spool axle x 83, z 27, y 22.5..59.5 through both arms (y 23..26 and 56..59); flanges r 8.5 at y 26..27.5 and 54.5..56,
+     so the spool's bottom (z 18.5) clears the tray (z 6) and its back (x 74.5) clears the face.
+*/
+const WMW = LV.W;
+const WM = { x: WMW + 4, z: 49, dies: [{ y: 61, r: 4.4 }, { y: 46, r: 3.9 }, { y: 31, r: 3.4 }],
+  cap: { y: 18, z: 43, r: 6 }, sp: { x: WMW + 9, z: 27, R: 8.5 }, bar: 65.5 };
+const wmCol = st => lvCol(st);
+const wmBusy = st => !!st.active;
+const wmProd = st => ({ kind: 'wire', col: wmCol(st) });
+// the wire gets thinner and faster after each die (same volume per second through every die)
+const WM_W = [1.4, .95, .72, .55], WM_V = [1, 2.2, 3.8, 6.5];
+// where the wire lands on the spool: walking back and forth along the barrel
+const wmLay = st => 31 + 22*(.5 - .5*Math.cos((st.t || 0)*1.7));
+const wmCoil = st => 3.9 + (wmBusy(st) ? 3.6*(st.progress || 0) : 0);
+
+// a run of wire: the inked line with a coloured core, and while running a bright highlight sliding along it
+function wmWire(pts, col, w, st, v){
+  const d = pd(pts, false);
+  let s = `<path d="${d}" fill="none" stroke="${INK}" stroke-width="${f(2*w + 1)}" stroke-linejoin="round" stroke-linecap="round"/>`
+    + `<path d="${d}" fill="none" stroke="${col}" stroke-width="${f(2*w)}" stroke-linejoin="round" stroke-linecap="round"/>`;
+  if (st.running) s += `<path d="${d}" fill="none" stroke="#fff6e0" stroke-width="${f(w*.8)}" stroke-linecap="round" opacity=".75" stroke-dasharray="1 3.2" stroke-dashoffset="${f(-(st.t || 0)*7*v)}"/>`;
+  return s;
+}
+const wmBox = pts => [[0,1,2].map(i => Math.min(...pts.map(p => p[i])) - .8), [0,1,2].map(i => Math.max(...pts.map(p => p[i])) + .8)];
+
+function wmFace(st){
+  // a slate plate, the die rail across its top, and a strip of bolts
+  let s = shape(lvOn(rrUV(12, 18, 68, 57, 3)), '#3a5060', 1.4);
+  s += shape(lvOn(rrUV(22, 40, 71, 58, 1.5), .5), '#536a7a', 1);
+  s += gtRivets(PX(WMW + .6), [[24.5, 42.5], [24.5, 55.5], [68.5, 42.5], [68.5, 55.5], [53, 42.5], [37.5, 42.5]], GT_TRIM.l);
+  // a short scale under the spool arms: how full the spool is
+  const p = wmBusy(st) ? (st.progress || 0) : 0;
+  s += shape(lvOn(rrUV(30, 13.5, 50, 16.5, 1), .5), GT_TRIM.d, .7) + fill(pd(lvOn(rrUV(30.4, 13.9, 30.4 + 19.2*p + .01, 16.1, .8), .55)), wmCol(st));
+  return s;
+}
+
+function wmDie(d, i, st){
+  const { x, z } = WM, y = d.y, zr = z - 4.2;
+  // the pedestal (numbered), the die ring on it, and the brass cone that leads the metal into the ring
+  const ped = box(WMW, y - 2.5, 38, WMW + 7, y + 2.5, zr, GT_TRIM, toneI, 1)
+    + (facing([1,0,0]) ? tx(WMW + 7.1, y, 39.3, String(i + 1), 3.4, GT.CREAM, 800) : '');
+  const ring = rod([x, y - 1.5, z], [x, y + 1.5, z], 4.2, GT.IRON, toneI, 1, 4.2, 20);
+  let cone = rod([x, y + 4.5, z], [x, y + 1.5, z], d.r, GT_BRZ, toneI, .9, 1.9, 20);
+  if (facing([0,1,0])) cone += fill(pd(on(PY(y + 4.55), ellUV(x, z, d.r*.5, d.r*.5, 14))), GT.RECESS);
+  return [{ box: [[WMW, y - 2.5, 38], [WMW + 7, y + 2.5, zr]], svg: ped },
+          { box: [[x - 4.2, y - 1.5, zr], [x + 4.2, y + 1.5, z + 4.2]], svg: ring },
+          { box: [[x - d.r, y + 1.5, z - d.r], [x + d.r, y + 4.5, z + d.r]], svg: cone }];
+}
+
+function wmParts(st, k, fade){
+  const out = [], put = (b, svg) => out.push({ box: b, svg: fade(svg) }), { x, z } = WM, col = wmCol(st), busy = wmBusy(st), t = st.t || 0;
+  const run = !!st.running, p = busy ? (st.progress || 0) : 0, mc = matOf(col);
+  // the feed rest and the ingot on it, pushed into die 1's mouth; it gets shorter as it is drawn
+  put([[WMW, 67, 40], [WMW + 7, 72, 47.4]], box(WMW, 67, 40, WMW + 7, 72, 47.4, GT_TRIM, toneI, .9));
+  if (busy){ const y1 = WM.bar + 1.2 + 9*(1 - p);
+    put([[x - 1.6, WM.bar, z - 1.6], [x + 1.6, y1, z + 1.6]], box(x - 1.6, WM.bar, z - 1.6, x + 1.6, y1, z + 1.6, mc, toneI, .8)); }
+  // the dies, and the wire between them
+  WM.dies.forEach((d, i) => wmDie(d, i, st).forEach(q => put(q.box, q.svg)));
+  for (let i = 0; i < 2; i++){ const a = [x, WM.dies[i].y - 1.5, z], b = [x, WM.dies[i + 1].y + 4.5, z];
+    put(wmBox([a, b]), wmWire([a, b], col, WM_W[i + 1], st, WM_V[i + 1])); }
+  // die 3 to the top of the capstan
+  { const a = [x, WM.dies[2].y - 1.5, z], b = [x, WM.cap.y + .5, z];
+    out.push({ box: wmBox([a, b]), svg: fade(wmWire([a, b], col, WM_W[3], st, WM_V[3])) }); }
+  // the capstan: a drum wound with wire, a spoked flange in front of it, turning
+  { const c = WM.cap, ang = -t*5, dm = mc;
+    let s = cylX(WMW, WMW + 7, c.y, c.z, c.r, dm, toneI, 1, 24);
+    { let r = ''; for (let xx = WMW + 1; xx < WMW + 6.6; xx += 1.1) r += pd(on(PX(xx), arcUV(c.y, c.z, c.r + .05, -40, 130, 10)), false);
+      s += `<path d="${r}" fill="none" stroke="${mc.d}" stroke-width=".5" opacity=".8"/>`; }
+    s += cylX(WMW + 7, WMW + 8.5, c.y, c.z, c.r + 1.6, GT.IRON, toneI, 1, 24);
+    if (facing([1,0,0])){ let sp = ''; for (let i = 0; i < 4; i++){ const a = ang + i*Math.PI/2;
+        sp += pd([[WMW + 8.55, c.y + 1.6*Math.cos(a), c.z + 1.6*Math.sin(a)], [WMW + 8.55, c.y + 6.4*Math.cos(a), c.z + 6.4*Math.sin(a)]], false); }
+      s += `<path d="${sp}" fill="none" stroke="${INK}" stroke-width="1.8" stroke-linecap="round"/><path d="${sp}" fill="none" stroke="${GT.IRON.l}" stroke-width=".8" stroke-linecap="round"/>`
+        + shape(on(PX(WMW + 8.6), ellUV(c.y, c.z, 1.8, 1.8, 12)), GT_TRIM.m, .7); }
+    out.push({ box: [[WMW, c.y - c.r - 1.6, c.z - c.r - 1.6], [WMW + 8.5, c.y + c.r + 1.6, c.z + c.r + 1.6]], svg: fade(s) }); }
+  // the take-up spool on its two arms: far arm, far flange, the coil (with the wire coming down onto it), near flange, near arm
+  { const s = WM.sp, rw = wmCoil(st), ys = wmLay(st), ang = t*4;
+    const arm = (y0, y1) => box(WMW, y0, s.z - 2, s.x + 1.8, y1, s.z + 2, GT_TRIM, toneI, .9);
+    const flange = (y0, y1, outer) => { let f0 = rod([s.x, y0, s.z], [s.x, y1, s.z], s.R, GT.IRON, toneI, 1, s.R, 28);
+      const n = outer > 0 ? [0,1,0] : [0,-1,0], yy = outer > 0 ? y1 + .05 : y0 - .05;
+      if (facing(n)){ let sp = ''; for (let i = 0; i < 3; i++){ const a = ang + i*2*Math.PI/3;
+          sp += pd([[s.x + 2*Math.cos(a), yy, s.z + 2*Math.sin(a)], [s.x + (s.R - 1.4)*Math.cos(a), yy, s.z + (s.R - 1.4)*Math.sin(a)]], false); }
+        f0 += `<path d="${sp}" fill="none" stroke="${GT.IRON.d}" stroke-width="1.6" stroke-linecap="round"/>` + shape(on(PY(yy), ellUV(s.x, s.z, 1.6, 1.6, 12)), GT_TRIM.m, .6); }
+      return f0; };
+    put([[WMW, 23, s.z - 2], [s.x + 1.8, 26, s.z + 2]], arm(23, 26));
+    put([[WMW, 56, s.z - 2], [s.x + 1.8, 59, s.z + 2]], arm(56, 59));
+    put([[s.x - 1.3, 59, s.z - 1.3], [s.x + 1.3, 59.6, s.z + 1.3]], rod([s.x, 59, s.z], [s.x, 59.6, s.z], 1.3, GT.IRON, toneI, .7));
+    put([[s.x - s.R, 26, s.z - s.R], [s.x + s.R, 27.5, s.z + s.R]], flange(26, 27.5, -1));
+    put([[s.x - s.R, 54.5, s.z - s.R], [s.x + s.R, 56, s.z + s.R]], flange(54.5, 56, 1));
+    let coil = rod([s.x, 27.5, s.z], [s.x, 54.5, s.z], rw, mc, toneI, .9, rw, 24);
+    { let r = ''; for (let y = 28.6; y < 54; y += 1.3) r += pd(on(PY(y), arcUV(s.x, s.z, rw + .05, -40, 130, 10)), false);
+      coil += `<path d="${r}" fill="none" stroke="${mc.d}" stroke-width=".45" opacity=".75"/>`;
+      // the wire from under the capstan down onto the coil
+      coil += wmWire([[x, WM.cap.y + 1, WM.cap.z - WM.cap.r], [s.x - 1, ys, s.z + rw + 1.2], [s.x, ys, s.z + rw]], col, WM_W[3], st, WM_V[3]); }
+    out.push({ box: [[s.x - rw, 27.5, s.z - rw], [s.x + rw, 54.5, Math.min(WM.cap.z - WM.cap.r - 1.6, s.z + rw + 1)]], svg: fade(coil) }); }
+  return out;
+}
+
+function wmInside(st, k){
+  const out = [], put = (b, svg) => out.push({ box: b, svg }), run = !!st.running, t = st.t || 0, s = WM.sp, c = WM.cap;
+  // the motor on its foot, its shaft into the side of the gearbox
+  put([[24, 30, LV.Z0], [38, 54, 25]], rod([31, 54, 18], [31, 30, 18], 7, GT.IRON, toneI, 1, 7, 24) + box(25, 33, LV.Z0, 37, 51, 11, GT_TRIM, toneI, .8));
+  put([[29, 27, 16], [33, 30, 20]], rod([31, 30, 18], [31, 27, 18], 1.8, GT_TRIM, toneI, .7, 1.8, 12));
+  // the gearbox, and the two shafts out to the face
+  put([[24, 10, LV.Z0], [40, 27, 50]], box(24, 10, LV.Z0, 40, 27, 50, matOf('#6f8a9c'), toneI, 1.1)
+    + (facing([1,0,0]) ? gtRivets(PX(40.1), [[12.5, 9], [24.5, 9], [12.5, 47], [24.5, 47]], GT_TRIM.d) : ''));
+  const shaft = (y, z) => rod([40, y, z], [WMW, y, z], 1.4, GT.IRON, toneI, .8, 1.4, 12)
+    + (run ? (() => { const a = t*6; let m = ''; for (let i = 0; i < 2; i++){ const xx = 48 + i*14; m += pd([[xx, y + 1.45*Math.cos(a + i), z + 1.45*Math.sin(a + i)], [xx + 3, y + 1.45*Math.cos(a + i), z + 1.45*Math.sin(a + i)]], false); }
+      return `<path d="${m}" fill="none" stroke="${INK}" stroke-width=".8"/>`; })() : '');
+  put([[40, c.y - 1.5, c.z - 1.5], [WMW, c.y + 1.5, c.z + 1.5]], shaft(c.y, c.z));
+  put([[40, 23.5, s.z - 1.5], [WMW, 25.5, s.z + 1.5]], shaft(24.5, s.z));
+  return out;
+}
+
+gtLv({
+  fig:'LV6', title:'LV Wiremill', name:'WIREMILL', face: wmFace, parts: wmParts, inside: wmInside, product: wmProd,
+  shadowPts: [[WM.sp.x + WM.sp.R, 26, WM.sp.z - WM.sp.R], [WM.sp.x + WM.sp.R, 59, WM.sp.z - WM.sp.R], [WMW + 8, 72, 56], [WMW + 8, 10, 51]],
+  recipes:[{ id:'wiremill_copper', name:'Copper Wire' }, { id:'wiremill_tin', name:'Tin Wire' }, { id:'wiremill_cupronickel', name:'Cupronickel Wire' }],
+  loadLabel:'Load ingots', outLabel:'Made',
+  callouts: st => facing([1,0,0]) ? [
+    { at: [WM.x, 69, WM.z + 1.6], text: 'INGOT', on: wmBusy(st) },
+    { at: [WMW + 8, 45, WM.z + 7], text: 'DRAWING DIES', on: !!st.running },
+    { at: [WMW + 8.5, WM.cap.y, WM.cap.z + WM.cap.r + 1.6], text: 'CAPSTAN', on: !!st.running },
+    { at: [WM.sp.x, 41, WM.sp.z + wmCoil(st)], text: 'SPOOL', on: !!st.running } ] : [],
+  insideCallouts: st => [{ at: [31, 42, 25], text: 'MOTOR', on: !!st.running }, { at: [32, 18.5, 50], text: 'GEARBOX', on: !!st.running },
+    { at: [58, WM.cap.y, WM.cap.z + 1.4], text: 'CAPSTAN SHAFT', on: !!st.running }, { at: [58, 24.5, WM.sp.z - 1.4], text: 'SPOOL SHAFT', on: !!st.running }],
+});
+</script>
+<script src="cf-tail.js"></script>
+</body></html>

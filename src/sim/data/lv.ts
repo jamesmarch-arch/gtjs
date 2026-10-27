@@ -45,20 +45,20 @@ export const items: ItemDef[] = [
 ];
 
 const LV = { power: 'eu', tier: 'LV', footprint: [1, 1], euCapacity: 1280 } as const;
-const lvMachine = (id: string, name: string, short: string, kind: string): MachineDef => ({ id, name, short, kind, ...LV, footprint: [1, 1] });
+const lvMachine = (id: string, name: string, short: string, kind: string): MachineDef => ({ id, name, short, kind, ...LV, footprint: [1, 1], figure: id });
 
 export const machines: MachineDef[] = [
   {
     id: 'hp_boiler', name: 'High Pressure Coal Boiler', short: 'HP BOILER', kind: 'boiler', power: 'steam', footprint: [1, 1], steamCapacity: 32000,
-    boiler: { steamPerTick: 15, fuels: { coal: 1000, coke: 2000 } }, // 15000 L of steam per coal
+    boiler: { steamPerTick: 15, fuels: { coal: 1000, coke: 2000 } }, figure: 'hp_boiler', // 15000 L of steam per coal
   },
   { id: 'lv_steam_turbine', name: 'LV Steam Turbine', short: 'TURBINE', kind: 'generator', ...LV, footprint: [1, 1], euCapacity: 1000,
-    generator: { steam: 2, maxEuPerTick: 32 }, steamCapacity: 4000 },
+    generator: { steam: 2, maxEuPerTick: 32 }, steamCapacity: 4000, figure: 'lv_steam_turbine' },
   { id: 'lv_semifluid_generator', name: 'LV Semi-Fluid Generator', short: 'SEMIFLUID', kind: 'generator', ...LV, footprint: [1, 1], euCapacity: 1000,
-    generator: { fuels: { creosote: 8 }, maxEuPerTick: 32 } },
-  { id: 'lv_battery_buffer', name: 'LV Battery Buffer', short: 'BATTERY', kind: 'battery', ...LV, footprint: [1, 1], euCapacity: 40000, battery: true },
+    generator: { fuels: { creosote: 8 }, maxEuPerTick: 32 }, figure: 'lv_semifluid_generator' },
+  { id: 'lv_battery_buffer', name: 'LV Battery Buffer', short: 'BATTERY', kind: 'battery', ...LV, footprint: [1, 1], euCapacity: 40000, battery: true, figure: 'lv_battery_buffer' },
   { id: 'lv_transformer', name: 'LV/MV Transformer', short: 'TRANSF.', kind: 'transformer', ...LV, footprint: [1, 1], euCapacity: 0,
-    transformer: { low: 'LV', high: 'MV', amps: 4 } },
+    transformer: { low: 'LV', high: 'MV', amps: 4 }, figure: 'lv_transformer' },
   lvMachine('lv_electric_furnace', 'LV Electric Furnace', 'E-FURNACE', 'furnace'),
   lvMachine('lv_macerator', 'LV Macerator', 'MACERATOR', 'macerator'),
   lvMachine('lv_ore_washer', 'LV Ore Washer', 'WASHER', 'ore_washer'),

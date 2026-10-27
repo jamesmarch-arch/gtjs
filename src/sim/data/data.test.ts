@@ -60,3 +60,13 @@ describe('game data', () => {
     expect(CONDUITS.size).toBe(conduits.length);
   });
 });
+
+describe('machine art', () => {
+  it('gives every machine a figure page and a floor sprite', () => {
+    // the paths of the files in public/ (globbed, never loaded)
+    const files = new Set(Object.keys(import.meta.glob(['/public/figures/*.html', '/public/sprites/*'])).map((p) => p.replace('/public/', '')));
+    const has = (path: string) => files.has(path);
+    const missing = machines.filter((m) => !m.figure || ![`figures/${m.figure}.html`, `sprites/${m.figure}.png`, `sprites/${m.figure}.json`].every(has));
+    expect(missing.map((m) => m.id)).toEqual([]);
+  });
+});

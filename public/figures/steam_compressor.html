@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Steam Compressor</title>
+<script src="cf-head.js"></script></head><body>
+<script src="core.js"></script>
+<script src="gt-bridge.js"></script>
+<script src="gt-parts.js"></script>
+<script>
+/* Steam Compressor (gtjs, steam age). A screw press: a big gear wheel on the roof turns a nut, the nut drives a screw
+   straight down, and the screw squeezes a charge of raw rubber dust between two platens into a rubber sheet
+   (3 raw rubber dust -> 1 rubber sheet).
+
+   How it works (truth first)
+   1. Steam comes up the riser beside the left wall, through the steam valve, into the case and up into a small steam
+      motor standing on the roof. Spent steam leaves the motor through a short pipe into the vent stack.
+   2. The motor turns a pinion; the pinion turns the big gear wheel, which sits on the crown of the press frame. The
+      wheel's hub is a nut: as it turns, the screw (which can't turn: it is keyed to the platen) goes up or down
+      through it. You can see the screw's top sink into the hub as the press closes.
+   3. Raw rubber dust drops from the hopper on the roof, down the feed tube and out of its nozzle onto the lower
+      platen, a little heap.
+   4. The screw pushes the upper platen down its four guide posts onto the heap and squeezes it flat into a sheet. The
+      big gauge on the front reads the squeeze. The wheel turns back and the platen lifts.
+   5. A pusher shoves the sheet off the platen, down the chute, out of the front slot, down the spout into the tray.
+   Where the rubber is: hopper -> feed tube -> nozzle -> lower platen -> chute -> slot -> spout -> tray.
+   Where the steam is: riser -> valve -> inside pipe -> steam motor -> exhaust -> vent stack -> air.
+
+   x = depth (front at x = W), y = width (+y = viewer-left: the steam side), z = up. 1 unit = 1 cm.
+
+   Parts
+   CASE     bronze case on four feet . riveted front . window with a riveted frame and glass . name plate . big press
+            gauge . running lamp . output slot . service hatch (back) . louvres (right side) . hopper with feed flap .
+            vent stack . spout . output tray
+   ROOF     two columns . crown . gear wheel (rim with teeth, four spokes, hub nut) . screw top . steam motor with its
+            pinion . exhaust pipe
+   PRESS    lower platen . four guide posts . upper platen . screw . feed tube with nozzle . pusher . chute
+   STEAM    riser with floor flange, valve and handwheel . wall flange . inside pipe up to the motor
+
+   Contact checks (numbers)
+   - platens 20 x 20 at (56, 28): lower top z 26; the upper one (5 thick) rests at z 36 and closes to z 27.2 on a
+     1.2 thick sheet. The heap (6 tall) is touched when the upper platen reaches z 32.
+   - guide posts at x 48/64, y 20/36 (r 1.4) stand inside the platens' corners (x 46..66, y 18..38).
+   - screw top = upper platen bottom + 82: z 118 up, z 109.2 shut, so it sinks from above the hub (top z 111) into it.
+   - gear wheel r 14 at (56, 28) spans y 14..42; the pinion r 5.5 at (56, 47.5) spans y 42..53: they touch at y 42.
+   - columns y 13..18 and 37..42 clear the screw (y 25.8..30.2); the crown is y 12..42, the motor y 42.5..52.5.
+   - motor -> exhaust pipe (y 52.5..59.5) -> stack at (56, 66), base y 61..71.
+   - chute: lower platen edge (66, 26) -> slot (70, 12), the slot is z 9..15.
+   - hopper x 4..30 stops short of the crown (x 48).
+*/
+const W = 70, D = 80, Z0 = 6, ZT = 78;
+Z_FLOOR = Z0;
+const OUT = rrUV(0, Z0, D, ZT, 5);
+const CP = {
+  win: [14, 18, 54, 56], cx: 56, cy: 28, pl: [46, 18, 66, 38], LOW: 26, UP: 36, TH: 5, posts: [[48, 20], [64, 20], [48, 36], [64, 36]],
+  screwK: 82, wheel: { z0:104, z1:110, R:14, r:11 }, crown: [48, 12, 96, 64, 42, 102], cols: [[51, 13, 61, 18], [51, 37, 61, 42]],
+  pin: { x:56, y:47.5, r:5.5 }, mot: { x:56, y:47.5, r:5, z1:101 }, stk: [56, 66],
+  hopBot: [10, 12, 24, 26], hopTop: [4, 6, 30, 32], hopH: 11, nozzle: [44, 28, 33],
+  slot: [19, 9, 37, 15], sy: [20, 36], tray: [74, 22, 96, 50], trayH: 7, spout: [W + 8, 8], piles: [29, 43],
+  gauge: [66.5, 40, 9], lamp: [66.5, 60], riserX: 56,
+};
+const CP_TOP = 120;
+const CP_DUST = '#e6cf8f', CP_SHEET = '#3b3735';
+const CP_PLATEN = matOf('#6f777c');
+
+/* ---------- where the dust, the platen, the sheet and the pusher are, from progress ---------- */
+function cpPath(keys, t){
+  for (let i = 1; i < keys.length; i++) if (t <= keys[i][0]){ const a = keys[i - 1], b = keys[i], u = (t - a[0])/(b[0] - a[0] || 1);
+    return [a[1] + (b[1] - a[1])*u, a[2] + (b[2] - a[2])*u, a[3] + (b[3] - a[3])*u]; }
+  const k = keys[keys.length - 1]; return [k[1], k[2], k[3]];
+}
+function cpFlow(st){
+  const p = st.progress || 0, SH = 1.2, o = { pour:0, heap:0, sq:0, pb: CP.UP, force:0, sheet:null, push: 40, drop:null };
+  if (!st.active) return o;
+  if (p < .15){ o.pour = p/.15; o.heap = 6*ease(p/.15); if (p < .05) o.drop = 1 - p/.05; return o; }
+  o.heap = 6;
+  const shut = CP.LOW + SH;
+  if (p < .2) o.pb = CP.UP;
+  else if (p < .62) o.pb = CP.UP - (CP.UP - shut)*ease((p - .2)/.42);
+  else if (p < .68) o.pb = shut;
+  else if (p < .78) o.pb = shut + (CP.UP - shut)*ease((p - .68)/.1);
+  else o.pb = CP.UP;
+  if (p < .68){ o.heap = Math.min(6, o.pb - CP.LOW); o.sq = gtClamp((6 - o.heap)/(6 - SH)); o.force = o.sq*o.sq; if (p >= .62) o.force = 1; }
+  else { o.heap = SH; o.sq = 1; o.force = gtClamp(1 - (p - .68)/.05); }
+  if (p >= .78){ const t = (p - .78)/.22, n = st.output | 0, py = CP.piles[n % 2], pz = .7 + Math.floor(n/2)*1;
+    const at = cpPath([[0, CP.cx, CP.cy, CP.LOW], [.3, 63, CP.cy, CP.LOW], [.36, 66.5, CP.cy, CP.LOW - 1.5], [.52, W, CP.cy, 11.4], [.7, W + 7, CP.cy, 8.6], [1, 85, py, pz]], t);
+    if (t > .7){ const u = (t - .7)/.3; at[2] = 8.6 - (8.6 - pz)*u*u; }
+    o.sheet = { at, out: t > .7, tilt: t > .3 && t < .52 };
+    o.heap = 0;
+    if (t < .3) o.push = at[0] - 10; else if (t < .5) o.push = 40 + (63 - 10 - 40)*(1 - ease((t - .3)/.2)); }
+  return o;
+}
+
+/* ---------- small builders ---------- */
+// the charge on the lower platen: a heap of dust (a frustum) squeezed into a flat sheet
+function cpCharge(x, y, z, h, sq){
+  const b = 7 + 1*sq, t = 3 + 5*sq, col = mix(CP_DUST, CP_SHEET, sq), m = { l: col, m: mix(col, '#000000', .14), d: mix(col, '#000000', .38) };
+  const A = on(PZ(z), rectUV(x - b, y - b, x + b, y + b)), B = on(PZ(z + h), rectUV(x - t, y - t, x + t, y + t));
+  let s = loft(A, B, n => toneI(n, m)) + fill(pd(B), m.l) + ink(pd(B), .6) + hullInk([...A, ...B], 1);
+  if (sq < .5) for (const [dx, dy] of [[-2, 1], [1.5, -1.5], [0, 2]]) { const q = P(x + dx, y + dy, z + h + .1); s += `<circle cx="${f(q[0])}" cy="${f(q[1])}" r=".55" fill="${mix(CP_DUST, '#8a6f2c', .6)}"/>`; }
+  return s;
+}
+// a rubber sheet: 16 x 16, 1.2 thick
+const cpSheet = ([x, y, z], h = 1.2) => box(x - 8, y - 8, z, x + 8, y + 8, z + h, matOf(CP_SHEET), toneI, .7) + ink(pd(on(PZ(z + h + .05), rectUV(x - 6.5, y - 6.5, x + 6.5, y + 6.5))), .4);
+// a little mound of raw rubber dust (in the hopper)
+function cpMound(x, y, z, r, h){
+  const A = on(PZ(z), ellUV(x, y, r, r*.85, 12)), B = on(PZ(z + h), ellUV(x, y, r*.35, r*.3, 12)), m = matOf(CP_DUST);
+  return loft(A, B, n => toneI(n, m)) + fill(pd(B), m.l) + hullInk([...A, ...B], .8);
+}
+// a threaded vertical rod: ticks across the side that faces the viewer
+function cpScrew(x, y, z0, z1, r){
+  let s = rod([x, y, z0], [x, y, z1], r, GT.IRON, toneI, .9);
+  const v = norm([CAM_V[0], CAM_V[1], 0]), px = -v[1], py = v[0];
+  let d = ''; for (let z = z0 + 1.2; z < z1 - .6; z += 1.6) d += pd([[x + r*px, y + r*py, z - .5], [x - r*px, y - r*py, z + .5]], false);
+  return s + `<path d="${d}" fill="none" stroke="${INK}" stroke-width=".6" opacity=".8"/>`;
+}
+// a horizontal gear wheel: toothed rim, four spokes, hub
+function cpWheel(cx, cy, z0, z1, R, r, ang, M){
+  const ring = (z, rr) => on(PZ(z), ellUV(cx, cy, rr, rr, 40)), A = ring(z0, R), B = ring(z1, R), Ai = ring(z0, r), Bi = ring(z1, r), zm = (z0 + z1)/2;
+  let s = loft(Ai, Bi, n => toneI(n, M), true);
+  for (let i = 0; i < 4; i++){ const a = ang + i*Math.PI/2; s += rod([cx + 3*Math.cos(a), cy + 3*Math.sin(a), zm], [cx + (r + .5)*Math.cos(a), cy + (r + .5)*Math.sin(a), zm], 1.2, M, toneI, .7); }
+  s += cyl(cx, cy, z0, z1 + 1, 3.4, M, toneI, 1);
+  s += loft(A, B, n => toneI(n, M));
+  let tk = ''; for (let i = 0; i < 36; i++){ const a = ang + i*2*Math.PI/36, n = [Math.cos(a), Math.sin(a), 0];
+    if (facing(n)) tk += pd([[cx + R*n[0], cy + R*n[1], z0 + .4], [cx + R*n[0], cy + R*n[1], z1 - .2]], false); }
+  s += `<path d="${tk}" fill="none" stroke="${INK}" stroke-width=".7" opacity=".85"/>`;
+  s += `<path d="${pd(B)}${pd(Bi.slice().reverse())}" fill="${toneI([0,0,1], M)}" fill-rule="evenodd"/>` + ink(pd(B), 1) + ink(pd(Bi), .8);
+  return s + hullInk([...A, ...B], 1.6);
+}
+function cpPinion(x, y, z0, z1, r, ang, M){
+  let s = cyl(x, y, z0, z1, r, M, toneI, 1, 20);
+  let tk = ''; for (let i = 0; i < 14; i++){ const a = ang + i*2*Math.PI/14, n = [Math.cos(a), Math.sin(a), 0];
+    if (facing(n)) tk += pd([[x + r*n[0], y + r*n[1], z0 + .4], [x + r*n[0], y + r*n[1], z1 - .2]], false); }
+  const q = [x + (r - 1.5)*Math.cos(ang), y + (r - 1.5)*Math.sin(ang), z1 + .05];
+  return s + `<path d="${tk}" fill="none" stroke="${INK}" stroke-width=".6" opacity=".85"/>` + ink(pd([[x, y, z1 + .05], q], false), .9);
+}
+
+/* ---------- the press: platens, posts, screw, charge, pusher, chute (the window and the see-through share it) ---------- */
+function cpPressParts(st, flow, inWin){
+  const parts = [], put = (b, svg) => parts.push({ box: b, svg }), bx = (x0, y0, z0, x1, y1, z1, m, w = .8) => put([[x0, y0, z0], [x1, y1, z1]], box(x0, y0, z0, x1, y1, z1, m, toneI, w));
+  const [x0, y0, x1, y1] = CP.pl, pb = flow.pb, pt = pb + CP.TH, top = inWin ? CP.win[3] + 4 : ZT;
+  bx(x0, y0, Z0, x1, y1, CP.LOW, GT.IRON, 1);
+  bx(x0, y0, pb, x1, y1, pt, CP_PLATEN, 1.2);
+  for (const [px, py] of CP.posts){
+    put([[px - 1.4, py - 1.4, CP.LOW], [px + 1.4, py + 1.4, pb]], rod([px, py, CP.LOW], [px, py, pb], 1.4, GT.IRON, toneI, .7));
+    put([[px - 1.4, py - 1.4, pt], [px + 1.4, py + 1.4, top]], rod([px, py, pt], [px, py, top], 1.4, GT.IRON, toneI, .7)); }
+  put([[CP.cx - 2.2, CP.cy - 2.2, pt], [CP.cx + 2.2, CP.cy + 2.2, top]], cpScrew(CP.cx, CP.cy, pt, top, 2.2) + cyl(CP.cx, CP.cy, pt, pt + 1.5, 4, GT.IRON, toneI, .8));
+  if (flow.heap > 0) put([[CP.cx - 8, CP.cy - 8, CP.LOW], [CP.cx + 8, CP.cy + 8, CP.LOW + flow.heap]], cpCharge(CP.cx, CP.cy, CP.LOW, flow.heap, flow.sq));
+  if (flow.pour > 0 && flow.pour < 1){ const [nx, ny, nz] = CP.nozzle, pts = [[nx + .5, ny, nz - .5], [nx + 4, ny, nz - 1.5], [nx + 8, ny, nz - 4], [CP.cx - 1, ny, CP.LOW + flow.heap]];
+    put([[nx, ny - 1, CP.LOW], [CP.cx, ny + 1, nz]], `<path d="${pd(pts, false)}" fill="none" stroke="${INK}" stroke-width="2.6" stroke-linecap="round"/><path d="${pd(pts, false)}" fill="none" stroke="${CP_DUST}" stroke-width="1.6" stroke-linecap="round" stroke-dasharray="1.2 1"/>`); }
+  // the feed tube's nozzle (behind the platens) and the pusher
+  { const [nx, ny, nz] = CP.nozzle; put([[nx - 4, ny - 2, nz - 2], [nx, ny + 2, nz + 4]], rod([nx - 6, ny, nz + 4], [nx, ny, nz], 1.8, GT.IRON, toneI, .8)); }
+  if (flow.push > x0 - 6 + .2) bx(x0 - 6, CP.cy - 3, CP.LOW, flow.push, CP.cy + 3, CP.LOW + 2, GT.BRZD, .8);
+  // the chute from the lower platen's front edge down to the slot
+  { const [ya, yb] = CP.sy, sm = GT.IRON, z1 = 12;
+    const lip = y => shape([[x1, y, CP.LOW], [W, y, z1 - 1], [W, y, z1 + 2], [x1, y, CP.LOW + 3]], toneI([0, y > CP.cy ? 1 : -1, 0], sm), .7);
+    put([[x1, ya - .5, z1 - 1], [W, ya + .5, CP.LOW + 3]], lip(ya));
+    put([[x1, ya + .5, z1 - 2], [W, yb - .5, CP.LOW]], shape([[x1, ya, CP.LOW], [W, ya, z1 - 1], [W, yb, z1 - 1], [x1, yb, CP.LOW]], toneI(norm([14, 0, 4]), sm), .9));
+    put([[x1, yb - .5, z1 - 1], [W, yb + .5, CP.LOW + 3]], lip(yb)); }
+  const sh = flow.sheet;
+  if (sh && !sh.out && sh.at[0] < W){ const [x, y, z] = sh.at;
+    put([[x - 8, y - 8, z], [x + 8, y + 8, z + 1.2]], sh.tilt ? `<g>${shape([[x - 8, y - 8, z + 2], [x + 8, y - 8, z - 2], [x + 8, y + 8, z - 2], [x - 8, y + 8, z + 2]], CP_SHEET, .8)}</g>` : cpSheet(sh.at)); }
+  return parts;
+}
+
+/* ---------- the case ---------- */
+function cpCase(st, m, flow){
+  const FRONT = facing([1,0,0]), BACK = facing([-1,0,0]), LEFT = facing([0,1,0]), RIGHT = facing([0,-1,0]);
+  let s = '';
+  if (FRONT) s += fill(pd(on(PX(W), OUT)), tone([1,0,0], m));
+  if (BACK) s += fill(pd(on(PX(0), OUT)), tone([-1,0,0], m));
+  s += extrude(OUT, 0, W, m);
+  if (FRONT){ const dk = mix(m.d, m.m, .35), rv = [];
+    s += ink(pd(on(PX(W + .25), rrUV(3.5, Z0 + 3.5, D - 3.5, ZT - 3.5, 3))), 1);
+    for (let y = 7; y <= D - 7; y += 7) rv.push([y, Z0 + 1.8], [y, ZT - 1.8]);
+    s += gtRivets(PX(W + .3), rv, dk);
+    s += gtNamePlate(W, 14, 61.5, 54, 73, 'COMPRESSOR', 'STEAM AGE', 4.6);
+    s += shape(on(PX(W + .25), rrUV(...CP.slot, 1.5)), GT.RECESS, 1.7);
+    s += cpWindow(st, m, flow);
+  }
+  if (BACK) s += shape(on(PX(-.25), rrUV(18, 18, 62, 58, 3)), mix(m.m, m.d, .25), 1.4) + gtRivets(PX(-.3), [[21, 21], [59, 21], [21, 55], [59, 55]], m.d);
+  if (LEFT){ const rv = []; for (let x = 7; x <= W - 7; x += 7) rv.push([x, Z0 + 1.8], [x, ZT - 1.8]);
+    s += gtRivets(PY(D + .3), rv, mix(m.d, m.m, .35)) + shape(on(PY(D + .25), ellUV(CP.riserX, 34, 5.2, 5.2, 18)), mix(m.d, m.m, .2), .9); }
+  if (RIGHT){ let v = ''; for (let z = 30; z <= 60; z += 5) v += pd([[14, -.25, z], [56, -.25, z]], false);
+    s += `<path d="${v}" fill="none" stroke="${INK}" stroke-width="1.5" opacity=".75"/>`; }
+  if (FRONT) s += ink(pd(on(PX(W), OUT)), 2.2);
+  if (BACK) s += ink(pd(on(PX(0), OUT)), 2.2);
+  return s + hullInk([...on(PX(0), OUT), ...on(PX(W), OUT)], 2.8);
+}
+// the window: a riveted frame round a glass pane, the press behind it
+function cpWindow(st, m, flow){
+  const [y0, z0, y1, z1] = CP.win, glass = on(PX(W + .3), rectUV(y0, z0, y1, z1));
+  let s = shape(on(PX(W + .15), rrUV(y0 - 2.5, z0 - 2.5, y1 + 2.5, z1 + 2.5, 2)), mix(m.d, m.m, .45), 1.3);
+  let inner = fill(pd(glass), '#2f2925') + byDepth(cpPressParts(st, flow, true));
+  inner += fill(pd(glass), '#cfe9f0', 'opacity=".12"');
+  inner += `<path d="${pd([[W + .4, y0 + 8, z1 - 3], [W + .4, y0 + 3, z1 - 9]], false)}${pd([[W + .4, y0 + 14, z1 - 3], [W + .4, y0 + 5, z1 - 13]], false)}" fill="none" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round" opacity=".45"/>`;
+  s += clipTo(glass, inner) + ink(pd(glass), 1.6);
+  const rv = []; for (let y = y0; y <= y1 + .1; y += 10) rv.push([y, z0 - 1.3], [y, z1 + 1.3]); for (let z = z0 + 9.5; z < z1; z += 9.5) rv.push([y0 - 1.3, z], [y1 + 1.3, z]);
+  return s + gtRivets(PX(W + .35), rv, mix(m.d, m.m, .2));
+}
+function cpSpout(st, flow){
+  const [x1, z1] = CP.spout, z0 = 11, [y0, y1] = CP.sy, sm = GT.BRZD;
+  const lip = y => shape([[W, y, z0], [x1, y, z1], [x1, y, z1 + 3], [W, y, z0 + 5]], tone([0, y > CP.cy ? 1 : -1, 0], sm), 1);
+  let plate = shape([[W, y0, z0], [x1, y0, z1], [x1, y1, z1], [W, y1, z0]], tone(norm([3, 0, 8]), sm), 1);
+  if (facing([1,0,0])) plate += shape([[x1, y0, z1], [x1, y1, z1], [x1, y1, z1 - 1], [x1, y0, z1 - 1]], sm.d, .9);
+  const sh = flow.sheet; if (sh && !sh.out && sh.at[0] >= W) plate += cpSheet(sh.at, .9);
+  return byDepth([
+    { box:[[W, y0 - .5, z1], [x1, y0 + .5, z0 + 5]], svg: lip(y0) },
+    { box:[[W, y0 + .5, z1 - 1], [x1, y1 - .5, z0 + 1]], svg: plate },
+    { box:[[W, y1 - .5, z1], [x1, y1 + .5, z0 + 5]], svg: lip(y1) } ]);
+}
+function cpTray(st, flow){
+  const [x0, y0, x1, y1] = CP.tray, A = on(PZ(0), rectUV(x0, y0, x1, y1)), B = on(PZ(CP.trayH), rectUV(x0, y0, x1, y1)), pl = [];
+  let inner = fill(pd(on(PZ(.6), rectUV(x0 + .6, y0 + .6, x1 - .6, y1 - .6))), GT.IRON.d);
+  for (let i = 0; i < Math.min(12, st.output | 0); i++){ const py = CP.piles[i % 2], z = .7 + Math.floor(i/2)*1, dx = ((i*5) % 3 - 1)*.7;
+    pl.push({ box:[[77 + dx, py - 8, z], [93 + dx, py + 8, z + .9]], svg: cpSheet([85 + dx, py, z], .9) }); }
+  const sh = flow.sheet; if (sh && sh.out) pl.push({ box:[[sh.at[0] - 8, sh.at[1] - 8, sh.at[2]], [sh.at[0] + 8, sh.at[1] + 8, sh.at[2] + .9]], svg: cpSheet(sh.at, .9) });
+  inner += byDepth(pl);
+  return openShell(A, B, n => toneI(n, GT.IRON), inner) + ink(pd(B), 1.4) + hullInk([...A, ...B], 1.8);
+}
+function cpFeet(){
+  return [[4, 4], [58, 4], [4, 68], [58, 68]].map(([x, y]) => ({ box:[[x, y, 0], [x + 8, y + 8, Z0]], svg: box(x, y, 0, x + 8, y + 8, Z0, DARK, toneI, 1) }));
+}
+
+/* ---------- the roof: crown frame, gear wheel and screw top, steam motor and pinion, exhaust, stack ---------- */
+function cpRoof(st, flow, fade){
+  const parts = [], put = (b, svg) => parts.push({ box: b, svg }), M = GT.BRZD, [cx0, cy0, cz0, cx1, cy1, cz1] = CP.crown, w = CP.wheel;
+  for (const [x0, y0, x1, y1] of CP.cols) put([[x0, y0, ZT], [x1, y1, cz0]], fade(box(x0, y0, ZT, x1, y1, cz0, M, toneI, 1.2)));
+  put([[cx0, cy0, cz0], [cx1, cy1, cz1]], fade(box(cx0, cy0, cz0, cx1, cy1, cz1, M, toneI, 1.3)
+    + (facing([1,0,0]) ? gtRivets(PX(cx1 + .1), [[cy0 + 3, cz0 + 3], [cy1 - 3, cz0 + 3]], M.d) : '')));
+  // the screw between the roof and the crown, with its gland on the roof
+  put([[CP.cx - 4, CP.cy - 4, ZT], [CP.cx + 4, CP.cy + 4, cz0]], cyl(CP.cx, CP.cy, ZT, ZT + 2, 4, M, toneI, .9) + cpScrew(CP.cx, CP.cy, ZT + 2, cz0, 2.2));
+  // the wheel: it turns as the screw travels (the hub is the nut)
+  const ang = (CP.UP - flow.pb)*.45, top = flow.pb + CP.screwK;
+  let wh = cpWheel(CP.cx, CP.cy, w.z0, w.z1, w.R, w.r, ang, GT_BRZ);
+  if (top > w.z1 + 1.6) wh += cpScrew(CP.cx, CP.cy, w.z1 + 1.5, top, 2.2) + fill(pd(on(PZ(top + .05), ellUV(CP.cx, CP.cy, 2.2, 2.2, 12))), GT.IRON.l) + ink(pd(on(PZ(top + .05), ellUV(CP.cx, CP.cy, 2.2, 2.2, 12))), .7);
+  put([[CP.cx - w.R, CP.cy - w.R, cz1], [CP.cx + w.R, CP.cy + w.R, Math.max(w.z1 + 1.5, top)]], wh);
+  // the steam motor, its pinion meshing the wheel, its exhaust into the stack
+  const mo = CP.mot, pi = CP.pin;
+  put([[mo.x - mo.r - 1, mo.y - mo.r, ZT], [mo.x + mo.r + 1, mo.y + mo.r, w.z0]], fade(cyl(mo.x, mo.y, ZT, ZT + 2, mo.r + 1.2, M, toneI, 1) + cyl(mo.x, mo.y, ZT + 2, mo.z1, mo.r, GT_BRZ, toneI, 1.2)
+    + cyl(mo.x, mo.y, mo.z1 - 3, mo.z1, mo.r + 1, M, toneI, 1) + rod([mo.x, mo.y, mo.z1], [mo.x, mo.y, w.z0], 1.2, GT.IRON, toneI, .7)));
+  put([[pi.x - pi.r, pi.y - pi.r, w.z0], [pi.x + pi.r, pi.y + pi.r, w.z1]], cpPinion(pi.x, pi.y, w.z0, w.z1, pi.r, -ang*w.R/pi.r, GT.IRON));
+  const [sx, sy] = CP.stk;
+  put([[sx - 2, mo.y + mo.r, ZT + 2], [sx + 2, sy - 6.5, ZT + 6]], fade(rod([sx, mo.y + mo.r - .5, ZT + 4], [sx, sy - 3.5, ZT + 4], 1.6, M, toneI, .8)));
+  const stack = gtStack(sx, sy, ZT);
+  put(stack.box, fade(stack.svg));
+  return parts;
+}
+
+/* ---------- see-through: the press, the feed tube, the steam pipe ---------- */
+let CP_LABELS = '';
+function cpMech(st, k, flow){
+  const parts = cpPressParts(st, flow, false), put = (b, svg) => parts.push({ box: b, svg });
+  const pm = matOf(st.valve > .5 ? '#d9d2c2' : GT.BRZD.m), mo = CP.mot;
+  // steam: from the wall flange in, along under the roof, up into the motor
+  put([[CP.riserX - 1.8, 60, 32], [CP.riserX + 1.8, D, 36]], rod([CP.riserX, D, 34], [CP.riserX, 60, 34], 1.8, pm, toneI, .7));
+  put([[CP.riserX - 1.8, 58.2, 34], [CP.riserX + 1.8, 61.8, 70]], rod([CP.riserX, 60, 34], [CP.riserX, 60, 70], 1.8, pm, toneI, .7));
+  put([[mo.x - 1.8, mo.y, 68], [mo.x + 1.8, 60, 72]], rod([CP.riserX, 60, 70], [mo.x, mo.y, 70], 1.8, pm, toneI, .7));
+  put([[mo.x - 1.8, mo.y - 1.8, 70], [mo.x + 1.8, mo.y + 1.8, ZT]], rod([mo.x, mo.y, 70], [mo.x, mo.y, ZT], 1.8, pm, toneI, .7));
+  // the feed tube from under the hopper down to the nozzle, with dust in it while it pours
+  { const [nx, ny, nz] = CP.nozzle, a = [17, 19, ZT], b = [nx - 6, ny, nz + 4];
+    let tube = rod(a, b, 2.4, GT.IRON, toneI, .8);
+    if (flow.drop != null){ const u = 1 - flow.drop, q = [a[0] + (b[0] - a[0])*u, a[1] + (b[1] - a[1])*u, a[2] + (b[2] - a[2])*u]; tube += cpMound(q[0], q[1], q[2] - 1.5, 2.4, 2.4); }
+    put([[a[0] - 2.4, a[1] - 2.4, b[2] - 2.4], [b[0] + 2.4, b[1] + 2.4, a[2]]], tube); }
+  const sb = byDepth(parts), run = !!st.running, moving = run && flow.pb < CP.UP - .1;
+  CP_LABELS = k <= .6 ? '' : xrCallouts([
+    { at: [CP.riserX, D - 3, 34], text: 'STEAM PIPE', on: st.valve > .5 },
+    { at: [CP.cx, CP.cy - 2.2, 66], text: 'SCREW', on: moving },
+    { at: [CP.pl[2], CP.pl[1], flow.pb + CP.TH], text: 'UPPER PLATEN', on: moving },
+    { at: [CP.pl[2], CP.pl[1], CP.LOW - 3], text: 'LOWER PLATEN', on: flow.heap > 0 },
+    { at: [CP.posts[1][0], CP.posts[1][1], 50], text: 'GUIDE POSTS', on: moving },
+    { at: [30, 23, 56], text: 'FEED TUBE', on: flow.pour > 0 && flow.pour < 1 },
+    { at: [CP.pl[0] - 3, CP.cy - 3, CP.LOW + 2], text: 'PUSHER', on: flow.push > CP.pl[0] - 5.8 },
+    { at: [68, CP.sy[0], 18], text: 'CHUTE', on: !!flow.sheet && !flow.sheet.out && flow.sheet.at[0] > 64 } ], [0, 96, 0, 100, 0, CP_TOP]);
+  return sb;
+}
+
+/* ---------- scene ---------- */
+function scene(st, m){
+  const flow = cpFlow(st), k = ease(st.xr || 0), w = CP.wheel;
+  const fade = svg => k > 0 ? `<g opacity="${f(1 - .7*k)}">${svg}</g>` : svg;
+  let s = castShadow([...on(PX(0), OUT), ...on(PX(W), OUT), ...on(PZ(ZT + CP.hopH), rectUV(...CP.hopTop)), ...on(PZ(w.z1), ellUV(CP.cx, CP.cy, w.R, w.R, 16)),
+    [CP.stk[0], CP.stk[1], ZT + 26.5], [CP.riserX, D + 10, 34]]);
+  let body = cpCase(st, m, flow);
+  if (k > 0) body = xrGhost(body, '', k, OUT, 0, W, m) + `<g opacity="${f(k)}">${cpMech(st, k, flow)}</g>`;
+  const rest = [[13, 15.5, ZT + .4], [21, 15.5, ZT + .4], [13, 22.5, ZT + .4], [21, 22.5, ZT + .4], [17, 19, ZT + 1.8]].slice(0, Math.min(5, st.input | 0))
+    .map(([x, y, z]) => ({ box:[[x - 3.5, y - 3, z], [x + 3.5, y + 3, z + 2.6]], svg: cpMound(x, y, z, 3.5, 2.6) }));
+  const riser = gtRiser(CP.riserX, D, 34, st.valve), [gy, gz, gr] = CP.gauge;
+  s += byDepth(cpFeet());
+  s += byDepth([
+    { box:[[0, 0, Z0], [W, D, ZT]], svg: body },
+    { box:[[CP.hopTop[0], CP.hopTop[1], ZT], [CP.hopTop[2], CP.hopTop[3], ZT + CP.hopH]], svg: act('hopper', fade(gtHopper(ZT, CP.hopBot, CP.hopTop, CP.hopH, m, rest, flow.drop != null))) },
+    ...cpRoof(st, flow, fade),
+    { box:[[W, gy - gr, gz - gr], [W + 3, gy + gr, gz + gr]], svg: gtGauge(W, gy, gz, gr, gtClamp(.12 + .3*(st.steam || 0) + .55*flow.force)) },
+    { box:[[W, CP.lamp[0] - 2.4, CP.lamp[1] - 2.4], [W + 2, CP.lamp[0] + 2.4, CP.lamp[1] + 2.4]], svg: gtLamp(W, CP.lamp[0], CP.lamp[1], st) },
+    { box:[[W, CP.sy[0] - .5, 7], [CP.spout[0], CP.sy[1] + .5, 16]], svg: cpSpout(st, flow) },
+    { box:[[CP.tray[0], CP.tray[1], 0], [CP.tray[2], CP.tray[3], CP.trayH]], svg: cpTray(st, flow) },
+    { box: riser.box, svg: fade(riser.svg) } ]);
+  s += gtPuffsSvg(st);
+  const moving = !!st.running && flow.pb < CP.UP - .1;
+  if (k > .6) s += CP_LABELS;
+  else s += xrCallouts([
+    { at: [17, CP.hopTop[1], ZT + CP.hopH], text: 'HOPPER', on: flow.drop != null },
+    { at: [CP.cx, CP.cy - w.R, w.z1], text: 'GEAR WHEEL', on: moving },
+    { at: [CP.mot.x, CP.mot.y + CP.mot.r, 92], text: 'STEAM MOTOR', on: moving },
+    { at: [CP.cx, CP.cy, flow.pb + CP.screwK], text: 'SCREW', on: moving },
+    { at: [CP.stk[0], CP.stk[1], ZT + 26.5], text: 'VENT STACK', on: !!st.running },
+    ...(facing([0,1,0]) ? [{ at: [CP.riserX, D + 18, 26], text: 'STEAM VALVE', on: st.valve > .5 }] : []),
+    ...(facing([1,0,0]) ? [{ at: [W + .3, CP.win[0] + 2, CP.win[1] + 10], text: 'PLATENS', on: flow.force > 0 }, { at: [W + 3, gy, gz + gr], text: 'PRESS GAUGE', on: flow.force > .05 }] : []),
+    { at: [CP.tray[2], (CP.tray[1] + CP.tray[3])/2, CP.trayH], text: 'OUTPUT TRAY', on: (st.output || 0) > 0 } ], [0, 96, 0, 100, 0, CP_TOP]);
+  return s;
+}
+
+gtMachine({
+  fig:'S6', title:'Steam Compressor', size:[96, 100, 122], center:[48, 50], scene,
+  recipes:[{ id:'compress_rubber', name:'Rubber Sheet' }],
+  demoSeconds: 6, loadLabel:'Load rubber', inLabel:'Raw rubber', outLabel:'Sheets',
+  emitters:[{ id:'vent', at: () => [CP.stk[0], CP.stk[1], ZT + 27], when: st => !!st.running }],
+  tile:[[-3, -1, 0], [99, -1, 0], [99, 101, 0], [-3, 101, 0]],
+});
+</script>
+<script src="cf-tail.js"></script>
+</body></html>

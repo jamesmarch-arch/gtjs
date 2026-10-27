@@ -61,7 +61,7 @@ export const gatherable = ['cobblestone', 'coal', 'iron_ore', 'copper_ore', 'tin
 export const machines: MachineDef[] = [
   // the way in, before steam: a cobblestone furnace that burns coal, as in GTNH's first hour
   { id: 'stone_furnace', name: 'Furnace', short: 'FURNACE', kind: 'furnace', power: 'none', footprint: [1, 1], fuel: { coal: 1600, coke: 3200 }, figure: 'stone_furnace' },
-  { id: 'coke_oven', name: 'Coke Oven', short: 'COKE OVEN', kind: 'coke_oven', power: 'none', footprint: [3, 3] },
+  { id: 'coke_oven', name: 'Coke Oven', short: 'COKE OVEN', kind: 'coke_oven', power: 'none', footprint: [3, 3], figure: 'coke_oven' },
   {
     id: 'bronze_boiler', name: 'Small Coal Boiler', short: 'BOILER', kind: 'boiler', power: 'steam', footprint: [1, 1], steamCapacity: 16000, figure: 'bronze_boiler',
     boiler: { steamPerTick: 6, fuels: { coal: 1600, coke: 3200 } }, // 9600 L of steam per coal
@@ -69,9 +69,9 @@ export const machines: MachineDef[] = [
   { id: 'steam_macerator', name: 'Steam Macerator', short: 'MACERATOR', kind: 'macerator', power: 'steam', footprint: [1, 1], steamCapacity: 8000, figure: 'steam_macerator' },
   { id: 'steam_furnace', name: 'Steam Furnace', short: 'FURNACE', kind: 'furnace', power: 'steam', footprint: [1, 1], steamCapacity: 8000, figure: 'steam_furnace' },
   { id: 'steam_alloy_smelter', name: 'Steam Alloy Smelter', short: 'ALLOY', kind: 'alloy_smelter', power: 'steam', footprint: [1, 1], steamCapacity: 8000, figure: 'steam_alloy_smelter' },
-  { id: 'steam_forge_hammer', name: 'Steam Forge Hammer', short: 'HAMMER', kind: 'forge_hammer', power: 'steam', footprint: [1, 1], steamCapacity: 8000 },
-  { id: 'steam_compressor', name: 'Steam Compressor', short: 'COMPRESSOR', kind: 'compressor', power: 'steam', footprint: [1, 1], steamCapacity: 8000 },
-  { id: 'steam_extractor', name: 'Steam Extractor', short: 'EXTRACTOR', kind: 'extractor', power: 'steam', footprint: [1, 1], steamCapacity: 8000 },
+  { id: 'steam_forge_hammer', name: 'Steam Forge Hammer', short: 'HAMMER', kind: 'forge_hammer', power: 'steam', footprint: [1, 1], steamCapacity: 8000, figure: 'steam_forge_hammer' },
+  { id: 'steam_compressor', name: 'Steam Compressor', short: 'COMPRESSOR', kind: 'compressor', power: 'steam', footprint: [1, 1], steamCapacity: 8000, figure: 'steam_compressor' },
+  { id: 'steam_extractor', name: 'Steam Extractor', short: 'EXTRACTOR', kind: 'extractor', power: 'steam', footprint: [1, 1], steamCapacity: 8000, figure: 'steam_extractor' },
 ];
 
 export const conduits: ConduitDef[] = [

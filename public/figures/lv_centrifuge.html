@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LV Centrifuge</title>
+<script src="cf-head.js"></script></head><body>
+<script src="core.js"></script>
+<script src="gt-bridge.js"></script>
+<script src="gt-parts.js"></script>
+<script src="gt-lv.js"></script>
+<script>
+/* LV Centrifuge (gtjs, LV): a dust spun so fast that it sorts itself by weight.
+
+   How it works (truth first)
+   1. The impure dust (or bauxite) is loaded into four sample tubes that hang from the arms of a rotor, their open
+      ends toward the hub.
+   2. A motor at the back spins the rotor very fast on a shaft. In the spin every grain is pushed outward many times
+      harder than by gravity: the dense grains pack into the outer ends of the tubes, the light ones stay nearer the
+      hub, so the dust separates into bands.
+   3. The rotor coasts to a stop, the outer band (the clean dust) and the inner band (the byproduct, or stone) are
+      tipped out, and the dust goes down a chute to the output slot and the tray.
+   4. A rotor at this speed is dangerous: it turns inside a thick guard bowl, behind a window with a hazard ring, and
+      the amber beacon on the roof turns while it spins.
+   Where the dust is: window door -> tubes -> guard bowl floor -> chute -> slot -> tray.
+   Where the power is: cable -> socket -> control board -> motor -> shaft -> rotor; board -> beacon.
+
+   Parts
+   OUTSIDE  the LV case (see gt-lv.js) . round window: yellow and black hazard ring, dark bezel, glass, the rotor and
+            its four tubes behind it (a blur while it spins) . rev counter (high y, top) . warning sign (high y, bottom)
+            . amber beacon on the front left of the roof
+   INSIDE   motor on a cradle . shaft . rotor hub, four arms, four sample tubes with banded dust . guard bowl . chute
+
+   Contact checks (numbers)
+   - hazard ring r 19 at (y 40, z 37.5): y 21..59, z 18.5..56.5; bezel r 14.5, glass r 12.5. The rev counter
+     (r 4.4 at y 66, z 50) and the sign (y 62..70, z 20..28) are clear of the ring (y <= 59) inside the recess (y 8..72).
+   - rotor at x 58: tubes from r 4 to r 11.5 (+ 2 radius) -> 13.5 < the bowl's r 15; bowl x 48..68 on the axis.
+   - the window glass (r 12.5) shows the rotor; the tubes' rounded ends (to r 13.5) pass under the bezel (r 14.5).
+   - motor r 7 x 10..24 on a pedestal x 13..21, z 6..31; shaft r 1.2 x 24..58 through the bowl's back (x 48).
+   - beacon r 4.5 at (x 58, y 64) on the roof (z 84), dome to z 95.5: in front of the roof's vent grille (x 6..26).
+   - chute from the bowl's floor (x 62, z 22.5) to the output slot (x 74, z 10.5).
+*/
+const CZ = { y: 40, z: 37.5, H0: 14.5, H1: 19, G: 12.5, br: 15, bx0: 48, bx1: 68, rx: 58 };
+const CZ_YEL = { l:'#ffd84a', m:'#f4b829', d:'#8a6410' };
+const CZ_BEZ = { l:'#5d666e', m:'#394047', d:'#1d2125' };
+const CZ_BEACON = { x: 58, y: 64, r: 4.5 };
+const czRid = st => (st.recipe && st.recipe.id) || 'centrifuge_impure_iron';
+// colours: what goes in, the clean dust, and the byproduct
+function czCols(st){
+  const id = czRid(st);
+  if (/bauxite/.test(id)) return { inn: '#b8613a', out: '#e3e7ea', by: LV_COL.stone };
+  const m = lvMetal(st), BY = { iron: LV_COL.nickel, copper: LV_COL.gold, tin: LV_COL.iron };
+  return { inn: mix(GT.ORE[m] || GT.ORE.iron, '#8a7a6a', .25), out: LV_COL[m], by: BY[m] || LV_COL.stone };
+}
+// a little heap of dust, for the one sliding down the chute
+function czDust([x, y, z], col){ const mm = matOf(col), a = on(PZ(z), ellUV(x, y, 3.2, 3.2, 14)), b = on(PZ(z + 2.2), ellUV(x, y, .8, .8, 14));
+  return loft(a, b, n => toneI(n, mm)) + fill(pd(b), mm.l) + hullInk([...a, ...b], .7); }
+const czProduct = st => ({ kind: 'dust', col: czCols(st).out });
+const czAng = st => (st.t || 0)*14;
+// how far the bands have parted, 0..1 (and how full the tubes are)
+const czSep = st => st.active ? gtClamp((st.progress || 0)/.75) : 0;
+const czFull = st => st.active || (st.input | 0) > 0;
+
+// a tube on the face, pointing out from the hub at angle b: glass, then its two bands of dust
+function czTubeUV(st, b, cy, cz){
+  const pt = (r, w) => [cy + r*Math.cos(b) - w*Math.sin(b), cz + r*Math.sin(b) + w*Math.cos(b)];
+  const outline = (r0, r1, w) => { const o = [pt(r0, -w), pt(r1 - w, -w)];
+    for (let i = 1; i < 8; i++){ const t = -Math.PI/2 + Math.PI*i/8; o.push(pt(r1 - w + w*Math.cos(t), w*Math.sin(t))); }
+    return [...o, pt(r1 - w, w), pt(r0, w)]; };
+  let s = shape(lvOn(outline(3.8, 11.8, 1.8), 2.8), '#e4f2f4', .7);
+  if (czFull(st)){ const c = czCols(st), k = czSep(st), rs = 7.6;
+    s += fill(pd(lvOn(outline(5, 11.3, 1.1), 2.85)), mix(c.inn, c.out, k))
+      + (k > .05 ? fill(pd(lvOn([pt(5, -1.1), pt(rs, -1.1), pt(rs, 1.1), pt(5, 1.1)], 2.9)), mix(c.inn, c.by, k)) : ''); }
+  return s;
+}
+
+// the rev counter and the warning sign beside the window
+function czFace(st){
+  const X = LV.W + 1.6, gy = 66, gz = 50, R = 4.4;
+  let s = cylX(LV.W, X, gy, gz, R, matOf('#dfe4e7'), toneI, .9, 20);
+  if (!facing([1,0,0])) return s;
+  const at = (a, r) => [X + .05, gy - r*Math.sin(a), gz + r*Math.cos(a)];
+  s += shape(on(PX(X + .03), ellUV(gy, gz, R - 1, R - 1, 20)), '#fbf7ea', .6);
+  s += `<path d="${pd([at(1.2, 2.6), at(1.9, 2.6), at(2.1, 2.6)], false)}" fill="none" stroke="#e2483d" stroke-width="1.1"/>`;
+  const a = (-120 + 240*(st.running ? .82 + .03*Math.sin((st.t || 0)*9) : 0))*Math.PI/180;
+  s += ink(pd([at(a + Math.PI, .6), at(a, 2.9)], false), 1) + fill(pd(on(PX(X + .1), ellUV(gy, gz, .6, .6, 8))), INK);
+  s += tx(LV.W + .5, gy, gz - 7.4, 'RPM', 2.6, INK, 800);
+  // the warning sign: a yellow triangle with a bang
+  const tri = [[62, 20.5], [70, 20.5], [66, 28]];
+  s += shape(lvOn(tri, .5), CZ_YEL.m, 1) + tx(LV.W + .6, 66, 21.6, '!', 5.4, INK, 900);
+  return s;
+}
+
+// the window: the hazard ring and the bezel standing off the face, the rotor behind the glass
+function czWindow(st){
+  const { y, z, H0, H1, G } = CZ, X0 = LV.W, X1 = LV.W + 1.2, X2 = LV.W + 2.6, a = czAng(st), on2 = (uv, l) => on(PX(X2 + l), uv);
+  let s = cylX(X0, X1, y, z, H1, CZ_YEL, toneI, 1.5, 40);
+  if (facing([1,0,0])){ let d = '';   // black stripes, slanted like hazard tape
+    for (let i = 0; i < 16; i += 2){ const a0 = i*Math.PI/8, a1 = a0 + Math.PI/8, sk = .22, p = [];
+      for (let j = 0; j <= 3; j++){ const t = a0 + (a1 - a0)*j/3; p.push([y + H1*Math.cos(t + sk), z + H1*Math.sin(t + sk)]); }
+      for (let j = 3; j >= 0; j--){ const t = a0 + (a1 - a0)*j/3; p.push([y + H0*Math.cos(t), z + H0*Math.sin(t)]); }
+      d += pd(on(PX(X1 + .05), p)); }
+    s += fill(d, INK) + ink(pd(on(PX(X1 + .06), ellUV(y, z, H1 - .1, H1 - .1, 40))), 1); }
+  s += cylX(X1, X2, y, z, H0, CZ_BEZ, toneI, 1.2, 36);
+  if (!facing([1,0,0])) return s;
+  let c = fill(pd(on2(ellUV(y, z, G + 1, G + 1, 32), .1)), '#262b30');
+  // the guard bowl's ribs, still; the rotor turning: a blur and ghost tubes while it spins fast
+  for (let i = 0; i < 12; i++){ const b = i*Math.PI/6; c += ink(pd(on2([[y + 11*Math.cos(b), z + 11*Math.sin(b)], [y + 13*Math.cos(b), z + 13*Math.sin(b)]], .12), false), .5); }
+  if (st.running){ c += `<path d="${pd(on2(ellUV(y, z, 8, 8, 32), .13))}" fill="none" stroke="#c9d6dc" stroke-width="7.5" opacity=".28"/>`;
+    for (const g of [.32, .18]) c += `<g opacity="${g === .32 ? .22 : .4}">` + [0, 1, 2, 3].map(i => czTubeUV(st, a - g + i*Math.PI/2, y, z)).join('') + `</g>`; }
+  const arm = '#8f979c';
+  for (let i = 0; i < 4; i++){ const b = a + i*Math.PI/2, w = .8, cb = Math.cos(b), sb = Math.sin(b);
+    c += shape(on2([[y - w*sb, z + w*cb], [y + 4.5*cb - w*sb, z + 4.5*sb + w*cb], [y + 4.5*cb + w*sb, z + 4.5*sb - w*cb], [y + w*sb, z - w*cb]], .13), arm, .5); }
+  c += [0, 1, 2, 3].map(i => czTubeUV(st, a + i*Math.PI/2, y, z)).join('');
+  c += shape(on2(ellUV(y, z, 2.6, 2.6, 14), .2), arm, .7) + fill(pd(on2(ellUV(y, z, 1, 1, 8), .22)), INK);
+  c += fill(pd(on2([[y + 4, z + 9], [y + 8, z + 5.5], [y + 7, z + 4.5], [y + 3, z + 8]], .3)), '#ffffff', 'opacity=".3"');
+  return s + clipTo(on2(ellUV(y, z, G, G, 32), .1), c) + ink(pd(on2(ellUV(y, z, G, G, 32), .35)), 1.3);
+}
+
+/* ---------- the beacon on the roof: an amber dome that turns its light while the rotor spins ---------- */
+function czBeacon(st){
+  const { x, y, r } = CZ_BEACON, z0 = LV.ZT, zb = z0 + 3.5, run = !!st.running, a = (st.t || 0)*6;
+  let s = cyl(x, y, z0, zb, r + 1, CZ_BEZ, toneI, 1, 20);
+  const AMB = run ? { l:'#ffe58a', m:'#ffc93d', d:'#c98a10' } : { l:'#f6c75a', m:'#e0a020', d:'#8a5a0a' };
+  const rings = [0, 20, 40, 60, 75, 90].map(d => { const t = d*Math.PI/180, rr = Math.max(.01, r*Math.cos(t)); return on(PZ(zb + 3 + r*Math.sin(t)), ellUV(x, y, rr, rr, 20)); });
+  const base = on(PZ(zb), ellUV(x, y, r, r, 20));
+  s += loft(base, rings[0], n => toneI(n, AMB));
+  for (let i = 0; i < rings.length - 1; i++) s += loft(rings[i], rings[i + 1], n => toneI(n, AMB));
+  s += hullInk([...base, ...rings[0], ...rings[2], ...rings[4]], 1.1);
+  if (run){ const p = [x + r*.75*Math.cos(a), y + r*.75*Math.sin(a), zb + 3.5];
+    if (depthOf([Math.cos(a), Math.sin(a), 0]) > 0){ const [X, Y] = P(...p); s += `<circle cx="${f(X)}" cy="${f(Y)}" r="3.4" fill="#fffbe0" opacity=".9"/>`; }
+    const [X, Y] = P(x, y, zb + 4); s += `<circle cx="${f(X)}" cy="${f(Y)}" r="${f(9 + 2*Math.sin(a*2))}" fill="#ffd84a" opacity=".22"/>`; }
+  return s;
+}
+
+function czParts(st, k, fade){
+  const { x, y, r } = CZ_BEACON;
+  return [{ box:[[LV.W, CZ.y - CZ.H1, CZ.z - CZ.H1], [LV.W + 2.8, CZ.y + CZ.H1, CZ.z + CZ.H1]], svg: fade(czWindow(st)) },
+    { box:[[x - r - 1, y - r - 1, LV.ZT], [x + r + 1, y + r + 1, LV.ZT + 12]], svg: fade(czBeacon(st)) }];
+}
+
+/* ---------- see-through: motor, shaft, rotor and tubes, guard bowl ---------- */
+function czInside(st, k){
+  const out = [], put = (b, svg) => out.push({ box: b, svg }), run = !!st.running, a = czAng(st), { y, z, br, bx0, bx1, rx } = CZ, c = czCols(st);
+  // the motor on its cradle, the shaft
+  put([[10, y - 7, z - 7], [24, y + 7, z + 7]], cylX(10, 24, y, z, 7, GT.IRON, toneI, 1.1, 24) + box(13, y - 4, LV.Z0, 21, y + 4, z - 6.5, GT.IRON, toneI, .8));
+  put([[24, y - 1.2, z - 1.2], [bx0, y + 1.2, z + 1.2]], cylX(24, bx0, y, z, 1.2, GT.IRON, toneI, .7, 12));
+  // the bowl: back and inner wall, the rotor in it, the outer wall faint over it
+  const A = on(PX(bx0), ellUV(y, z, br, br, 28)), B = on(PX(bx1), ellUV(y, z, br, br, 28)), BM = { l:'#c3cad0', m:'#9aa2a8', d:'#5d666e' };
+  const rot = [];
+  rot.push({ box:[[bx0, y - 1.2, z - 1.2], [rx, y + 1.2, z + 1.2]], svg: cylX(bx0, rx, y, z, 1.2, GT.IRON, toneI, .7, 12) });
+  rot.push({ box:[[rx - 2, y - 3, z - 3], [rx + 2, y + 3, z + 3]], svg: cylX(rx - 2, rx + 2, y, z, 3, GT_TRIM, toneI, .9, 16) });
+  const full = czFull(st), sep = czSep(st), GL = { l:'#eef7f8', m:'#c4dfe4', d:'#97b9c0' };
+  for (let i = 0; i < 4; i++){ const b = a + i*Math.PI/2, cb = Math.cos(b), sb = Math.sin(b), q = r => [rx, y + r*cb, z + r*sb];
+    const bb = (r0, r1, w) => [[rx - w, Math.min(y + r0*cb, y + r1*cb) - w, Math.min(z + r0*sb, z + r1*sb) - w], [rx + w, Math.max(y + r0*cb, y + r1*cb) + w, Math.max(z + r0*sb, z + r1*sb) + w]];
+    let tube = rod(q(4), q(11.5), 2, full ? matOf(mix(c.inn, c.out, sep)) : GL, toneI, .8, 2, 12);
+    if (full && sep > .05) tube += rod(q(4.2), q(7.6), 2.05, matOf(mix(c.inn, c.by, sep)), toneI, .6, 2.05, 12);
+    rot.push({ box: bb(2.5, 4, .8), svg: rod(q(2.5), q(4.2), .8, GT.IRON, toneI, .6) }, { box: bb(4, 11.5, 2), svg: tube }); }
+  if (run) rot.push({ box:[[rx + 2, y - 12, z - 12], [rx + 2.1, y + 12, z + 12]], svg: `<path d="${pd(on(PX(rx + 2), ellUV(y, z, 8, 8, 28)))}" fill="none" stroke="#c9d6dc" stroke-width="7" opacity=".35"/>` });
+  put([[bx0, y - br, z - br], [bx1, y + br, z + br]], loft(A, B, n => toneI(n, BM), true) + fill(pd(on(PX(bx0 + .2), ellUV(y, z, br - .2, br - .2, 28))), BM.m) + byDepth(rot)
+    + `<g opacity=".25">${loft(A, B, n => toneI(n, BM))}</g>` + ink(pd(B), 1.3) + ink(pd(on(PX(bx1 - 3), ellUV(y, z, br, br, 28))), .5) + hullInk([...A, ...B], 1.8));
+  // the chute from the bowl's floor to the slot; the beacon's wire up from the board
+  put([[60, 30, 9], [LV.W, 50, 24]], shape([[62, 30, 22.5], [LV.W, 30, 10.5], [LV.W, 50, 10.5], [62, 50, 22.5]], toneI(norm([12, 0, 12]), GT.IRON), .9)
+    + (run && (st.progress || 0) > .8 ? czDust([67, 40, 17.5], c.out) : ''));
+  out.push(gtWire([[4.5, 60, 72], [30, 64, 80], [CZ_BEACON.x, CZ_BEACON.y, 82], [CZ_BEACON.x, CZ_BEACON.y, LV.ZT]], run ? '#ffd84a' : '#8a6410', .5));
+  return out;
+}
+
+gtLv({
+  fig:'LV5', title:'LV Centrifuge', name:'CENTRIFUGE', nameSize: 4.3, face: czFace, parts: czParts, inside: czInside, product: czProduct,
+  shadowPts: [[CZ_BEACON.x, CZ_BEACON.y, LV.ZT + 11]],
+  recipes:[{ id:'centrifuge_impure_iron', name:'Iron Dust' }, { id:'centrifuge_impure_copper', name:'Copper Dust' }, { id:'centrifuge_bauxite', name:'Aluminium Dust' }],
+  loadLabel:'Load dust', outLabel:'Made',
+  callouts: st => [{ at: [CZ_BEACON.x, CZ_BEACON.y, LV.ZT + 10], text: 'BEACON', on: !!st.running },
+    ...(facing([1,0,0]) ? [{ at: [LV.W + 1.2, CZ.y - 13, CZ.z - 12], text: 'HAZARD RING', on: false }, { at: [LV.W + 2.6, CZ.y + 4, CZ.z + 6], text: 'ROTOR', on: !!st.running },
+      { at: [LV.W + 1.6, 66, 54.4], text: 'REV COUNTER', on: !!st.running }] : [])],
+  insideCallouts: st => [{ at: [17, CZ.y, CZ.z + 7], text: 'MOTOR', on: !!st.running }, { at: [36, CZ.y, CZ.z + 1.2], text: 'SHAFT', on: !!st.running },
+    { at: [CZ.rx, CZ.y + 9, CZ.z + 6], text: 'SAMPLE TUBES', on: czSep(st) > .05 }, { at: [CZ.rx + 2, CZ.y, CZ.z - 3], text: 'ROTOR HUB', on: !!st.running },
+    { at: [56, CZ.y - 10, CZ.z - 11], text: 'GUARD BOWL', on: false }, { at: [67, 50, 16], text: 'CHUTE', on: !!st.running }],
+});
+</script>
+<script src="cf-tail.js"></script>
+</body></html>

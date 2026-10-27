@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Coke Oven</title>
+<script src="cf-head.js"></script></head><body>
+<script src="core.js"></script>
+<script src="gt-bridge.js"></script>
+<script src="gt-parts.js"></script>
+<script>
+/* Coke Oven (gtjs, steam age): a 3 x 3 x 3 multiblock of coke oven bricks round a hollow chamber. No steam, no power.
+
+   How it works (truth first)
+   1. Coal from the crate goes in through the arched door of the controller, the middle block of the front face, and
+      sits in the hollow chamber at the centre of the oven.
+   2. Lit, the coal bakes with the air shut out: it does not burn away, it gives up its tar and gas. The bricks hold
+      the heat in; the door glows orange while it bakes. 1800 ticks (90 s) per coal.
+   3. The gas leaves up a flue through the top-centre block and out of the vent on the roof as smoke.
+   4. The tar runs down a drain under the chamber floor and out of a spout on the left side: 500 L of creosote per coal,
+      dripping into the barrel. What is left in the chamber is coke: grey, light and full of holes.
+   5. The coke goes out onto the tray in front. Coke burns twice as long as coal in a boiler.
+   Where the coal is: crate -> door -> chamber -> (bakes) -> coke -> tray.
+   Where the by-products are: chamber -> flue -> vent (smoke); chamber -> drain -> spout -> barrel (creosote).
+
+   x = depth (front at x = 300), y = width (+y = viewer-left), z = up. 1 unit = 1 cm; one block is 100.
+
+   Parts
+   OVEN     26 coke oven brick blocks round a hollow centre . controller (front, middle layer) with an arched door, iron
+            frame, grille and name plate . vent stack on the top-centre block . creosote spout on the left side
+   OUTSIDE  coal crate with coal . coke tray with coke . creosote barrel
+   INSIDE   chamber walls and floor . the charge (coal lumps turning to coke) . flue to the vent . creosote drain
+
+   Contact checks (numbers)
+   - chamber: the centre block x 100..200, y 100..200, z 100..200; the charge sits on its floor, z 100, inside x/y 106..194.
+   - door: on the controller's front face x = 300, opening y 118..182, z 104..168 (frame y 110..190, to z 176); plate z 180..196.
+   - flue: r 10 from the chamber roof (150, 150, 200) up through block (1, 1, 2) to the vent (z 300..328).
+   - drain: chamber floor (150, 150, 100) down to z 48, along +y to the left face (y 300); spout to y 321 at z 45,
+     over the barrel's middle (centre 150, 321, r 18, top z 34): drips fall 10.
+   - crate x 306..344, y 202..290 and tray x 304..340, y 12..90 stand in front; barrel y 303..339 beside the left face.
+*/
+const coB = 100, coH = 300;
+Z_FLOOR = 0;
+const CO_BRICK = { l:'#dcb88e', m:'#b78e63', d:'#6a4a2e' }, CO_MORTAR = { l:'#9c7c5c', m:'#7c5f43', d:'#3e2c1c' };
+const CO_COKE = { l:'#9a9ca3', m:'#6b6d74', d:'#35363b' }, CO_CREO = { l:'#8a5a24', m:'#5e3a14', d:'#2c1a08' };
+const CO_WOOD = { l:'#d9a86c', m:'#bf8a4f', d:'#6e4a26' };
+const CO_ROW = 12.5, CO_LEN = 25, CO_GAP = 1.1;
+const CO_DOOR = { y0:118, y1:182, z0:104, hs:32 }, CO_FRAME = { y0:110, y1:190, z0:100, hs:36 };
+const CO_CRATE = [306, 202, 344, 290], CO_CRATE_H = 26, CO_TRAY = [304, 12, 340, 90], CO_TRAY_H = 9;
+const CO_BAR = { x:150, y:321, r:18, h:34 }, CO_SPOUT = [150, 321, 45];
+const CO_VENT = [128, 128, 172, 172], CO_VENT_H = 28;
+
+const coRand = (a, b) => { const s = Math.sin(a*12.9898 + b*78.233)*43758.5453; return s - Math.floor(s); };
+const coSmooth = (a, b, v) => { const k = gtClamp((v - a)/(b - a)); return k*k*(3 - 2*k); };
+// an arch in a front plane's (u = y, v = z): straight sides hs tall, then a half circle
+const coArch = a => { const r = (a.y1 - a.y0)/2; return [[a.y1, a.z0], ...arcUV(a.y0 + r, a.z0 + a.hs, r, 0, 180, 14), [a.y0, a.z0]]; };
+
+/* ---------- coke oven bricks: running bond on a face, in global coordinates so the rows line up block to block ---------- */
+// n: the face's normal (for its tone), plane: where it lies, u0..u1 along the rows, v0..v1 across them
+function coBricks(n, plane, u0, u1, v0, v1, m = CO_BRICK, shade = tone){
+  const base = shade(n, m), cols = [mix(base, '#fff3dc', .14), base, mix(base, '#8a5230', .16)];
+  const fl = ['', '', ''];
+  let lines = '';
+  for (let v = v0; v < v1 - .5; v += CO_ROW){
+    const row = Math.round(v / CO_ROW), off = row % 2 ? CO_LEN/2 : 0;
+    for (let u = Math.floor((u0 - off)/CO_LEN)*CO_LEN + off; u < u1 - .5; u += CO_LEN){
+      const a = Math.max(u0, u), b = Math.min(u1, u + CO_LEN);
+      if (b - a < 2.5) continue;
+      const d = pd(on(plane, rectUV(a + CO_GAP, v + CO_GAP, b - CO_GAP, Math.min(v1, v + CO_ROW) - CO_GAP)));
+      fl[Math.floor(coRand(u*.37 + v1, row + u0*.11)*3)] += d; lines += d;
+    }
+  }
+  return fl.map((d, i) => d ? fill(d, cols[i]) : '').join('') + `<path d="${lines}" fill="none" stroke="${INK}" stroke-width=".55" opacity=".45"/>`;
+}
+
+/* ---------- the structure: 26 blocks round the hollow centre ---------- */
+const coKind = (i, j, l) => i === 1 && j === 1 && l === 1 ? null : i === 2 && j === 1 && l === 1 ? 'controller' : i === 1 && j === 1 && l === 2 ? 'vent' : 'brick';
+const CO_N = { 'x+':[1,0,0], 'x-':[-1,0,0], 'y+':[0,1,0], 'y-':[0,-1,0], 'z+':[0,0,1] };
+function coOuterFaces(i, j, l){
+  const out = [];
+  if (i === 2) out.push('x+'); if (i === 0) out.push('x-'); if (j === 2) out.push('y+'); if (j === 0) out.push('y-'); if (l === 2) out.push('z+');
+  return out.filter(n => facing(CO_N[n]));
+}
+function coFaceBricks(i, j, l, n){
+  const x0 = i*coB, y0 = j*coB, z0 = l*coB, x1 = x0 + coB, y1 = y0 + coB, z1 = z0 + coB, o = .3;
+  if (n === 'x+') return coBricks(CO_N[n], PX(x1 + o), y0, y1, z0, z1);
+  if (n === 'x-') return coBricks(CO_N[n], PX(x0 - o), y0, y1, z0, z1);
+  if (n === 'y+') return coBricks(CO_N[n], PY(y1 + o), x0, x1, z0, z1);
+  if (n === 'y-') return coBricks(CO_N[n], PY(y0 - o), x0, x1, z0, z1);
+  return coBricks(CO_N[n], PZ(z1 + o), x0, x1, y0, y1);
+}
+function coHot(st){ return gtClamp(st.heat || 0)*(st.running ? .85 + .15*Math.sin((st.t || 0)*7) : .6); }
+// the controller's door: an iron frame round an arched opening, a grille over it, the glow and the charge behind
+function coDoor(st){
+  const fx = 3*coB, hot = coHot(st), open = on(PX(fx + .6), coArch(CO_DOOR)), frame = on(PX(fx + .4), coArch(CO_FRAME));
+  let s = shape(frame, mix(GT.IRON.d, DARK.m, .3), 1.8);
+  s += gtRivets(PX(fx + .5), [[114, 104], [186, 104], [114, 122], [186, 122], [114, 140], [186, 140], [150, 172.5], [124, 163], [176, 163]], GT.IRON.l);
+  let inside = fill(pd(open), hot > .02 ? mix('#3a2418', GT.GLOW, .3 + .6*hot) : GT.RECESS);
+  if (hot > .02) inside += fill(pd(on(PX(fx + .65), ellUV(150, 118, 30, 22, 20))), GT.HOT, `opacity="${f(.6*hot)}"`)
+    + fill(pd(on(PX(fx + .7), ellUV(150, 112, 18, 10, 16))), '#fff4b8', `opacity="${f(.45*hot)}"`);
+  // the near end of the charge, seen through the door
+  if (st.active){ const lumps = [];
+    for (let q = 0; q < 6; q++){ const at = [fx - 8, 122 + q*11 + 2*coRand(q, 3), 104];
+      lumps.push({ at, svg: coLump(at, 5 + 1.4*coRand(q, 5), coLumpMat(st, q), q + 40) }); }
+    inside += byDepth(lumps); }
+  s += clipTo(open, inside);
+  // the grille: four bars and a cross bar, clipped to the opening
+  let g = ''; for (let y = 131; y <= 170; y += 13) g += pd([[fx + 1, y, CO_DOOR.z0], [fx + 1, y, 172]], false);
+  g += pd([[fx + 1, 116, 134], [fx + 1, 184, 134]], false);
+  s += clipTo(open, `<path d="${g}" fill="none" stroke="${INK}" stroke-width="3"/><path d="${g}" fill="none" stroke="${GT.IRON.m}" stroke-width="1.6"/>`);
+  s += ink(pd(open), 1.8);
+  s += gtNamePlate(fx, 124, 180, 176, 196, 'COKE OVEN', null, 8.5);
+  return s;
+}
+function coBlock(st, i, j, l){
+  const kind = coKind(i, j, l);
+  let s = box(i*coB, j*coB, l*coB, i*coB + coB, j*coB + coB, l*coB + coB, CO_MORTAR, tone, 1.3);
+  for (const n of coOuterFaces(i, j, l)) s += coFaceBricks(i, j, l, n);
+  if (kind === 'controller' && facing([1,0,0])) s += coDoor(st);
+  if (kind === 'vent' && facing([0,0,1])) s += fill(pd(on(PZ(coH + .4), rectUV(CO_VENT[0] - 6, CO_VENT[1] - 6, CO_VENT[2] + 6, CO_VENT[3] + 6))), mix(CO_MORTAR.l, '#000000', .2));
+  if (kind === 'brick' && i === 1 && j === 2 && l === 0 && facing([0,1,0])){
+    // the creosote spout's flange on the left face
+    s += shape(on(PY(3*coB + .5), rectUV(138, 38, 162, 58)), GT.IRON.d, 1.1) + gtRivets(PY(3*coB + .6), [[141, 41], [159, 41], [141, 55], [159, 55]], GT.IRON.l);
+  }
+  return s;
+}
+function coStructure(st){
+  const parts = [];
+  for (let l = 0; l < 3; l++) for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++){
+    if (!coKind(i, j, l)) continue;
+    parts.push({ box:[[i*coB, j*coB, l*coB], [i*coB + coB, j*coB + coB, l*coB + coB]], svg: coBlock(st, i, j, l) });
+  }
+  return parts;
+}
+
+/* ---------- lumps: coal (black, glossy) turning to coke (grey, porous) ---------- */
+// each lump turns at its own moment, so the charge changes over the bake rather than all at once
+function coLumpMat(st, k){
+  const p = st.active ? st.progress || 0 : 0, a = .15 + .45*coRand(k, 11), turn = coSmooth(a, a + .3, p);
+  const c = { l: mix(GT.COAL.l, CO_COKE.l, turn), m: mix(GT.COAL.m, CO_COKE.m, turn), d: mix(GT.COAL.d, CO_COKE.d, turn) };
+  const g = st.running ? gtClamp(st.heat || 0)*(.6 + .25*Math.sin((st.t || 0)*3 + k*1.7))*(1 - .5*coSmooth(.85, 1, p)) : 0;
+  if (g <= .02) return { ...c, turn };
+  return { l: mix(c.l, GT.HOT, g*.7), m: mix(c.m, GT.GLOW, g*.6), d: mix(c.d, '#7a2a10', g*.5), turn };
+}
+// a lump on the ground at [x, y, z]: an uneven block of about 2s, with pores on top once it is coke
+function coLump([x, y, z], s, m, seed, pores = true){
+  const a = s*(.8 + .4*coRand(seed, 1)), b = s*(.75 + .4*coRand(seed, 2)), c = s*(.7 + .4*coRand(seed, 3));
+  let svg = box(x - a, y - b, z, x + a, y + b, z + 1.6*c, m, toneI, .8);
+  if (pores && (m.turn || 0) > .4 && facing([0,0,1])){
+    let d = ''; for (let q = 0; q < 4; q++) d += pd(on(PZ(z + 1.6*c + .1), ellUV(x - a*.6 + 1.2*a*coRand(seed, q + 5), y - b*.6 + 1.2*b*coRand(seed, q + 9), s*.13, s*.11, 7)));
+    svg += fill(d, mix(m.d, '#000000', .3), `opacity="${f(gtClamp((m.turn - .4)/.4))}"`);
+  }
+  return svg;
+}
+const CO_COKE_M = { ...CO_COKE, turn: 1 };
+
+/* ---------- outside: the coal crate, the coke tray, the creosote barrel and spout, the vent ---------- */
+function coCrate(st){
+  const [x0, y0, x1, y1] = CO_CRATE, A = on(PZ(0), rectUV(x0, y0, x1, y1)), Bt = on(PZ(CO_CRATE_H), rectUV(x0, y0, x1, y1));
+  let inner = fill(pd(on(PZ(.6), rectUV(x0 + .6, y0 + .6, x1 - .6, y1 - .6))), CO_WOOD.d);
+  const lumps = [];
+  for (let k = 0; k < Math.min(10, st.input | 0); k++){ const at = [x0 + 10 + (k % 2)*18, y0 + 12 + Math.floor(k/2)%5*16, 13 + (k >= 6 ? 7 : 0)];
+    lumps.push({ at, svg: coLump(at, 6, GT.COAL, k + 1, false) }); }
+  inner += byDepth(lumps);
+  let planks = ''; for (const z of [8.7, 17.4]) planks += pd([[x0, y1 + .05, z], [x1, y1 + .05, z]], false) + pd([[x1 + .05, y0, z], [x1 + .05, y1, z]], false);
+  return openShell(A, Bt, n => toneI(n, CO_WOOD), inner) + `<path d="${planks}" fill="none" stroke="${INK}" stroke-width=".8" opacity=".6"/>`
+    + ink(pd(Bt), 1.3) + hullInk([...A, ...Bt], 1.8);
+}
+function coTray(st){
+  const [x0, y0, x1, y1] = CO_TRAY, A = on(PZ(0), rectUV(x0, y0, x1, y1)), Bt = on(PZ(CO_TRAY_H), rectUV(x0, y0, x1, y1));
+  let inner = fill(pd(on(PZ(.6), rectUV(x0 + .6, y0 + .6, x1 - .6, y1 - .6))), GT.IRON.d);
+  const lumps = [];
+  for (let k = 0; k < Math.min(8, st.output | 0); k++){ const at = [x0 + 9 + (k % 2)*18, y0 + 11 + Math.floor(k/2)*18.5, .7];
+    lumps.push({ at, svg: coLump(at, 5.6, CO_COKE_M, k + 20) }); }
+  inner += byDepth(lumps);
+  return openShell(A, Bt, n => toneI(n, GT.IRON), inner) + ink(pd(Bt), 1.3) + hullInk([...A, ...Bt], 1.8);
+}
+// the barrel: wooden staves and two iron hoops; creosote in it rises with the coke made
+function coBarrel(st){
+  const c = CO_BAR, ring = (z, r) => on(PZ(z), ellUV(c.x, c.y, r, r, 26));
+  const A = ring(0, c.r - 1.5), Bt = ring(c.h, c.r), lvl = Math.min(c.h - 3, 3 + 1.6*(st.output || 0) + (st.active ? 2*(st.progress || 0) : 0));
+  let inner = fill(pd(ring(.6, c.r - 2)), CO_WOOD.d);
+  if ((st.output || 0) > 0 || st.active){ inner += fill(pd(ring(lvl, c.r - 1.2 + 1.5*lvl/c.h)), CO_CREO.m)
+    + fill(pd(on(PZ(lvl + .05), ellUV(c.x - 3, c.y - 3, 4, 2.5, 12))), CO_CREO.l, 'opacity=".7"'); }
+  let s = openShell(A, Bt, n => toneI(n, CO_WOOD), inner);
+  for (const z of [8, 26]){ const r = c.r - 1.5 + 1.5*z/c.h;
+    s += loft(ring(z - 1.2, r + .25), ring(z + 1.2, r + .3), n => toneI(n, DARK)); }
+  return s + ink(pd(Bt), 1.3) + hullInk([...A, ...Bt], 1.8);
+}
+function coSpout(){
+  const [x, y, z] = CO_SPOUT;
+  return rod([x, 3*coB, 48], [x, y - 4, 48], 3, GT.IRON, toneI, 1) + rod([x, y - 4, 48], [x, y, z], 3, GT.IRON, toneI, 1, 2.4)
+    + fill(pd(on(PZ(z - .1), ellUV(x, y, 1.6, 1.6, 10))), CO_CREO.d);
+}
+function coDrips(st){
+  if (!st.running) return '';
+  const [x, y, z] = CO_SPOUT, top = CO_BAR.h;
+  let s = '';
+  for (const ph of [0, .5]){ const k = ((st.t || 0)*.9 + ph) % 1, zz = z - 1.5 - (z - 1.5 - top)*k*k, [X, Y] = P(x, y, zz);
+    s += `<path d="M${f(X)} ${f(Y - 3.2)}Q${f(X + 2.2)} ${f(Y + .2)} ${f(X)} ${f(Y + 2)}Q${f(X - 2.2)} ${f(Y + .2)} ${f(X)} ${f(Y - 3.2)}Z" fill="${CO_CREO.m}" stroke="${INK}" stroke-width=".7"/>`; }
+  return s;
+}
+// the vent: a short brick stack on the top-centre block, its mouth faintly lit while it bakes
+function coVent(st){
+  const [x0, y0, x1, y1] = CO_VENT, z0 = coH, z1 = coH + CO_VENT_H, hot = coHot(st);
+  let s = box(x0, y0, z0, x1, y1, z1, CO_MORTAR, tone, 1.3);
+  if (facing([1,0,0])) s += coBricks([1,0,0], PX(x1 + .3), y0, y1, z0, z1);
+  if (facing([-1,0,0])) s += coBricks([-1,0,0], PX(x0 - .3), y0, y1, z0, z1);
+  if (facing([0,1,0])) s += coBricks([0,1,0], PY(y1 + .3), x0, x1, z0, z1);
+  if (facing([0,-1,0])) s += coBricks([0,-1,0], PY(y0 - .3), x0, x1, z0, z1);
+  s += box(x0 - 3, y0 - 3, z1, x1 + 3, y1 + 3, z1 + 4, DARK, toneI, 1.2);
+  s += fill(pd(on(PZ(z1 + 4.1), rectUV(x0 + 5, y0 + 5, x1 - 5, y1 - 5))), hot > .05 ? mix(GT.RECESS, GT.GLOW, .35*hot) : GT.RECESS);
+  return s;
+}
+
+/* ---------- see-through: the chamber, the charge, the flue, the drain ---------- */
+let CO_LABELS = '';
+function coCore(st, k){
+  const c0 = coB, c1 = 2*coB, p = st.progress || 0, hot = coHot(st);
+  // the chamber's far walls and floor, brick, lit by the fire inside
+  const wallM = { l: mix(CO_BRICK.l, GT.GLOW, .35*hot), m: mix(CO_BRICK.m, GT.GLOW, .3*hot), d: CO_BRICK.d };
+  let walls = '';
+  const wx = facing([1,0,0]) ? c0 : c1, wy = facing([0,1,0]) ? c0 : c1, nx = [wx === c0 ? 1 : -1, 0, 0], ny = [0, wy === c0 ? 1 : -1, 0];
+  walls += fill(pd(on(PX(wx), rectUV(c0, c0, c1, c1))), toneI(nx, CO_MORTAR)) + coBricks(nx, PX(wx + nx[0]*.3), c0, c1, c0, c1, wallM, toneI);
+  walls += fill(pd(on(PY(wy), rectUV(c0, c0, c1, c1))), toneI(ny, CO_MORTAR)) + coBricks(ny, PY(wy + ny[1]*.3), c0, c1, c0, c1, wallM, toneI);
+  walls += fill(pd(on(PZ(c0), rectUV(c0, c0, c1, c1))), toneI([0,0,1], CO_MORTAR)) + coBricks([0,0,1], PZ(c0 + .3), c0, c1, c0, c1, wallM, toneI);
+  // the chamber's twelve edges, so the hollow reads as a box
+  let edges = ''; for (const [a, b] of [[[c0,c0,c0],[c1,c0,c0]],[[c0,c1,c0],[c1,c1,c0]],[[c0,c0,c1],[c1,c0,c1]],[[c0,c1,c1],[c1,c1,c1]],
+    [[c0,c0,c0],[c0,c1,c0]],[[c1,c0,c0],[c1,c1,c0]],[[c0,c0,c1],[c0,c1,c1]],[[c1,c0,c1],[c1,c1,c1]],
+    [[c0,c0,c0],[c0,c0,c1]],[[c1,c0,c0],[c1,c0,c1]],[[c0,c1,c0],[c0,c1,c1]],[[c1,c1,c0],[c1,c1,c1]]]) edges += pd([a, b], false);
+  edges = `<path d="${edges}" fill="none" stroke="${INK}" stroke-width="1.3" opacity=".7"/>`;
+  // the drain under the floor (drawn first: the floor is ghosted over it) and the creosote on the floor
+  const drain = rod([150, 150, 100], [150, 150, 48], 3, GT.IRON, toneI, .9) + rod([150, 150, 48], [150, 3*coB, 48], 3, GT.IRON, toneI, .9);
+  const pool = st.active ? fill(pd(on(PZ(c0 + .3), ellUV(150, 150, 30 + 10*p, 26 + 8*p, 22))), CO_CREO.m, 'opacity=".85"') : '';
+  // the charge: two layers of lumps and a crown
+  const lumps = [];
+  if (st.active){
+    let n = 0;
+    for (let a = 0; a < 4; a++) for (let b = 0; b < 4; b++){ const at = [116 + a*22 + 4*coRand(a, b), 116 + b*22 + 4*coRand(b, a), c0 + .5];
+      lumps.push({ box:[[at[0] - 10, at[1] - 10, at[2]], [at[0] + 10, at[1] + 10, at[2] + 14]], svg: coLump(at, 8.5, coLumpMat(st, n), n++) }); }
+    for (let a = 0; a < 3; a++) for (let b = 0; b < 3; b++){ const at = [127 + a*22 + 3*coRand(a + 7, b), 127 + b*22 + 3*coRand(b + 7, a), c0 + 14];
+      lumps.push({ box:[[at[0] - 10, at[1] - 10, at[2]], [at[0] + 10, at[1] + 10, at[2] + 14]], svg: coLump(at, 8.5, coLumpMat(st, n), n++) }); }
+    const at = [150, 150, c0 + 28];
+    lumps.push({ box:[[at[0] - 10, at[1] - 10, at[2]], [at[0] + 10, at[1] + 10, at[2] + 14]], svg: coLump(at, 8.5, coLumpMat(st, n), n) });
+  }
+  // the flue from the chamber roof to the vent
+  const flue = `<g opacity=".8">${rod([150, 150, c1], [150, 150, coH + CO_VENT_H], 10, DARK, toneI, 1)}</g>`
+    + fill(pd(on(PZ(c1 - .2), ellUV(150, 150, 10, 10, 18))), GT.RECESS);
+  CO_LABELS = k <= .6 ? '' : xrCallouts([
+    { at: [c1, c0, 160], text: 'CHAMBER', on: !!st.running },
+    ...(st.active ? [{ at: [150, 150, c0 + 38], text: p < .5 ? 'COAL' : 'COKE', on: !!st.running }] : []),
+    { at: [150, 150, 250], text: 'FLUE', on: !!st.running },
+    { at: [150, 240, 48], text: 'CREOSOTE DRAIN', on: !!st.running },
+    ...(facing([0,1,0]) ? [{ at: [CO_BAR.x, CO_BAR.y + CO_BAR.r, CO_BAR.h], text: 'CREOSOTE', on: !!st.running }] : []),
+    { at: [3*coB, 150, 168], text: 'DOOR', on: !!st.running },
+    { at: [150, 150, coH + CO_VENT_H], text: 'VENT', on: !!st.running } ], [0, 344, 0, 339, 0, 332]);
+  return drain + walls + pool + byDepth(lumps) + flue + edges;
+}
+
+/* ---------- scene ---------- */
+function scene(st, m){
+  const k = ease(st.xr || 0);
+  let s = castShadow([[0, 0, 0], [3*coB, 0, 0], [3*coB, 3*coB, 0], [0, 3*coB, 0], [0, 0, coH], [3*coB, 0, coH], [3*coB, 3*coB, coH], [0, 3*coB, coH]])
+    .replace('<path ', `<path opacity="${f(1 - .75*k)}" `);
+  // the floor things and the 26 blocks (they sort cleanly on their grid), then the vent on the roof in its own pass
+  const solid = byDepth([
+    { box:[[CO_TRAY[0], CO_TRAY[1], 0], [CO_TRAY[2], CO_TRAY[3], CO_TRAY_H]], svg: coTray(st) },
+    { box:[[CO_CRATE[0], CO_CRATE[1], 0], [CO_CRATE[2], CO_CRATE[3], CO_CRATE_H]], svg: coCrate(st) },
+    { box:[[CO_BAR.x - CO_BAR.r, CO_BAR.y - CO_BAR.r, 0], [CO_BAR.x + CO_BAR.r, CO_BAR.y + CO_BAR.r, CO_BAR.h]], svg: coBarrel(st) },
+    { box:[[CO_BAR.x - 3, 3*coB, CO_BAR.h + .5], [CO_BAR.x + 3, CO_SPOUT[1] + 3, 51]], svg: coSpout() + coDrips(st) },
+    ...coStructure(st) ]) + coVent(st);
+  // see-through: paper under the footprint, so the cast shadow doesn't show through the ghosted blocks
+  if (k > 0) s += fill(pd(on(PZ(0), rectUV(0, 0, 3*coB, 3*coB))), '#f2efe7', `opacity="${f(.85*k)}"`)
+    + `<g opacity="${f(1 - .78*k)}">${solid}</g><g opacity="${f(k)}">${coCore(st, k)}</g>`;
+  else s += solid;
+  s += gtPuffsSvg(st);
+  if (k > .6) s += CO_LABELS;
+  else s += xrCallouts([
+    ...(facing([1,0,0]) ? [{ at: [3*coB, 150, 176], text: 'CONTROLLER', on: !!st.running }] : []),
+    { at: [3*coB, 3*coB, 250], text: 'COKE OVEN BRICKS', on: false },
+    { at: [150, 150, coH + CO_VENT_H + 4], text: 'VENT', on: !!st.running },
+    { at: [325, 246, CO_CRATE_H], text: 'COAL', on: (st.input || 0) > 0 },
+    { at: [CO_TRAY[2], 50, CO_TRAY_H], text: 'COKE', on: (st.output || 0) > 0 },
+    ...(facing([0,1,0]) ? [{ at: [CO_BAR.x, CO_BAR.y + CO_BAR.r, CO_BAR.h], text: 'CREOSOTE', on: !!st.running }] : []) ], [0, 344, 0, 339, 0, 332]);
+  return s;
+}
+
+gtMachine({
+  fig:'C1', title:'Coke Oven', size:[344, 339, 336], center:[172, 170], scene, heatTime: 4, demoSeconds: 8,
+  recipes:[{ id:'coke', name:'Coal Coke' }],
+  toggleLabel:'Light', loadLabel:'Load coal',
+  stats: st => [{ label:'Progress', value: st.active ? `${Math.round((st.progress || 0)*100)}%` : '-' },
+                { label:'Coal', value: st.input | 0, small:true }, { label:'Coke', value: st.output | 0, small:true }],
+  emitters:[{ id:'smoke', kind:'smoke', at: () => [150, 150, coH + CO_VENT_H + 5], when: st => !!st.running, every:.3, life:2.8, rise:80, r0:13 }],
+  tile:[[-3, -3, 0], [303, -3, 0], [303, 303, 0], [-3, 303, 0]],
+});
+</script>
+<script src="cf-tail.js"></script>
+</body></html>

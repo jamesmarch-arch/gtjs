@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Steam Forge Hammer</title>
+<script src="cf-head.js"></script></head><body>
+<script src="core.js"></script>
+<script src="gt-bridge.js"></script>
+<script src="gt-parts.js"></script>
+<script>
+/* Steam Forge Hammer (gtjs, steam age). A steam hammer: a cylinder on a frame over the case lifts a heavy hammer head
+   (the tup) and drives it down onto an anvil; a few blows flatten an ingot into a plate (3 ingots -> 2 plates).
+
+   How it works (truth first)
+   1. Steam comes up the riser beside the left wall, through the steam valve, into the case, up a pipe through the roof
+      and into the side of the steam cylinder on top of the hammer frame.
+   2. Steam under the piston lifts it; the valve then lets steam over the piston and the piston, the piston rod and the
+      tup all come down together. The tup slides between two guide rods and lands on the anvil. Spent steam leaves
+      through the vent stack on top of the cylinder.
+   3. An ingot drops from the hopper on the roof, down the feed chute to a slot in the back of the hammer bay; the
+      pusher shoves it out onto the anvil's die.
+   4. Four blows: each one spreads the bar thinner and wider, and sparks fly off its edges. The tup goes back up.
+   5. The pusher shoves the plate off the front of the die onto the bed; it slides out of the bay, down the spout and
+      into the output tray.
+   Where the metal is: hopper -> feed chute -> back slot -> die -> bed -> spout -> tray.
+   Where the steam is: riser -> valve -> inside pipe -> roof -> cylinder -> vent stack -> air.
+
+   x = depth (front at x = W), y = width (+y = viewer-left: the steam side), z = up. 1 unit = 1 cm.
+
+   Parts
+   CASE     bronze case on four feet . riveted front . the open hammer bay (lined, riveted frame, a slot in its back
+            wall) . name plate . pressure gauge . running lamp . service hatch (back) . louvres (right side) . hopper
+            with feed flap . spout . output tray
+   FRAME    two columns on the roof . the table across them . steam cylinder with flanges . vent stack on the cylinder .
+            gland where the piston rod goes through the roof . steam pipe up the left of the frame into the cylinder
+   HAMMER   piston . piston rod . tup with two guide ears . two guide rods . anvil bed . die . pusher
+   STEAM    riser with floor flange, valve and handwheel . wall flange . inside pipe up to the roof
+
+   Contact checks (numbers)
+   - tup x 51..65, y 31..45, 12 tall; up it hangs at z 44..56 under the bay ceiling (z 62). The die top is z 26, so a
+     blow lands on the bar: z 26 + its thickness (2.4 for the ingot, 1 for the plate).
+   - piston bottom = tup bottom + 77.5: z 121.5 up, z 104.5 at the last blow; the cylinder is z 104..130.
+   - guide rods at y 26.5 and 49.5 (r 1.5) clear the tup (y 31..45); its ears reach y 28..31 and 45..48.
+   - the bar: 8 x 4 x 2.4 ingot -> 12 x 12 x 1 plate, centred (58, 38) on the die (x 44..65, y 30..46).
+   - columns y 17..24 and 52..59 clear the piston rod (y 36..40); the steam pipe rises at y 67, past the table (y <= 61).
+   - eject: die front (65, 26) -> bed (top z 19, runs out to the front x 70) -> spout (78, 13) -> tray.
+   - hopper x 5..31 stops short of the columns (x 53).
+*/
+const W = 70, D = 80, Z0 = 6, ZT = 78;
+Z_FLOOR = Z0;
+const OUT = rrUV(0, Z0, D, ZT, 5);
+const FH = {
+  bay: [22, 12, 60, 62], bx: 44, slot: [33, 26, 43, 30.5],
+  bed: [44, 26, 12, W, 52, 19], die: [44, 30, 19, 65, 46, 26], DIE: 26, BED: 19, cy: 38,
+  tup: { x0:51, x1:65, y0:31, y1:45, h:12, up:44 }, gx: 58, gy: [26.5, 49.5],
+  cyl: { x:58, y:38, z0:104, z1:130, r:10 }, beam: [47, 15, 100, 69, 61, 104], cols: [[53, 17, 63, 24], [53, 52, 63, 59]],
+  hopBot: [11, 30, 25, 46], hopTop: [5, 24, 31, 52], hopH: 11,
+  tray: [74, 24, 96, 52], trayH: 7, spout: [W + 8, 13], sy: [30, 46], piles: [31, 45],
+  pipe: { x:56, y:67, z:114 }, riserX: 56, rodK: 77.5,
+};
+const FH_STK = FH.cyl.z1, FH_TOP = FH.cyl.z1 + 8 + 4.5;
+const FH_LINE = { l:'#8d7c6a', m:'#66584b', d:'#3b322a' };   // the bay's lining
+const FH_TUP = matOf('#5a6166'), FH_DIE = matOf('#7b8287');
+const fhCol = st => GT.ORE[gtMetal(st.recipe && st.recipe.id)];
+const fhPlateCol = st => mix(fhCol(st), '#fff6e0', .18);
+
+/* ---------- where the bar, the tup and the pusher are, from progress ---------- */
+// piecewise-linear path through [t, x, y, z] keys
+function fhPath(keys, t){
+  for (let i = 1; i < keys.length; i++) if (t <= keys[i][0]){ const a = keys[i - 1], b = keys[i], u = (t - a[0])/(b[0] - a[0] || 1);
+    return [a[1] + (b[1] - a[1])*u, a[2] + (b[2] - a[2])*u, a[3] + (b[3] - a[3])*u]; }
+  const k = keys[keys.length - 1]; return [k[1], k[2], k[3]];
+}
+function fhFlow(st){
+  const p = st.progress || 0, o = { bar:null, s:0, tb: FH.tup.up, spark:0, push: FH.bx, blow:-1 }, cy = FH.cy, cx = FH.gx;
+  if (!st.active) return o;
+  const dims = s => ({ sx: 8 + 4*s, sy: 4 + 8*s, h: 2.4 - 1.4*s });
+  // 1. the ingot comes down the feed chute and the pusher shoves it onto the die
+  if (p < .12){ const t = p/.12;
+    if (t < .6){ const u = (t/.6)**2; o.bar = { at:[18 + (FH.bx - 2 - 18)*u, cy, ZT - (ZT - FH.DIE)*u], ...dims(0) }; }
+    else { const u = ease((t - .6)/.4); o.bar = { at:[FH.bx - 2 + (cx - FH.bx + 2)*u, cy, FH.DIE], ...dims(0) }; o.push = o.bar.at[0] - 4; }
+    return o; }
+  if (p < .18) o.push = FH.bx + (cx - 4 - FH.bx)*(1 - ease((p - .12)/.06));
+  // 2. four blows
+  if (p < .74){ const u = Math.min(3.999, Math.max(0, (p - .18)/.56*4)), i = Math.floor(u), fr = u - i;
+    o.s = (i + (fr >= .45 ? Math.min(1, (fr - .45)/.06) : 0))/4;
+    const d = dims(o.s), strike = FH.DIE + d.h, top = FH.tup.up;
+    o.tb = fr < .45 ? top - (top - strike)*(fr/.45)**2 : strike + (top - strike)*ease((fr - .45)/.55);
+    if (fr >= .45 && fr < .62){ o.spark = 1 - (fr - .45)/.17; o.blow = i; }
+    o.bar = { at:[cx, cy, FH.DIE], ...d };
+    return o; }
+  // 3. the pusher shoves the plate off the die onto the bed, out of the bay, down the spout, into the tray
+  o.s = 1; const d = dims(1), t = (p - .74)/.26, n = st.output | 0, py = FH.piles[n % 2], pz = .7 + Math.floor(n/2)*1.1;
+  const at = fhPath([[0, cx, cy, FH.DIE], [.3, 63.5, cy, FH.DIE], [.4, 66.5, cy, FH.BED], [.58, W + 1, cy, FH.BED], [.76, W + 7, cy, FH.spout[1] + .6], [1, 85, py, pz]], t);
+  if (t > .76){ const u = (t - .76)/.24; at[2] = FH.spout[1] + .6 - (FH.spout[1] + .6 - pz)*u*u; }
+  o.bar = { at, ...d, out: t > .76 };
+  if (t < .3) o.push = at[0] - 6; else if (t < .5) o.push = FH.bx + (63.5 - 6 - FH.bx)*(1 - ease((t - .3)/.2));
+  return o;
+}
+
+/* ---------- small builders ---------- */
+// the bar: a flat block centred at (x, y) with its bottom at z; x0clip cuts it at the bay's back wall
+function fhBar(b, col, x0clip = -1e9){
+  const [x, y, z] = b.at, m = { l: col, m: mix(col, '#000000', .15), d: mix(col, '#000000', .4) };
+  const x0 = Math.max(x - b.sx/2, x0clip); if (x0 >= x + b.sx/2) return '';
+  return box(x0, y - b.sy/2, z, x + b.sx/2, y + b.sy/2, z + b.h, m, toneI, .7);
+}
+const fhBarBox = (b, x0clip = -1e9) => [[Math.max(b.at[0] - b.sx/2, x0clip), b.at[1] - b.sy/2, b.at[2]], [b.at[0] + b.sx/2, b.at[1] + b.sy/2, b.at[2] + b.h]];
+// sparks off the bar's edges at a blow
+function fhSparks(flow){
+  if (!flow.spark || !flow.bar) return '';
+  const [x, y, z] = flow.bar.at, k = 1 - flow.spark, r1 = 2 + 9*k, r2 = r1 + 3 + 2*flow.spark;
+  let d = '', dots = '';
+  for (let i = 0; i < 9; i++){ const a = (i + .5*(flow.blow % 2))*2*Math.PI/9, ex = Math.cos(a), ey = Math.sin(a), lift = .25 + .35*((i*7) % 3)/2;
+    const o = [x + ex*(flow.bar.sx/2), y + ey*(flow.bar.sy/2), z + flow.bar.h];
+    const p1 = [o[0] + ex*r1, o[1] + ey*r1, o[2] + lift*r1 - .08*r1*r1*k], p2 = [o[0] + ex*r2, o[1] + ey*r2, o[2] + lift*r2 - .08*r2*r2*k];
+    d += pd([p1, p2], false); const q = P(...p2); dots += `<circle cx="${f(q[0])}" cy="${f(q[1])}" r="1.1" fill="#fff3b0"/>`; }
+  return `<g opacity="${f(.4 + .6*flow.spark)}"><path d="${d}" fill="none" stroke="${INK}" stroke-width="2.6" stroke-linecap="round"/>`
+    + `<path d="${d}" fill="none" stroke="#ffc94a" stroke-width="1.5" stroke-linecap="round"/>${dots}</g>`;
+}
+
+/* ---------- the hammer: bed, die, guides, tup, rod, pusher, bar (the bay view and the see-through share it) ---------- */
+function fhHammerParts(st, flow, clipBar){
+  const parts = [], put = (b, svg) => parts.push({ box: b, svg }), bx = (x0, y0, z0, x1, y1, z1, m, w = .8) => put([[x0, y0, z0], [x1, y1, z1]], box(x0, y0, z0, x1, y1, z1, m, toneI, w));
+  const T = FH.tup, tb = flow.tb, cy = FH.cy;
+  bx(...FH.bed, GT.IRON, 1);
+  bx(...FH.die, FH_DIE, 1);
+  // guide rods, the tup and its ears, the piston rod up into the ceiling
+  for (const gy of FH.gy) put([[FH.gx - 1.5, gy - 1.5, FH.BED], [FH.gx + 1.5, gy + 1.5, FH.bay[3]]], rod([FH.gx, gy, FH.BED], [FH.gx, gy, FH.bay[3]], 1.5, GT.IRON, toneI, .8));
+  bx(T.x0, T.y0, tb, T.x1, T.y1, tb + T.h, FH_TUP, 1.2);
+  bx(FH.gx - 2.5, FH.gy[0] + 1.5, tb + 3, FH.gx + 2.5, T.y0, tb + 9, FH_TUP, .8);
+  bx(FH.gx - 2.5, T.y1, tb + 3, FH.gx + 2.5, FH.gy[1] - 1.5, tb + 9, FH_TUP, .8);
+  put([[FH.cyl.x - 2, cy - 2, tb + T.h], [FH.cyl.x + 2, cy + 2, FH.bay[3]]], rod([FH.cyl.x, cy, tb + T.h], [FH.cyl.x, cy, FH.bay[3]], 2, GT.IRON, toneI, .8));
+  // the pusher, out of the back slot
+  if (flow.push > FH.bx + .2) bx(FH.bx, cy - 3, FH.DIE, flow.push, cy + 3, FH.DIE + 2.4, GT.BRZD, .8);
+  // the bar on the die or the bed (in the chute it's the see-through's, on the spout and in the tray theirs)
+  const b = flow.bar;
+  if (b && !b.out && b.at[0] < W + 1 && b.at[2] <= FH.DIE + .1){
+    const x0c = clipBar ? FH.bx : -1e9;
+    put(fhBarBox(b, x0c), fhBar(b, flow.s > 0 ? fhPlateCol(st) : fhCol(st), x0c)); }
+  return parts;
+}
+
+/* ---------- the case ---------- */
+function fhCase(st, m, flow){
+  const FRONT = facing([1,0,0]), BACK = facing([-1,0,0]), LEFT = facing([0,1,0]), RIGHT = facing([0,-1,0]);
+  let s = '';
+  if (FRONT) s += fill(pd(on(PX(W), OUT)), tone([1,0,0], m));
+  if (BACK) s += fill(pd(on(PX(0), OUT)), tone([-1,0,0], m));
+  s += extrude(OUT, 0, W, m);
+  if (FRONT){ const dk = mix(m.d, m.m, .35), rv = [];
+    s += ink(pd(on(PX(W + .25), rrUV(3.5, Z0 + 3.5, D - 3.5, ZT - 3.5, 3))), 1);
+    for (let y = 7; y <= D - 7; y += 7) rv.push([y, Z0 + 1.8], [y, ZT - 1.8]);
+    s += gtRivets(PX(W + .3), rv, dk);
+    s += gtNamePlate(W, 24, 65, 58, 75, 'FORGE HAMMER', 'STEAM AGE', 4);
+    s += fhBay(st, m, flow);
+  }
+  if (BACK) s += shape(on(PX(-.25), rrUV(18, 18, 62, 58, 3)), mix(m.m, m.d, .25), 1.4) + gtRivets(PX(-.3), [[21, 21], [59, 21], [21, 55], [59, 55]], m.d);
+  if (LEFT){ const rv = []; for (let x = 7; x <= W - 7; x += 7) rv.push([x, Z0 + 1.8], [x, ZT - 1.8]);
+    s += gtRivets(PY(D + .3), rv, mix(m.d, m.m, .35)) + shape(on(PY(D + .25), ellUV(FH.riserX, 34, 5.2, 5.2, 18)), mix(m.d, m.m, .2), .9); }
+  if (RIGHT){ let v = ''; for (let z = 30; z <= 60; z += 5) v += pd([[14, -.25, z], [56, -.25, z]], false);
+    s += `<path d="${v}" fill="none" stroke="${INK}" stroke-width="1.5" opacity=".75"/>`; }
+  if (FRONT) s += ink(pd(on(PX(W), OUT)), 2.2);
+  if (BACK) s += ink(pd(on(PX(0), OUT)), 2.2);
+  return s + hullInk([...on(PX(0), OUT), ...on(PX(W), OUT)], 2.8);
+}
+// the open hammer bay in the front: a riveted frame, a lined box, the hammer inside it, clipped to the opening
+function fhBay(st, m, flow){
+  const [y0, z0, y1, z1] = FH.bay, xb = FH.bx, L = FH_LINE, open = on(PX(W + .3), rectUV(y0, z0, y1, z1));
+  let s = shape(on(PX(W + .15), rrUV(y0 - 2.5, z0 - 2, y1 + 2.5, z1 + 2, 1.5)), mix(m.d, m.m, .45), 1.2);
+  let inner = fill(pd(open), L.d);
+  inner += shape(on(PX(xb), rectUV(y0, z0, y1, z1)), toneI([1,0,0], L), .8);                        // back wall
+  inner += shape(on(PX(xb + .1), rectUV(...FH.slot)), GT.RECESS, .8);                               // its slot
+  if (facing([0,1,0])) inner += shape([[xb, y0, z0], [W, y0, z0], [W, y0, z1], [xb, y0, z1]], toneI([0,1,0], L), .8);
+  if (facing([0,-1,0])) inner += shape([[xb, y1, z0], [W, y1, z0], [W, y1, z1], [xb, y1, z1]], toneI([0,-1,0], L), .8);
+  if (facing([0,0,1])) inner += shape([[xb, y0, z0], [W, y0, z0], [W, y1, z0], [xb, y1, z0]], toneI([0,0,1], L), .8);
+  if (facing([0,0,-1])) inner += shape([[xb, y0, z1], [W, y0, z1], [W, y1, z1], [xb, y1, z1]], toneI([0,0,-1], L), .8);
+  inner += byDepth(fhHammerParts(st, flow, true)) + fhSparks(flow);
+  s += clipTo(open, inner) + ink(pd(open), 1.8);
+  s += gtRivets(PX(W + .35), [[y0 - 1.2, z0 - .8], [y1 + 1.2, z0 - .8], [y0 - 1.2, z1 + .8], [y1 + 1.2, z1 + .8], [y0 - 1.2, (z0 + z1)/2], [y1 + 1.2, (z0 + z1)/2]], mix(m.d, m.m, .2));
+  return s;
+}
+function fhSpout(st, flow){
+  const [x1, z1] = FH.spout, z0 = FH.BED, [y0, y1] = FH.sy, sm = GT.BRZD, ym = (y0 + y1)/2;
+  const lip = y => shape([[W, y, z0], [x1, y, z1], [x1, y, z1 + 3], [W, y, z0 + 4]], tone([0, y > ym ? 1 : -1, 0], sm), 1);
+  let plate = shape([[W, y0, z0], [x1, y0, z1], [x1, y1, z1], [W, y1, z0]], tone(norm([6, 0, 8]), sm), 1);
+  if (facing([1,0,0])) plate += shape([[x1, y0, z1], [x1, y1, z1], [x1, y1, z1 - 1], [x1, y0, z1 - 1]], sm.d, .9);
+  const b = flow.bar; if (b && !b.out && b.at[0] >= W + 1) plate += fhBar(b, fhPlateCol(st));
+  return byDepth([
+    { box:[[W, y0 - .5, z1], [x1, y0 + .5, z0 + 4]], svg: lip(y0) },
+    { box:[[W, y0 + .5, z1 - 1], [x1, y1 - .5, z0 + 1]], svg: plate },
+    { box:[[W, y1 - .5, z1], [x1, y1 + .5, z0 + 4]], svg: lip(y1) } ]);
+}
+function fhTray(st, flow){
+  const [x0, y0, x1, y1] = FH.tray, A = on(PZ(0), rectUV(x0, y0, x1, y1)), B = on(PZ(FH.trayH), rectUV(x0, y0, x1, y1));
+  const col = fhPlateCol(st), pl = [];
+  let inner = fill(pd(on(PZ(.6), rectUV(x0 + .6, y0 + .6, x1 - .6, y1 - .6))), GT.IRON.d);
+  // plates in two piles, each a little askew
+  for (let i = 0; i < Math.min(12, st.output | 0); i++){ const py = FH.piles[i % 2], z = .7 + Math.floor(i/2)*1.1, dx = ((i*5) % 3 - 1)*.8;
+    pl.push({ box:[[79 + dx, py - 6, z], [91 + dx, py + 6, z + 1]], svg: fhBar({ at:[85 + dx, py, z], sx:12, sy:12, h:1 }, col) + ink(pd(on(PZ(z + 1.05), rectUV(81 + dx, py - 4, 89 + dx, py + 4))), .5) }); }
+  const b = flow.bar; if (b && b.out) pl.push({ box: fhBarBox(b), svg: fhBar(b, col) });
+  inner += byDepth(pl);
+  return openShell(A, B, n => toneI(n, GT.IRON), inner) + ink(pd(B), 1.4) + hullInk([...A, ...B], 1.8);
+}
+function fhFeet(){
+  return [[4, 4], [58, 4], [4, 68], [58, 68]].map(([x, y]) => ({ box:[[x, y, 0], [x + 8, y + 8, Z0]], svg: box(x, y, 0, x + 8, y + 8, Z0, DARK, toneI, 1) }));
+}
+
+/* ---------- the frame on the roof: columns, table, cylinder (the see-through shows the piston), steam pipe ---------- */
+function fhFrame(st, flow, k, fade){
+  const c = FH.cyl, parts = [], put = (b, svg) => parts.push({ box: b, svg }), M = GT.BRZD, zb = FH.beam[2];
+  for (const [x0, y0, x1, y1] of FH.cols) put([[x0, y0, ZT], [x1, y1, zb]], fade(box(x0, y0, ZT, x1, y1, zb, M, toneI, 1.2)
+    + (facing([1,0,0]) ? gtRivets(PX(x1 + .1), [[(y0 + y1)/2, ZT + 3], [(y0 + y1)/2, zb - 3]], M.d) : '')));
+  { const [x0, y0, z0, x1, y1, z1] = FH.beam; put([[x0, y0, z0], [x1, y1, z1]], fade(box(x0, y0, z0, x1, y1, z1, M, toneI, 1.3))); }
+  // the piston rod between the roof and the table, with its gland on the roof
+  put([[c.x - 4, c.y - 4, ZT], [c.x + 4, c.y + 4, zb]], cyl(c.x, c.y, ZT, ZT + 2, 4, GT.BRZD, toneI, .9) + rod([c.x, c.y, ZT + 2], [c.x, c.y, zb], 2, GT.IRON, toneI, .9));
+  // the cylinder: in see-through the piston shows through it
+  const pz = flow.tb + FH.rodK;
+  let cy = cyl(c.x, c.y, c.z0, c.z0 + 2, c.r + 1.5, M, toneI, 1.1, 28) + cyl(c.x, c.y, c.z0 + 2, c.z1 - 2, c.r, GT_BRZ, toneI, 1.4, 28)
+    + cyl(c.x, c.y, c.z1 - 2, c.z1, c.r + 1.5, M, toneI, 1.1, 28);
+  if (facing([1,0,0])) cy += gtRivets(PX(c.x + c.r + 1.55), [[c.y - 4, c.z0 + 1], [c.y + 4, c.z0 + 1], [c.y - 4, c.z1 - 1], [c.y + 4, c.z1 - 1]], M.d);
+  if (k > 0) cy = `<g opacity="${f(k)}">` + cyl(c.x, c.y, c.z0, pz, 2, GT.IRON, toneI, .7) + cyl(c.x, c.y, pz, pz + 3, c.r - .6, GT.IRON, toneI, 1) + `</g>` + `<g opacity="${f(1 - .65*k)}">${cy}</g>`;
+  put([[c.x - c.r - 1.5, c.y - c.r - 1.5, c.z0], [c.x + c.r + 1.5, c.y + c.r + 1.5, c.z1]], cy);
+  // steam pipe up the left of the frame into the cylinder's side
+  const pm = matOf(st.valve > .5 ? '#d9d2c2' : GT.BRZD.m), p = FH.pipe;
+  put([[p.x - 2, p.y - 2, ZT], [p.x + 2, p.y + 2, p.z + 2]], fade(cyl(p.x, p.y, ZT, ZT + 1.5, 3.6, M, toneI, .9) + rod([p.x, p.y, ZT + 1.5], [p.x, p.y, p.z], 1.8, pm, toneI, .8)
+    + rod([p.x, p.y + .2, p.z], [p.x, p.y - 2, p.z], 2.3, pm, toneI, .8)));
+  put([[p.x - 2, c.y + c.r + 1.5, p.z - 2], [p.x + 2, p.y - 2, p.z + 2]], fade(rod([p.x, p.y - 2, p.z], [p.x, c.y + c.r + 1, p.z], 1.8, pm, toneI, .8)
+    + rod([p.x, c.y + c.r + 2.4, p.z], [p.x, c.y + c.r - .5, p.z], 3, M, toneI, .8)));
+  const stack = gtStack(c.x, c.y, FH_STK, 8);
+  put(stack.box, fade(stack.svg));
+  return parts;
+}
+
+/* ---------- see-through: the hammer, the inside steam pipe, the feed chute ---------- */
+let FH_LABELS = '';
+function fhMech(st, k, flow){
+  const parts = fhHammerParts(st, flow, false), put = (b, svg) => parts.push({ box: b, svg }), cy = FH.cy;
+  // the inside steam pipe: from the wall flange in, then up through the roof
+  const pm = matOf(st.valve > .5 ? '#d9d2c2' : GT.BRZD.m), p = FH.pipe;
+  put([[p.x - 1.8, p.y, 32], [p.x + 1.8, D, 36]], rod([p.x, D, 34], [p.x, p.y, 34], 1.8, pm, toneI, .7));
+  put([[p.x - 1.8, p.y - 1.8, 34], [p.x + 1.8, p.y + 1.8, ZT]], rod([p.x, p.y, 34], [p.x, p.y, ZT], 1.8, pm, toneI, .7));
+  // the feed chute: an open trough from under the hopper down to the bay's back slot
+  { const a = [18, cy, ZT], b = [FH.bx, cy, FH.DIE + .2], y0 = cy - 4, y1 = cy + 4, M = GT.IRON;
+    const sl = shape([[a[0], y0, a[2]], [b[0], y0, b[2]], [b[0], y1, b[2]], [a[0], y1, a[2]]], toneI(norm([a[2] - b[2], 0, b[0] - a[0]]), M), .8);
+    const lip = y => shape([[a[0], y, a[2]], [b[0], y, b[2]], [b[0], y, b[2] + 3], [a[0], y, a[2] + 3]], toneI([0, y > cy ? 1 : -1, 0], M), .7);
+    let bar = '';
+    if (flow.bar && flow.bar.at[2] > FH.DIE + .1) bar = fhBar(flow.bar, fhCol(st));
+    put([[a[0] - 4, y0 - .5, b[2]], [b[0], y1 + .5, a[2] + 3]], lip(y0) + sl + bar + lip(y1)); }
+  const sb = byDepth(parts) + fhSparks(flow);
+  const T = FH.tup, run = !!st.running, c = FH.cyl;
+  FH_LABELS = k <= .6 ? '' : xrCallouts([
+    { at: [p.x, D - 3, 34], text: 'STEAM PIPE', on: st.valve > .5 },
+    { at: [c.x, c.y - c.r, flow.tb + FH.rodK + 1.5], text: 'PISTON', on: run },
+    { at: [c.x, cy, 90], text: 'PISTON ROD', on: run },
+    { at: [T.x1, T.y0, flow.tb + 8], text: 'TUP', on: run && flow.spark > 0 },
+    { at: [FH.gx, FH.gy[0], 40], text: 'GUIDE ROD', on: run },
+    { at: [FH.die[3], FH.die[1], 23], text: 'ANVIL', on: flow.spark > 0 },
+    { at: [28, cy - 4, 54], text: 'FEED CHUTE', on: !!flow.bar && flow.bar.at[2] > FH.DIE + .1 },
+    { at: [FH.bx + 3, cy - 3, FH.DIE + 2.4], text: 'PUSHER', on: flow.push > FH.bx + .2 } ], [0, 96, 0, 100, 0, FH_TOP]);
+  return sb;
+}
+
+/* ---------- scene ---------- */
+function scene(st, m){
+  const flow = fhFlow(st), k = ease(st.xr || 0), col = fhCol(st), c = FH.cyl;
+  const fade = svg => k > 0 ? `<g opacity="${f(1 - .7*k)}">${svg}</g>` : svg;
+  let s = castShadow([...on(PX(0), OUT), ...on(PX(W), OUT), ...on(PZ(ZT + FH.hopH), rectUV(...FH.hopTop)), ...on(PZ(c.z1), ellUV(c.x, c.y, c.r + 1.5, c.r + 1.5, 12)),
+    [c.x, c.y, FH_TOP], [FH.riserX, D + 10, 34]]);
+  let body = fhCase(st, m, flow);
+  if (k > 0) body = xrGhost(body, '', k, OUT, 0, W, m) + `<g opacity="${f(k)}">${fhMech(st, k, flow)}</g>`;
+  // ingots waiting on the hopper's flap
+  const rest = [[14, 34, ZT + .4], [18, 34, ZT + .4], [22, 34, ZT + .4], [14, 42, ZT + .4], [18, 42, ZT + .4], [22, 42, ZT + .4]].slice(0, Math.min(6, st.input | 0))
+    .map(at => ({ box:[[at[0] - 2, at[1] - 4, at[2]], [at[0] + 2, at[1] + 4, at[2] + 2.2]], svg: gtIngot(at, col, 0, true) }));
+  const dropping = !!flow.bar && flow.bar.at[0] < 24 && flow.bar.at[2] > ZT - 6;
+  const riser = gtRiser(FH.riserX, D, 34, st.valve);
+  // the feet stand on the floor under everything: drawn first, never sorted with the rest
+  s += byDepth(fhFeet());
+  s += byDepth([
+    { box:[[0, 0, Z0], [W, D, ZT]], svg: body },
+    { box:[[FH.hopTop[0], FH.hopTop[1], ZT], [FH.hopTop[2], FH.hopTop[3], ZT + FH.hopH]], svg: act('hopper', fade(gtHopper(ZT, FH.hopBot, FH.hopTop, FH.hopH, m, rest, dropping))) },
+    ...fhFrame(st, flow, k, fade),
+    { box:[[W, 5, 58], [W + 3, 17, 70]], svg: gtGauge(W, 11, 64, 6, st.steam) },
+    { box:[[W, 8.6, 47.6], [W + 2, 13.4, 52.4]], svg: gtLamp(W, 11, 50, st) },
+    { box:[[W, FH.sy[0] - .5, FH.spout[1] - 1], [FH.spout[0], FH.sy[1] + .5, FH.BED + 4]], svg: fhSpout(st, flow) },
+    { box:[[FH.tray[0], FH.tray[1], 0], [FH.tray[2], FH.tray[3], FH.trayH]], svg: fhTray(st, flow) },
+    { box: riser.box, svg: fade(riser.svg) } ]);
+  s += gtPuffsSvg(st);
+  if (k > .6) s += FH_LABELS;
+  else s += xrCallouts([
+    { at: [18, FH.hopTop[1], ZT + FH.hopH], text: 'HOPPER', on: dropping },
+    { at: [c.x, c.y + c.r, 120], text: 'STEAM CYLINDER', on: !!st.running },
+    { at: [c.x, c.y, FH_TOP], text: 'VENT STACK', on: !!st.running },
+    { at: [FH.cols[0][2], FH.cols[0][1], 90], text: 'HAMMER FRAME', on: false },
+    ...(facing([0,1,0]) ? [{ at: [FH.riserX, D + 18, 26], text: 'STEAM VALVE', on: st.valve > .5 }] : []),
+    ...(facing([1,0,0]) ? [{ at: [FH.tup.x1, FH.tup.y0, flow.tb + 6], text: 'HAMMER', on: flow.spark > 0 }, { at: [FH.die[3], FH.die[1], 22], text: 'ANVIL', on: flow.spark > 0 },
+      { at: [W + 3, 11, 70], text: 'PRESSURE GAUGE', on: (st.steam || 0) > .05 }] : []),
+    { at: [FH.tray[2], (FH.tray[1] + FH.tray[3])/2, FH.trayH], text: 'OUTPUT TRAY', on: (st.output || 0) > 0 } ], [0, 96, 0, 100, 0, FH_TOP]);
+  return s;
+}
+
+gtMachine({
+  fig:'S5', title:'Steam Forge Hammer', size:[96, 100, 144], center:[48, 50], scene,
+  recipes:[{ id:'hammer_iron_plate', name:'Iron Plate' }, { id:'hammer_copper_plate', name:'Copper Plate' }, { id:'hammer_bronze_plate', name:'Bronze Plate' }],
+  demoSeconds: 5, loadLabel:'Load ingots', inLabel:'Ingots', outLabel:'Plates',
+  emitters:[{ id:'vent', at: () => [FH.cyl.x, FH.cyl.y, FH_TOP + .5], when: st => !!st.running }],
+  tile:[[-3, -1, 0], [99, -1, 0], [99, 101, 0], [-3, 101, 0]],
+});
+</script>
+<script src="cf-tail.js"></script>
+</body></html>

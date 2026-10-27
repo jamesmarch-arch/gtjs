@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LV Ore Washer</title>
+<script src="cf-head.js"></script></head><body>
+<script src="core.js"></script>
+<script src="gt-bridge.js"></script>
+<script src="gt-parts.js"></script>
+<script src="gt-lv.js"></script>
+<script>
+/* LV Ore Washer (gtjs, LV): crushed ore tumbled in water, so the light dirt and stone wash off and leave purified ore.
+
+   How it works (truth first)
+   1. Water comes from the main in the floor, up the back of the case and over the roof, through a valve, and down an
+      inlet pipe that sprays it into the drum.
+   2. The drum is a perforated steel cylinder lying on its side, turned slowly by a motor under it through a belt.
+      Lifters (ribs inside the drum) carry the crushed ore up out of the water and drop it back in, so the lumps knock
+      against each other and the water scours them. Stone dust and the lighter mineral wash off into the water.
+   3. What is left is purified ore. It drops out of the front of the drum down a chute to the output slot and the tray.
+   Where the ore is: porthole door -> drum -> chute -> slot -> tray.
+   Where the water is: main -> riser up the back -> roof run -> valve -> inlet -> spray -> drum.
+   Where the power is: cable -> socket -> control board -> motor -> belt -> drum pulley.
+
+   Parts
+   OUTSIDE  the LV case (see gt-lv.js) . round porthole door: chrome rim, blue gasket, glass, the drum turning behind
+            it with ore tumbling in sloshing water . hinge (low y), latch (high y) . program dial . water mark .
+            blue water pipe from the floor flange up the back, over the roof, through a handwheel valve, down into
+            the roof
+   INSIDE   perforated drum on its shaft . three lifters . water . ore . drum pulley, belt, motor . inlet pipe and
+            spray . chute
+
+   Contact checks (numbers)
+   - porthole rim r 21 at (y 40, z 37.5): y 19..61, z 16.5..58.5, inside the face recess (y 8..72, z 15..60).
+   - drum r 15 on the same axis, x 22..68: its front (x 68) sits 6 behind the glass (x 74); glass r 16.5 shows it all.
+   - water level z 35 in both the porthole and the drum (2.5 under the axis).
+   - drum pulley r 9 at x 14..17; motor r 6 along x 18..40 at z 14, under the drum (drum bottom z 22.5); belt from
+     the motor pulley (r 3, z 14) to the drum pulley.
+   - inlet pipe down at (56, 48) from the roof (z 84) to z 52: the drum's skin there is at z 50.2.
+   - roof run at z 94 from the riser (x 56) back to x -2.5, then down the back wall (x -2.5 clears the back at x 0).
+   - chute from under the drum front (x 60, z 22) to the output slot (x 74, z 10.5).
+*/
+const OW = { y: 40, z: 37.5, R: 21, G: 16.5, dr: 15, x0: 22, x1: 68, lvl: 35 };
+const OW_CHROME = { l:'#f4f7f9', m:'#cdd5db', d:'#7d8a94' };
+const OW_PIPE = { l:'#8cc4ea', m:'#4f93c9', d:'#24527a' };
+const OW_WATER = '#4f9fd6';
+const OW_PIPE_Y = 48, OW_RISE_X = 56, OW_RUN_Z = 94, OW_BACK_X = -2.5;
+const owOre = st => GT.ORE[lvMetal(st)] || GT.ORE.iron;
+const owProduct = st => ({ kind: 'crushed', col: mix(owOre(st), '#ffffff', .12) });
+const owAng = st => (st.t || 0)*2.2;
+// a small rotated square on the face plane (a lump of ore seen through the glass)
+const owLumpUV = (cy, cz, s, a) => [0, 1, 2, 3].map(i => [cy + s*Math.cos(a + i*Math.PI/2), cz + s*Math.sin(a + i*Math.PI/2)]);
+// where the lumps are in the drum (y, z about the axis): tumbling in the lower half while it turns, resting when not
+function owLumps(st){
+  const a = owAng(st), n = st.active ? 4 : Math.min(3, st.input | 0), o = [];
+  for (let i = 0; i < n; i++){
+    if (st.running){ const ang = -Math.PI/2 + 1.9*Math.sin(a*.9 + i*2.1), r = 8.5 + 2.5*Math.sin(a*1.7 + i);
+      o.push([OW.y + r*Math.cos(ang), OW.z + r*Math.sin(ang), a*2 + i]); }
+    else o.push([OW.y - 6 + i*4.5, OW.z - 12 + (i % 2)*1.2, i*.5]);
+  }
+  return o;
+}
+
+// the program dial and a water drop on the face, beside the porthole
+function owFace(st){
+  let s = cylX(LV.W, LV.W + 1.8, 66, 52, 3.4, OW_CHROME, toneI, .9, 18);
+  if (!facing([1,0,0])) return s;
+  const a = st.running ? 1.2 : .2, X = LV.W + 1.85;
+  s += ink(pd([[X, 66, 52], [X, 66 - 2.6*Math.sin(a), 52 + 2.6*Math.cos(a)]], false), 1);
+  for (let i = 0; i < 5; i++){ const b = -1 + i*.55; s += fill(pd(lvOn(ellUV(66 - 5*Math.sin(b), 52 + 5*Math.cos(b), .45, .45, 6), .5)), INK); }
+  const drop = [[66, 30]]; for (let i = 0; i <= 12; i++){ const t = Math.PI*(.8 + 1.4*i/12); drop.push([66 + 2.6*Math.cos(t), 24 + 2.6*Math.sin(t)]); }
+  return s + shape(lvOn(drop, .5), OW_WATER, .9) + fill(pd(lvOn(ellUV(67, 24.5, .7, 1.1, 8), .55)), '#ffffff', 'opacity=".6"');
+}
+
+// the porthole door: chrome rim standing off the face, the drum, ore and water seen through the glass
+function owPort(st){
+  const X0 = LV.W, X1 = LV.W + 2.5, { y, z, R, G } = OW, a = owAng(st), on2 = (uv, l) => on(PX(X1 + l), uv);
+  let s = box(X0, 15.5, 28, X0 + 2, 19.5, 47, OW_CHROME, toneI, .9) + cylX(X0, X1, y, z, R, OW_CHROME, toneI, 1.6, 40);
+  if (!facing([1,0,0])) return s;
+  s += shape(on2(ellUV(y, z, G + 2.2, G + 2.2, 40), .05), '#3f7fb8', 1);
+  let c = fill(pd(on2(ellUV(y, z, G + 1, G + 1, 36), .1)), '#2f363c');
+  // the drum's holes and its lifters, turning
+  for (const [r, n] of [[5, 6], [9.5, 10], [13.5, 14]]) for (let i = 0; i < n; i++){ const b = a + i*2*Math.PI/n;
+    c += fill(pd(on2(ellUV(y + r*Math.cos(b), z + r*Math.sin(b), .6, .6, 6), .12)), '#5b656d'); }
+  for (let i = 0; i < 3; i++){ const b = a + i*2*Math.PI/3, cb = Math.cos(b), sb = Math.sin(b), w = 1.4;
+    c += shape(on2([[y + 11*cb - w*sb, z + 11*sb + w*cb], [y + 16*cb - w*sb, z + 16*sb + w*cb], [y + 16*cb + w*sb, z + 16*sb - w*cb], [y + 11*cb + w*sb, z + 11*sb - w*cb]], .14), '#9aa3aa', .6); }
+  // the ore, then the water over it
+  const col = owOre(st);
+  for (const [ly, lz, r] of owLumps(st)) c += shape(on2(owLumpUV(ly, lz, 3, r), .16), col, .8);
+  const tilt = st.running ? .22*Math.sin(a*1.3) : 0, wave = st.running ? 1 : 0, surf = [];
+  for (let yy = y - G - 1; yy <= y + G + 1; yy += 1.5) surf.push([yy, OW.lvl + tilt*(yy - y) + wave*.8*Math.sin(yy*.45 + a*3)]);
+  c += fill(pd(on2([...surf, [y + G + 1, z - G - 2], [y - G - 1, z - G - 2]], .18)), OW_WATER, 'opacity=".8"')
+    + `<path d="${pd(on2(surf, .2), false)}" fill="none" stroke="#d4eefa" stroke-width="1.3" stroke-linecap="round"/>`;
+  if (st.running) for (let i = 0; i < 5; i++){ const u = ((st.t || 0)*.9 + i/5) % 1, by = y - 8 + i*4 + Math.sin(u*9 + i)*.8, bz = z - 14 + u*(OW.lvl - z + 13);
+    c += `<path d="${pd(on2(ellUV(by, bz, .8, .8, 8), .22))}" fill="none" stroke="#e8f6fd" stroke-width=".7"/>`; }
+  // the glass: two streaks of light
+  c += fill(pd(on2([[y + 8, z + 11], [y + 12, z + 7], [y + 10.5, z + 6], [y + 6.5, z + 10]], .3)), '#ffffff', 'opacity=".4"')
+    + fill(pd(on2([[y - 9, z - 8], [y - 11.5, z - 5], [y - 12.5, z - 6], [y - 10, z - 9]], .3)), '#ffffff', 'opacity=".3"');
+  s += clipTo(on2(ellUV(y, z, G, G, 36), .1), c) + ink(pd(on2(ellUV(y, z, G, G, 36), .35)), 1.3);
+  // the latch on the rim's high-y edge
+  s += box(X1, y + R - 4, z - 3.5, X1 + 2, y + R + 1, z + 3.5, OW_CHROME, toneI, .9);
+  return s;
+}
+
+/* ---------- the water pipe: floor flange, up the back, over the roof, valve, down into the roof ---------- */
+function owPipes(st, fade){
+  const y = OW_PIPE_Y, r = 2.2, Z = OW_RUN_Z, xb = OW_BACK_X, xr = OW_RISE_X, vx = 30, run = !!st.running;
+  const pm = OW_PIPE;
+  // down the back: from the floor flange to the elbow over the roof's back edge
+  const back = cyl(xb, y, 0, 1.4, 4, pm, toneI, 1) + rod([xb, y, 1.4], [xb, y, Z], r, pm, toneI, 1.1) + rod([xb, y, Z - .1], [xb + .1, y, Z + .1], r + .6, pm, toneI, .9);
+  // along the roof and down into it, with the valve on the run
+  let roof = byDepth([
+    { box:[[xb, y - r, Z - r], [xr, y + r, Z + r]], svg: rod([xb, y, Z], [xr, y, Z], r, pm, toneI, 1.1) },
+    { box:[[xr - r, y - r, LV.ZT], [xr + r, y + r, Z + r]], svg: cyl(xr, y, LV.ZT, LV.ZT + 1.4, 4, pm, toneI, 1) + rod([xr, y, LV.ZT + 1.4], [xr, y, Z], r, pm, toneI, 1.1)
+      + rod([xr, y, Z - 1], [xr, y, Z + 1.6], r + .5, pm, toneI, .9) },
+    { box:[[vx - 4, y - 3, Z - 3], [vx + 4, y + 3, Z + 3]], svg: box(vx - 4, y - 3, Z - 3, vx + 4, y + 3, Z + 3, OW_CHROME, toneI, 1) },
+    { box:[[vx - 5, y - 5, Z + 3], [vx + 5, y + 5, Z + 8]], svg: act('valve', rod([vx, y, Z + 3], [vx, y, Z + 6.5], .8, OW_CHROME, toneI, .8) + owWheel(vx, y, Z + 6.5, run ? 1 : 0)) } ]);
+  return [{ box:[[xb - 4, y - 4, 0], [xb + 2.3, y + 4, Z + r]], svg: fade(back) }, { box:[[xb + 2.3, y - 5, LV.ZT], [xr + 4, y + 5, Z + 8]], svg: fade(roof) }];
+}
+// a blue handwheel lying flat: open = turned a quarter
+function owWheel(x, y, z, open){
+  let s = cyl(x, y, z, z + 1.2, 4.6, OW_PIPE, toneI, 1, 24);
+  if (!facing([0,0,1])) return s;
+  const zz = z + 1.25, a0 = open*Math.PI/2; let d = '';
+  for (let i = 0; i < 4; i++){ const b = a0 + i*Math.PI/2; d += pd([[x + 1*Math.cos(b), y + 1*Math.sin(b), zz], [x + 3.6*Math.cos(b), y + 3.6*Math.sin(b), zz]], false); }
+  return s + fill(pd(on(PZ(zz), ellUV(x, y, 3.4, 3.4, 20))), OW_PIPE.d) + `<path d="${d}" fill="none" stroke="${OW_PIPE.l}" stroke-width="1.8" stroke-linecap="round"/>`
+    + shape(on(PZ(zz + .05), ellUV(x, y, 1.2, 1.2, 10)), OW_CHROME.l, .6);
+}
+
+function owParts(st, k, fade){
+  return [{ box:[[LV.W, 15.5, 16.5], [LV.W + 4.5, 62, 58.5]], svg: fade(owPort(st)) }, ...owPipes(st, fade)];
+}
+
+/* ---------- see-through: drum, lifters, water, motor, inlet ---------- */
+function owInside(st, k){
+  const out = [], put = (b, svg) => out.push({ box: b, svg }), run = !!st.running, a = owAng(st), { y, z, dr, x0, x1, lvl } = OW;
+  const at = (x, r, b) => [x, y + r*Math.cos(b), z + r*Math.sin(b)];
+  const A = on(PX(x0), ellUV(y, z, dr, dr, 28)), B = on(PX(x1), ellUV(y, z, dr, dr, 28));
+  const STEEL = { l:'#d9dfe3', m:'#a9b2b9', d:'#5d666e' };
+  // inside the drum: lifters, ore, water; the drum's skin drawn half see-through over them
+  const ins = [];
+  for (let i = 0; i < 3; i++){ const b = a + i*2*Math.PI/3, n = [0, -Math.sin(b), Math.cos(b)];
+    ins.push({ box:[[x0, y + Math.min(11*Math.cos(b), 15*Math.cos(b)) - .5, z + Math.min(11*Math.sin(b), 15*Math.sin(b)) - .5], [x1, y + Math.max(11*Math.cos(b), 15*Math.cos(b)) + .5, z + Math.max(11*Math.sin(b), 15*Math.sin(b)) + .5]],
+      svg: shape([at(x0 + .5, 11, b), at(x1 - .5, 11, b), at(x1 - .5, 15, b), at(x0 + .5, 15, b)], toneI(n, STEEL), .7) }); }
+  const col = owOre(st);
+  owLumps(st).forEach(([ly, lz], i) => { const p = [32 + i*9, ly, lz]; ins.push({ at: p, svg: gtLump(p, .8, col) }); });
+  const hw = Math.sqrt(dr*dr - (z - lvl)**2), seg = [];
+  // the water: its surface, and its face at the drum's open front (the part of the circle under the surface)
+  const b0 = Math.asin((lvl - z)/dr);   // angle of the surface's ends
+  for (let i = 0; i <= 16; i++){ const b = b0 - (Math.PI + 2*b0)*i/16; seg.push(at(x1 - .3, dr - .3, b)); }
+  let inner = fill(pd(on(PX(x0 + .2), ellUV(y, z, dr - .2, dr - .2, 28))), '#4a5259') + byDepth(ins)
+    + fill(pd(on(PZ(lvl), rectUV(x0 + .3, y - hw + .3, x1 - .3, y + hw - .3))), OW_WATER, 'opacity=".55"')
+    + (facing([1,0,0]) ? fill(pd(seg), OW_WATER, 'opacity=".55"') : '')
+    + ink(pd(on(PZ(lvl + .05), rectUV(x0 + .3, y - hw + .3, x1 - .3, y + hw - .3))), .5);
+  const skin = loft(A, B, n => toneI(n, STEEL), true) + inner + `<g opacity=".45">${loft(A, B, n => toneI(n, STEEL))}</g>` + ink(pd(B), 1.2) + hullInk([...A, ...B], 1.6);
+  // holes in the skin: dots on a few rings, turning
+  let holes = ''; for (const x of [30, 40, 50, 60]) for (let i = 0; i < 12; i++){ const b = a + i*Math.PI/6 + x*.05, p = at(x, dr, b);
+    if (depthOf([0, Math.cos(b), Math.sin(b)]) > 0) holes += pd(on(PX(x), ellUV(p[1], p[2], .01, .01, 3))); }
+  put([[x0, y - dr, z - dr], [x1, y + dr, z + dr]], skin + `<path d="${holes}" fill="none" stroke="${INK}" stroke-width="1.6" stroke-linecap="round" opacity=".55"/>`);
+  // the drum's shaft and pulley, the belt down to the motor under it
+  put([[14, y - 9, z - 9], [17, y + 9, z + 9]], cylX(14, 17, y, z, 9, GT_TRIM, toneI, 1, 28));
+  put([[17, y - 2, z - 2], [x0, y + 2, z + 2]], cylX(17, x0, y, z, 2, GT.IRON, toneI, .8, 12));
+  put([[18, y - 6, 8], [40, y + 6, 20]], cylX(18, 40, y, 14, 6, GT.IRON, toneI, 1.1, 22) + box(20, y - 7, LV.Z0, 38, y + 7, 9, GT_TRIM, toneI, .8));
+  put([[14, y - 3, 11], [18, y + 3, 17]], cylX(14, 18, y, 14, 3, GT_TRIM, toneI, .8, 14));
+  out.push(gtWire([[15.5, y + 3, 14], [15.5, y + 9, z]], '#4a4f55', 1), gtWire([[15.5, y - 3, 14], [15.5, y - 9, z]], '#4a4f55', 1));
+  // the inlet down from the roof and its spray
+  put([[OW_RISE_X - 2, OW_PIPE_Y - 2, 52], [OW_RISE_X + 2, OW_PIPE_Y + 2, LV.ZT]], rod([OW_RISE_X, OW_PIPE_Y, LV.ZT], [OW_RISE_X, OW_PIPE_Y, 53.5], 1.8, OW_PIPE, toneI, .8)
+    + rod([OW_RISE_X, OW_PIPE_Y, 54], [OW_RISE_X, OW_PIPE_Y, 52], 1.8, OW_PIPE, toneI, .8, 3));
+  if (run) for (let i = 0; i < 4; i++){ const u = ((st.t || 0)*2 + i/4) % 1, p = [OW_RISE_X + (i - 1.5)*1.6, OW_PIPE_Y - (i % 2), 51.5 - u*3];
+    put([[p[0] - .8, p[1] - .8, p[2] - .8], [p[0] + .8, p[1] + .8, p[2] + .8]], shape(on(PX(p[0]), ellUV(p[1], p[2], .7, 1, 8)), OW_WATER, .5)); }
+  // the chute from under the drum's front to the slot
+  put([[58, 30, 9], [LV.W, 50, 24]], shape([[60, 30, 22], [LV.W, 30, 10.5], [LV.W, 50, 10.5], [60, 50, 22]], toneI(norm([11.5, 0, 14]), GT.IRON), .9)
+    + (run ? gtLump([67, 40, 17.5], .6, mix(col, '#ffffff', .12)) : ''));
+  return out;
+}
+
+gtLv({
+  fig:'LV3', title:'LV Ore Washer', name:'WASHER', face: owFace, parts: owParts, inside: owInside, product: owProduct,
+  shadowPts: [[OW_BACK_X - 3, OW_PIPE_Y, OW_RUN_Z + 3], [OW_RISE_X + 3, OW_PIPE_Y, OW_RUN_Z + 3], [30, OW_PIPE_Y, OW_RUN_Z + 8]],
+  recipes:[{ id:'wash_crushed_iron', name:'Purified Iron Ore' }, { id:'wash_crushed_copper', name:'Purified Copper Ore' }, { id:'wash_crushed_tin', name:'Purified Tin Ore' }],
+  loadLabel:'Load ore', outLabel:'Made',
+  callouts: st => [{ at: [OW_BACK_X, OW_PIPE_Y, 60], text: 'FROM WATER MAIN', on: !!st.running }, { at: [30, OW_PIPE_Y, OW_RUN_Z + 7.7], text: 'WATER VALVE', on: !!st.running },
+    ...(facing([1,0,0]) ? [{ at: [LV.W + 2.5, OW.y - 12, OW.z - 8], text: 'PORTHOLE', on: !!st.running }, { at: [LV.W + 1.8, 66, 52], text: 'PROGRAM DIAL', on: false }] : [])],
+  insideCallouts: st => [{ at: [48, OW.y + 10, OW.z + 11], text: 'DRUM', on: !!st.running }, { at: [60, OW.y - 8, OW.lvl], text: 'WATER', on: !!st.running },
+    { at: [40, OW.y, 20], text: 'MOTOR', on: !!st.running }, { at: [15.5, OW.y + 6, 26], text: 'BELT', on: !!st.running },
+    { at: [OW_RISE_X, OW_PIPE_Y, 64], text: 'WATER INLET', on: !!st.running }, { at: [66, 50, 16], text: 'CHUTE', on: !!st.running },
+    { at: [16, OW.y, OW.z + 9], text: 'DRUM PULLEY', on: !!st.running }],
+});
+</script>
+<script src="cf-tail.js"></script>
+</body></html>

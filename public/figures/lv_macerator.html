@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LV Macerator</title>
+<script src="cf-head.js"></script></head><body>
+<script src="core.js"></script>
+<script src="gt-bridge.js"></script>
+<script src="gt-parts.js"></script>
+<script src="gt-lv.js"></script>
+<script>
+/* LV Macerator (gtjs, LV): the steam macerator's job on electricity, twice the crushed ore per ore.
+
+   How it works (truth first)
+   1. Ore drops from the hopper on the roof down a feed throat into the nip between two toothed crusher rollers.
+   2. An electric motor at the back drives the rollers through a belt; they turn toward each other and pull the ore
+      down between their teeth, breaking it into crushed ore (and grinding crushed ore into dust).
+   3. What falls out of the bottom of the rollers slides down a chute to the output slot and into the tray.
+   Where the ore is: hopper -> throat -> rollers -> chute -> slot -> tray.
+   Where the power is: cable -> socket -> control board -> motor -> belt -> rollers.
+
+   Parts
+   OUTSIDE  the LV case (see gt-lv.js) . crusher window on the face with the rollers' ends turning behind it .
+            hopper on the roof
+   INSIDE   motor . belt . two crusher rollers on shafts . feed throat . output chute
+
+   Contact checks (numbers)
+   - rollers r 8 (+2 teeth) at y 31 and 49, z 40: the nip is at y 40, between them; both run x 26..70.
+   - hopper bottom (x 40..60, y 30..50) at z 84 over the throat (x 46..54, y 36..44) down to z 52, over the nip.
+   - chute from under the rollers (x 60, z 26) to the slot (x 74, z 10.5).
+   - motor r 7 at (x 14, z 22), y 20..44; belt from its pulley (y 46) to the rollers' pulleys at x 22.
+*/
+const ROLL = [{ y: 31, dir: 1 }, { y: 49, dir: -1 }], RZ = 40, RR = 8;
+const HOP = { bot: [40, 30, 60, 50], top: [34, 24, 66, 56], h: 12 };
+const ORE = st => GT.ORE[lvMetal(st)] || GT.ORE.iron;
+const crushing = st => !!st.active && (st.progress || 0) < .85;
+const macProduct = st => ({ kind: /_ore$/.test((st.recipe && st.recipe.id) || 'lv_macerate_iron_ore') ? 'crushed' : 'dust', col: ORE(st) });
+
+function macFace(st){
+  const t = st.t || 0, run = !!st.running, w = [14, 22, 66, 56];
+  let s = shape(lvOn(rrUV(...w, 3)), '#2e3236', 1.6);
+  // the rollers' ends behind the glass, turning toward each other
+  for (const r of ROLL){
+    const g = lvOn(lvGear(r.y, RZ, RR, 10, r.dir*t*3), .5);
+    s += shape(g, GT.IRON.m, 1.1) + shape(lvOn(ellUV(r.y, RZ, 3.2, 3.2, 14), .55), GT.IRON.d, .8) + fill(pd(lvOn(ellUV(r.y, RZ, 1.2, 1.2, 8), .6)), INK);
+  }
+  // ore coming down into the nip, crushed ore falling out below it
+  if (crushing(st)){ const p = st.progress || 0, col = ORE(st);
+    for (let i = 0; i < 3; i++){ const z = 54 - ((p*6 + i/3) % 1)*10, a = lvOn(rrUV(38.6 + (i % 2), z - 1.6, 41.6 + (i % 2), z + 1.6, .8), .6);
+      s += shape(a, col, .7); }
+    if (run) for (let i = 0; i < 4; i++){ const z = 30 - ((t*1.6 + i/4) % 1)*7, y = 37 + (i*2.3) % 6;
+      s += shape(lvOn(ellUV(y, z, .9, .9, 6), .6), mix(col, '#ffffff', .1), .5); } }
+  // glass: two streaks of light
+  s += fill(pd(lvOn([[18, 50], [24, 54], [20, 54], [16, 51]], .65)), '#ffffff', 'opacity=".35"') + fill(pd(lvOn([[56, 26], [64, 33], [64, 30], [59, 25]], .65)), '#ffffff', 'opacity=".25"');
+  return s + ink(pd(lvOn(rrUV(...w, 3), .7)), 1.6);
+}
+
+function macParts(st, k, fade){
+  const col = ORE(st), lumps = [[46, 36, LV.ZT + 2.5], [54, 44, LV.ZT + 2.5], [47, 45, LV.ZT + 3.5], [53, 35, LV.ZT + 3.5]]
+    .slice(0, Math.min(4, st.input | 0)).map(at => ({ at, svg: gtLump(at, .8, col) }));
+  return [{ box:[[HOP.top[0], HOP.top[1], LV.ZT], [HOP.top[2], HOP.top[3], LV.ZT + HOP.h]],
+    svg: act('hopper', fade(gtHopper(LV.ZT, HOP.bot, HOP.top, HOP.h, GT_STEEL, lumps, crushing(st) && (st.progress || 0) < .2))) }];
+}
+
+function macInside(st, k){
+  const out = [], put = (b, svg) => out.push({ box: b, svg }), run = !!st.running, t = st.t || 0, col = ORE(st);
+  // the motor and its pulley
+  put([[7, 20, 15], [21, 44, 29]], rod([14, 20, 22], [14, 44, 22], 7, GT.IRON, toneI, 1, 7, 24) + box(8, 22, LV.Z0, 20, 42, 15, GT_TRIM, toneI, .8));
+  put([[10, 44, 18], [18, 48, 26]], rod([14, 44, 22], [14, 48, 22], 4, GT_TRIM, toneI, .8, 4, 18));
+  // the rollers on their shafts, the belt up to them
+  for (const r of ROLL){
+    put([[24, r.y - RR - 2, RZ - RR - 2], [70, r.y + RR + 2, RZ + RR + 2]], cylX(26, 70, r.y, RZ, RR, GT.IRON, toneI, 1.1, 24)
+      + (facing([1,0,0]) ? shape(on(PX(70.1), lvGear(r.y, RZ, RR, 10, r.dir*t*3)), GT.IRON.m, .9) : ''));
+    put([[20, r.y - 2, RZ - 2], [26, r.y + 2, RZ + 2]], cylX(20, 26, r.y, RZ, 2, GT_TRIM, toneI, .7, 12));
+  }
+  out.push(gtWire([[14, 46, 26], [21, 31, RZ - 2], [21, 49, RZ + 2], [14, 46, 18]], run ? '#4a4f55' : '#5a5f65', 1));
+  // the feed throat from the hopper, the chute to the slot
+  put([[46, 36, 52], [54, 44, LV.ZT]], box(46, 36, 52, 54, 44, LV.ZT, matOf('#a7aeb2'), toneI, .8));
+  put([[58, 30, 9], [LV.W, 50, 28]], shape([[58, 30, 26], [LV.W, 30, 10.5], [LV.W, 50, 10.5], [58, 50, 26]], toneI(norm([16, 0, 14]), GT.IRON), .9)
+    + (run ? gtLump([66, 40, 19.5], .6, col) : ''));
+  return out;
+}
+
+gtLv({
+  fig:'LV2', title:'LV Macerator', name:'MACERATOR', face: macFace, parts: macParts, inside: macInside, product: macProduct,
+  shadowPts: [[HOP.top[0], HOP.top[1], LV.ZT + HOP.h], [HOP.top[2], HOP.top[3], LV.ZT + HOP.h]],
+  recipes:[{ id:'lv_macerate_iron_ore', name:'Crushed Iron Ore' }, { id:'lv_macerate_crushed_copper', name:'Impure Copper Dust' }],
+  loadLabel:'Load ore', outLabel:'Made',
+  callouts: st => [{ at: [50, 40, LV.ZT + HOP.h], text: 'HOPPER', on: crushing(st) && (st.progress || 0) < .2 },
+    ...(facing([1,0,0]) ? [{ at: [LV.W, 40, 56], text: 'CRUSHER ROLLERS', on: !!st.running }] : [])],
+  insideCallouts: st => [{ at: [14, 32, 29], text: 'MOTOR', on: !!st.running }, { at: [21, 40, 40], text: 'BELT', on: !!st.running },
+    { at: [48, 31, RZ + RR], text: 'ROLLERS', on: !!st.running }, { at: [50, 36, 66], text: 'FEED THROAT', on: crushing(st) },
+    { at: [66, 50, 20], text: 'CHUTE', on: !!st.running }],
+});
+</script>
+<script src="cf-tail.js"></script>
+</body></html>

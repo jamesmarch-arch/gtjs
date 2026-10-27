@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LV Thermal Centrifuge</title>
+<script src="cf-head.js"></script></head><body>
+<script src="core.js"></script>
+<script src="gt-bridge.js"></script>
+<script src="gt-parts.js"></script>
+<script src="gt-lv.js"></script>
+<script>
+/* LV Thermal Centrifuge (gtjs, LV): purified ore spun hot, so the heavy metal-bearing grains and the lighter
+   byproduct part company.
+
+   How it works (truth first)
+   1. Purified ore sits in three baskets on the arms of a rotor inside a closed chamber.
+   2. A heating coil wound round the chamber heats it red hot; the heat cracks the grains apart and drives off what
+      is bound loosely to them. A thermometer on the face shows how hot it is.
+   3. A motor at the back spins the rotor fast on a long shaft. In the spin the dense grains are flung to the outside
+      of the baskets and the light byproduct is left behind, so what comes out is centrifuged ore. It drops to the
+      bottom of the chamber and down a chute to the output slot and the tray.
+   4. The heat leaves through the radiator on the roof: a block of red fins the air flows up through.
+   Where the ore is: window door -> rotor baskets -> chamber floor -> chute -> slot -> tray.
+   Where the power is: cable -> socket -> control board -> (motor -> shaft -> rotor) and (coil -> heat -> chamber).
+
+   Parts
+   OUTSIDE  the LV case (see gt-lv.js) . heavy round window: iron bezel with eight bolts, a red ring, glass, the rotor
+            spinning in the red glow behind it . thermometer (right of the window) . a column of red cooling fins (left)
+            . finned radiator on the front of the roof, with heat shimmering off it
+   INSIDE   motor . shaft . rotor with three arms and baskets . ceramic chamber . heating coil wound round it . coil leads
+            . chute
+
+   Contact checks (numbers)
+   - window bezel r 15 at (y 44, z 37): y 29..59, z 22..52; glass r 11.5. Thermometer y 13..23, fins y 62..70:
+     both clear of the bezel, all inside the face recess (y 8..72, z 15..60).
+   - chamber r 12 on the same axis, x 26..66; coil turns r 13.6 at x 30..62 every 4.
+   - rotor at x 58 (8 behind the chamber's front, 16 behind the glass at x 74): arms to r 8, baskets r 2.4 -> 10.4 < 12.
+   - motor r 7 x 10..22 on the axis; shaft r 1.2 from x 22 to the rotor through the chamber's back (x 26).
+   - radiator: base x 40..66, y 22..58 on the roof (z 84..85.5), fins every 4 in y up to z 94: in front of the roof's
+     vent grille (x 6..26).
+   - chute from the chamber's floor (x 60, z 25) to the output slot (x 74, z 10.5).
+*/
+const TC = { y: 44, z: 37, R: 15, G: 11.5, cr: 12, x0: 26, x1: 66, rx: 58 };
+const TC_BEZ = { l:'#7d858b', m:'#575f66', d:'#2c3237' };
+const TC_FIN = { l:'#ef6a4c', m:'#cf5038', d:'#6a2418' };
+const TC_CER = { l:'#f1e6d4', m:'#d9c8ae', d:'#9c8a70' };
+const tcOre = st => GT.ORE[lvMetal(st)] || GT.ORE.iron;
+const tcProduct = st => ({ kind: 'crushed', col: mix(tcOre(st), '#ffffff', .25) });
+const tcAng = st => (st.t || 0)*7;
+const tcHot = st => gtClamp(st.heat || 0);
+
+// the thermometer and the column of fins beside the window
+function tcFace(st){
+  const h = tcHot(st);
+  let s = shape(lvOn(rrUV(13, 17, 23, 58, 2.5), .4), GT.CREAM, 1.1);
+  s += shape(lvOn(rrUV(16.4, 22, 19.6, 55, 1.5), .45), '#ffffff', .8);
+  for (let z = 26; z <= 54; z += 4) s += ink(pd(lvOn([[20.2, z], [z % 8 === 2 ? 22.4 : 21.4, z]], .5), false), .6);
+  s += fill(pd(lvOn(rrUV(17.3, 21, 18.7, 25 + h*29, .7), .5)), '#e2483d') + shape(lvOn(ellUV(18, 21.5, 3, 3, 16), .52), '#e2483d', .9)
+    + fill(pd(lvOn(ellUV(17, 22.5, .8, 1, 8), .55)), '#ffffff', 'opacity=".55"');
+  // red cooling fins standing off the face, glowing at their edges when hot
+  const fins = [];
+  for (let z = 20; z <= 56; z += 4) fins.push(box(LV.W, 62, z, LV.W + 3.5, 70, z + 1.3, h > .3 ? { l: mix(TC_FIN.l, GT.HOT, (h - .3)*.6), m: TC_FIN.m, d: TC_FIN.d } : TC_FIN, toneI, .7));
+  return s + shape(lvOn(rrUV(61, 18.5, 71, 58.5, 1.5), .4), GT_TRIM.m, 1) + fins.reverse().join('');
+}
+
+// the window: bezel standing off the face, the hot chamber and the spinning rotor seen through the glass
+function tcWindow(st){
+  const X0 = LV.W, X1 = LV.W + 3, { y, z, R, G } = TC, h = tcHot(st), a = tcAng(st), on2 = (uv, l) => on(PX(X1 + l), uv);
+  let s = cylX(X0, X1, y, z, R, TC_BEZ, toneI, 1.6, 36);
+  if (!facing([1,0,0])) return s;
+  const bolts = []; for (let i = 0; i < 8; i++){ const b = i*Math.PI/4 + Math.PI/8; bolts.push([y + 13.3*Math.cos(b), z + 13.3*Math.sin(b)]); }
+  s += gtRivets(PX(X1 + .05), bolts, TC_BEZ.l) + shape(on2(ellUV(y, z, G + 1.6, G + 1.6, 32), .05), '#cf5038', .9);
+  let c = fill(pd(on2(ellUV(y, z, G + 1, G + 1, 32), .1)), mix('#3a2420', '#b8321c', h));
+  if (h > .05) c += fill(pd(on2(ellUV(y, z, 9.5, 9.5, 28), .11)), GT.GLOW, `opacity="${f(.8*h)}"`) + fill(pd(on2(ellUV(y, z, 5, 5, 20), .12)), GT.HOT, `opacity="${f(.75*h)}"`);
+  // the rotor: three arms with a basket of ore on each; a blur ring while it spins
+  const col = mix(tcOre(st), GT.GLOW, .5*h), arm = mix('#4b5157', '#8a3a22', h);
+  if (st.running) c += `<path d="${pd(on2(ellUV(y, z, 8, 8, 28), .13))}" fill="none" stroke="${col}" stroke-width="4.5" opacity=".45"/>`;
+  for (let i = 0; i < 3; i++){ const b = a + i*2*Math.PI/3, cb = Math.cos(b), sb = Math.sin(b), w = .9;
+    c += shape(on2([[y - w*sb, z + w*cb], [y + 8*cb - w*sb, z + 8*sb + w*cb], [y + 8*cb + w*sb, z + 8*sb - w*cb], [y + w*sb, z - w*cb]], .14), arm, .6);
+    c += shape(on2(ellUV(y + 8*cb, z + 8*sb, 2.5, 2.5, 12), .16), arm, .7) + fill(pd(on2(ellUV(y + 8*cb, z + 8*sb, 1.6, 1.6, 10), .17)), col); }
+  c += shape(on2(ellUV(y, z, 2.4, 2.4, 14), .18), arm, .7);
+  c += fill(pd(on2([[y + 5, z + 8], [y + 8.5, z + 5], [y + 7.5, z + 4], [y + 4, z + 7]], .3)), '#ffffff', 'opacity=".35"');
+  return s + clipTo(on2(ellUV(y, z, G, G, 32), .1), c) + ink(pd(on2(ellUV(y, z, G, G, 32), .35)), 1.3);
+}
+
+/* ---------- the radiator on the roof, and the heat coming off it ---------- */
+function tcRadiator(st, fade){
+  const Z = LV.ZT, h = tcHot(st), parts = [];
+  parts.push({ box:[[40, 22, Z], [66, 58, Z + 1.5]], svg: fade(box(40, 22, Z, 66, 58, Z + 1.5, GT_TRIM, toneI, 1.1)) });
+  const fm = h > .3 ? { l: mix(TC_FIN.l, GT.HOT, (h - .3)*.5), m: TC_FIN.m, d: TC_FIN.d } : TC_FIN;
+  for (let y = 24; y <= 56; y += 4) parts.push({ box:[[42, y - .6, Z + 1.5], [64, y + .6, Z + 10]], svg: fade(box(42, y - .6, Z + 1.5, 64, y + .6, Z + 10, fm, toneI, .8)) });
+  if (h > .1){ let d = ''; const t = st.t || 0;
+    for (let j = 0; j < 3; j++){ const pts = []; for (let zz = 0; zz <= 9; zz += 1) pts.push([53 + 1.6*Math.sin(zz*.8 - t*5 + j*2), 30 + j*10, Z + 12 + zz]); d += pd(pts, false); }
+    parts.push({ box:[[48, 28, Z + 11], [58, 52, Z + 22]], svg: `<path d="${d}" fill="none" stroke="${GT.GLOW}" stroke-width="1.4" stroke-linecap="round" opacity="${f(.65*h)}"/>` }); }
+  return parts;
+}
+
+function tcParts(st, k, fade){
+  return [{ box:[[LV.W, TC.y - TC.R, TC.z - TC.R], [LV.W + 3.2, TC.y + TC.R, TC.z + TC.R]], svg: fade(tcWindow(st)) }, ...tcRadiator(st, fade)];
+}
+
+/* ---------- see-through: motor, shaft, rotor, chamber, coil ---------- */
+function tcInside(st, k){
+  const out = [], put = (b, svg) => out.push({ box: b, svg }), run = !!st.running, h = tcHot(st), a = tcAng(st), { y, z, cr, x0, x1, rx } = TC;
+  const col = mix(tcOre(st), GT.GLOW, .5*h);
+  // the chamber: its back and inner wall, the rotor in it, then its outer wall faintly over the rotor
+  const A = on(PX(x0), ellUV(y, z, cr, cr, 28)), B = on(PX(x1), ellUV(y, z, cr, cr, 28));
+  const CM = h > .3 ? { l: mix(TC_CER.l, '#ff9a5a', (h - .3)*.6), m: mix(TC_CER.m, '#e0603a', (h - .3)*.6), d: TC_CER.d } : TC_CER;
+  const rot = [];
+  rot.push({ box:[[x0, y - 1.2, z - 1.2], [rx, y + 1.2, z + 1.2]], svg: cylX(x0, rx, y, z, 1.2, GT.IRON, toneI, .7, 12) });
+  for (let i = 0; i < 3; i++){ const b = a + i*2*Math.PI/3, e = [rx, y + 8*Math.cos(b), z + 8*Math.sin(b)];
+    rot.push({ box:[[rx - 1, Math.min(y, e[1]) - 1, Math.min(z, e[2]) - 1], [rx + 1, Math.max(y, e[1]) + 1, Math.max(z, e[2]) + 1]], svg: rod([rx, y, z], e, .8, GT.IRON, toneI, .7) });
+    rot.push({ box:[[rx - 2, e[1] - 2.4, e[2] - 2.4], [rx + 2, e[1] + 2.4, e[2] + 2.4]], svg: cylX(rx - 2, rx + 2, e[1], e[2], 2.4, GT.IRON, toneI, .8, 14)
+      + (facing([1,0,0]) ? fill(pd(on(PX(rx + 2.05), ellUV(e[1], e[2], 1.6, 1.6, 10))), col) : '') }); }
+  rot.push({ box:[[rx - 1.5, y - 2.4, z - 2.4], [rx + 1.5, y + 2.4, z + 2.4]], svg: cylX(rx - 1.5, rx + 1.5, y, z, 2.4, GT_TRIM, toneI, .8, 14) });
+  if (run) rot.push({ box:[[rx + 2.1, y - 10, z - 10], [rx + 2.2, y + 10, z + 10]], svg: `<path d="${pd(on(PX(rx + 2.1), ellUV(y, z, 8, 8, 28)))}" fill="none" stroke="${col}" stroke-width="3.5" opacity=".4"/>` });
+  let glow = h > .1 ? fill(pd(on(PX(x0 + .3), ellUV(y, z, cr - 1, cr - 1, 24))), GT.GLOW, `opacity="${f(.5*h)}"`) : '';
+  const chamber = loft(A, B, n => toneI(n, CM), true) + fill(pd(on(PX(x0 + .2), ellUV(y, z, cr - .2, cr - .2, 28))), mix(TC_CER.d, '#c8402a', h)) + glow + byDepth(rot)
+    + `<g opacity=".22">${loft(A, B, n => toneI(n, CM))}</g>` + ink(pd(B), 1.2) + hullInk([...A, ...B], 1.6);
+  // the coil: turns round the chamber, split into the half behind it and the half in front of it
+  const dc = depthOf([(x0 + x1)/2, y, z]); let far = '', near = '';
+  for (let x = 30; x <= 62; x += 4){ const r = on(PX(x), ellUV(y, z, cr + 1.6, cr + 1.6, 28));
+    for (let i = 0; i < r.length; i++){ const p = r[i], q = r[(i + 1) % r.length], d = pd([p, q], false);
+      if (depthOf([(p[0] + q[0])/2, (p[1] + q[1])/2, (p[2] + q[2])/2]) < dc) far += d; else near += d; } }
+  const hot = mix(GT.COPPER.m, '#ff6a2a', h*.7);
+  const coil = d => `<path d="${d}" fill="none" stroke="${INK}" stroke-width="2.6" stroke-linecap="round"/><path d="${d}" fill="none" stroke="${hot}" stroke-width="1.5" stroke-linecap="round"/>`
+    + (h > .3 ? `<path d="${d}" fill="none" stroke="${GT.GLOW}" stroke-width="3.6" opacity="${f((h - .3)*.4)}" stroke-linecap="round"/>` : '');
+  put([[x0 - 1, y - cr - 2, z - cr - 2], [x1 + 1, y + cr + 2, z + cr + 2]], coil(far) + chamber + coil(near));
+  // the motor at the back, the shaft into the chamber
+  put([[10, y - 7, z - 7], [22, y + 7, z + 7]], cylX(10, 22, y, z, 7, GT.IRON, toneI, 1.1, 24) + box(11, y - 6, LV.Z0, 21, y + 6, z - 6.5, GT_TRIM, toneI, .8));
+  put([[22, y - 1.2, z - 1.2], [x0, y + 1.2, z + 1.2]], cylX(22, x0, y, z, 1.2, GT.IRON, toneI, .7, 12));
+  // leads from the board to the coil's ends
+  const lead = run ? '#f6b98a' : GT.COPPER.m;
+  out.push(gtWire([[4.5, 36, 50], [16, 36, 53], [30, y, 53], [30, y, z + cr + 1.6]], lead, .7), gtWire([[4.5, 52, 50], [16, 52, 55], [62, y, 55], [62, y, z + cr + 1.6]], lead, .7));
+  // the chute from the chamber's floor to the slot
+  put([[58, 34, 9], [LV.W, 54, 26]], shape([[60, 34, 25], [LV.W, 34, 10.5], [LV.W, 50, 10.5], [60, 50, 25]], toneI(norm([14.5, 0, 14]), GT.IRON), .9)
+    + (run && (st.progress || 0) > .6 ? gtLump([67, 42, 18.5], .6, mix(tcOre(st), '#ffffff', .25)) : ''));
+  return out;
+}
+
+gtLv({
+  fig:'LV4', title:'LV Thermal Centrifuge', name:'THERMAL', face: tcFace, parts: tcParts, inside: tcInside, product: tcProduct,
+  shadowPts: [[40, 22, LV.ZT + 10], [66, 58, LV.ZT + 10]], heatTime: 2.5,
+  recipes:[{ id:'thermal_purified_iron', name:'Centrifuged Iron Ore' }, { id:'thermal_purified_copper', name:'Centrifuged Copper Ore' }, { id:'thermal_purified_tin', name:'Centrifuged Tin Ore' }],
+  loadLabel:'Load ore', outLabel:'Made',
+  callouts: st => [{ at: [53, 40, LV.ZT + 10], text: 'RADIATOR', on: tcHot(st) > .3 },
+    ...(facing([1,0,0]) ? [{ at: [LV.W + 3, TC.y - 6, TC.z - 8], text: 'HOT WINDOW', on: !!st.running }, { at: [LV.W, 18, 46], text: 'THERMOMETER', on: tcHot(st) > .3 },
+      { at: [LV.W + 3.5, 66, 57], text: 'COOLING FINS', on: false }] : [])],
+  insideCallouts: st => [{ at: [16, TC.y, TC.z + 7], text: 'MOTOR', on: !!st.running }, { at: [24, TC.y, TC.z + 1], text: 'SHAFT', on: !!st.running },
+    { at: [TC.rx, TC.y, TC.z + 8], text: 'ROTOR', on: !!st.running }, { at: [46, TC.y + TC.cr + 1.6, TC.z + 4], text: 'HEATING COIL', on: tcHot(st) > .3 },
+    { at: [62, TC.y - 8, TC.z - TC.cr], text: 'CHAMBER', on: false }, { at: [67, 50, 16], text: 'CHUTE', on: !!st.running }],
+});
+</script>
+<script src="cf-tail.js"></script>
+</body></html>
