@@ -11,10 +11,10 @@ export function loadSprite(figure: string): Promise<Sprite | null> {
   let p = cache.get(figure);
   if (!p) {
     p = (async () => {
-      const meta = await fetch(`/sprites/${figure}.json`).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+      const meta = await fetch(`${import.meta.env.BASE_URL}sprites/${figure}.json`).then((r) => (r.ok ? r.json() : null)).catch(() => null);
       if (!meta) return null;
       const img = new Image();
-      img.src = `/sprites/${figure}.png`;
+      img.src = `${import.meta.env.BASE_URL}sprites/${figure}.png`;
       try { await img.decode(); } catch { return null; }
       // the json stores the corners as fractions of the image width
       return { img, tile: (meta.tile as [number, number][]).map(([fx, fy]) => [fx * img.width, fy * img.width]) };

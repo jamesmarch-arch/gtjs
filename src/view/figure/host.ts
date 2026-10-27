@@ -89,7 +89,7 @@ export function mountFigureHost(el: HTMLElement, getWorld: () => World, m: Machi
   const frame = document.createElement('iframe');
   frame.className = 'figure-frame';
   frame.title = def.name;
-  frame.src = `/figures/${def.figure}.html${yaw === 45 ? '' : `?yaw=${yaw}`}`;
+  frame.src = `${import.meta.env.BASE_URL}figures/${def.figure}.html${yaw === 45 ? '' : `?yaw=${yaw}`}`;
   el.replaceChildren(frame);
 
   let ready = false, last = '';
