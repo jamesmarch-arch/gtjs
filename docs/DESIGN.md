@@ -210,3 +210,10 @@ drawing, picking and the draw order all work in view space. Between quarter turn
 view's sprite upright, riding on the middle of its turning tile (bending it onto the turned tile shears it badly). Sprites are pictures, so `npm run sprites` renders every figure from four sides
 (`<figure>.png`, `@1`, `@2`, `@3`, at yaw 45 + 90 per view), and a machine opened from a turned view opens its figure
 from the same side.
+
+**Sound.** `src/view/audio.ts` makes every sound in code with the Web Audio API, from one small kit (noise bursts
+through a sliding filter, tones that fall or rise and die away), so there are no files to load and the sounds share a
+character the way the figures do. Each play varies a little in pitch and level. So far: gathering by hand (stone
+knocks, ore rings at its metal's pitch, coal crunches, planks knock, clay squelches, sand shushes, resin drips; a
+shift-click of ten strikes three times) and panels opening and closing. The speaker button in the toolbar (or M) mutes
+it, remembered in the browser. Browsers allow sound only after a click, so the audio starts on the first one.

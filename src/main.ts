@@ -9,6 +9,7 @@ import { add, count, createWorld, costOf, TICKS_PER_SECOND, tick, type Buildable
 import { Floor, type Tool } from './view/floor/floor';
 import { openMachineGui, type MachineGui } from './view/ui/gui';
 import { openOverlay, type Overlay } from './view/ui/overlay';
+import { closeSound, gatherSound, isMuted, openSound, setMuted } from './view/audio';
 import { benchView, claimable, endHtml, questBookHtml, workbenchHtml, type BenchView } from './view/ui/sheets';
 
 const AUTOSAVE_MS = 10_000;
@@ -53,7 +54,8 @@ app.innerHTML = `
   </aside>
   <main class="floor-area">
     <div class="toolbar"><div class="tools" id="tools"></div>
-      <div class="zoom"><button id="tleft" aria-label="Turn the view left" title="Turn left (Q)">⟲</button><button id="tright" aria-label="Turn the view right" title="Turn right (E)">⟳</button>
+      <div class="zoom"><button id="mute" class="icon" aria-pressed="false"></button>
+        <button id="tleft" aria-label="Turn the view left" title="Turn left (Q)">⟲</button><button id="tright" aria-label="Turn the view right" title="Turn right (E)">⟳</button>
         <button id="zout" aria-label="Zoom out">−</button><span id="zval">100%</span><button id="zin" aria-label="Zoom in">+</button></div></div>
     <div class="floor-host" id="floor"></div>
     <p class="statusline" id="status">&nbsp;</p>
@@ -89,18 +91,32 @@ const zoomBy = (k: number) => { floor.setZoom(floor.getZoom() * k); $('zval').te
 $('zin').onclick = () => zoomBy(1.4);
 $('zout').onclick = () => zoomBy(1 / 1.4);
 $('floor').addEventListener('wheel', () => requestAnimationFrame(() => { $('zval').textContent = `${Math.round(floor.getZoom() * 100)}%`; }));
+// sound on and off (M), remembered in the browser
+const SPEAKER = '<svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M3 8h3l4-3.5v11L6 12H3z" fill="currentColor"/>';
+const showMute = () => {
+  const m = isMuted(), b = $('mute');
+  b.innerHTML = SPEAKER + (m ? '<path d="M13 7.5l5 5M18 7.5l-5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>'
+    : '<path d="M13 7a4.5 4.5 0 0 1 0 6M15.5 4.8a7.5 7.5 0 0 1 0 10.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>');
+  b.setAttribute('aria-pressed', String(m));
+  b.setAttribute('aria-label', m ? 'Sound is off: turn it on' : 'Sound is on: turn it off');
+  b.title = m ? 'Sound off (M)' : 'Sound on (M)';
+};
+const toggleMute = () => { setMuted(!isMuted()); showMute(); if (!isMuted()) openSound(); };
+$('mute').onclick = toggleMute;
+showMute();
 $('tleft').onclick = () => floor.rotate(-1);
 $('tright').onclick = () => floor.rotate(1);
 // the camera's keys: arrows or WASD pan, Q and E turn, Home looks at the machines again
 const PAN_KEYS: Record<string, [number, number]> = { ArrowLeft: [1, 0], a: [1, 0], ArrowRight: [-1, 0], d: [-1, 0], ArrowUp: [0, 1], w: [0, 1], ArrowDown: [0, -1], s: [0, -1] };
 addEventListener('keydown', (e) => {
-  if (gui || sheet || e.ctrlKey || e.metaKey || e.altKey || (e.target as HTMLElement).closest('input, textarea, select')) return;
+  if (gui || sheet || e.ctrlKey || e.metaKey || e.altKey || (e.target as Element).closest?.('input, textarea, select')) return;
   const key = e.key.length === 1 ? e.key.toLowerCase() : e.key, pan = PAN_KEYS[key];
   if (key === 'Escape') floor.setTool({ kind: 'inspect' });
   else if (pan) { e.preventDefault(); floor.panBy(pan[0] * 60, pan[1] * 60); }
   else if (key === 'q') floor.rotate(-1);
   else if (key === 'e') floor.rotate(1);
   else if (key === 'Home') floor.recenter();
+  else if (key === 'm') toggleMute();
 });
 
 function refreshTools() {
@@ -117,9 +133,14 @@ function refreshTools() {
 }
 
 /* ---------- the workbench and the quest book ---------- */
+let switching = false; // a panel closing to make way for another: only the new one's sound plays
+const sheetClosed = () => { sheet = null; if (!switching) closeSound(); };
 function openSheet(which: 'bench' | 'book') {
   gui?.close();
+  switching = true;
   sheet?.close();
+  switching = false;
+  openSound();
   sheet = which === 'bench'
     ? (benchQuery = '', openOverlay('Workbench', () => workbenchHtml(w, bench, benchQuery), (el) => {
       if (el.dataset.act === 'craft') craft(w, el.dataset.id!, +el.dataset.n!);
@@ -129,12 +150,12 @@ function openSheet(which: 'bench' | 'book') {
         try { localStorage.setItem('gtjs.bench', JSON.stringify(bench)); } catch { /* not remembered */ }
       }
       refresh();
-    }, () => { sheet = null; }, { search: { placeholder: 'Search recipes: what they make or use', onInput: (q) => { benchQuery = q; } } }))
+    }, sheetClosed, { search: { placeholder: 'Search recipes: what they make or use', onInput: (q) => { benchQuery = q; } } }))
     : openOverlay('Quest book', () => questBookHtml(w), (el) => {
       claimQuest(w, el.dataset.id!);
       refresh();
       if (el.dataset.id === FINAL_QUEST) showEnd();
-    }, () => { sheet = null; });
+    }, sheetClosed);
 }
 function showEnd() {
   sheet?.close();
@@ -202,7 +223,7 @@ addEventListener('visibilitychange', () => { if (document.visibilityState === 'h
 for (const item of GATHERABLE) {
   const b = document.createElement('button');
   b.textContent = `+ ${itemName(item)}`;
-  b.onclick = (e) => { add(w, item, e.shiftKey ? 10 : 1); refresh(); };
+  b.onclick = (e) => { add(w, item, e.shiftKey ? 10 : 1); gatherSound(item, e.shiftKey); refresh(); };
   $('mine').appendChild(b);
 }
 for (const s of [1, 5, 20]) {

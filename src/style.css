@@ -72,6 +72,8 @@ button[aria-pressed='true'] { background: var(--ink); color: var(--paper); }
 .tools { display: flex; flex-wrap: wrap; gap: 6px; }
 .zoom { display: flex; align-items: center; gap: 4px; flex: none; }
 .zoom span { min-width: 42px; text-align: center; color: var(--muted); }
+.zoom .icon { display: inline-flex; align-items: center; justify-content: center; margin-right: 6px; }
+.zoom .icon[aria-pressed='true'] { background: var(--paper); color: #b8372d; } /* muted: the icon says so, the button stays a button */
 .tools button { border-radius: 10px; display: flex; flex-direction: column; align-items: flex-start; line-height: 1.25; padding: 4px 10px; }
 .tools small { color: var(--muted); font-size: 10.5px; }
 .tools button[aria-pressed='true'] small { color: var(--rule); }
