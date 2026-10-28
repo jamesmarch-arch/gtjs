@@ -135,14 +135,14 @@ function startHiss(a: { ctx: AudioContext; out: GainNode }) {
   pan.connect(a.out);
   // the steady hiss: high, soft, with a slow breathing wobble so it doesn't sound like a radio between stations
   const bp = c.createBiquadFilter(), body = c.createGain(), breath = c.createOscillator(), depth = c.createGain();
-  bp.type = 'bandpass'; bp.frequency.value = 4200; bp.Q.value = 0.7;
+  bp.type = 'bandpass'; bp.frequency.value = 2800; bp.Q.value = 0.6;
   body.gain.value = 0;
-  breath.frequency.value = 0.35; depth.gain.value = 600;
+  breath.frequency.value = 0.35; depth.gain.value = 500;
   breath.connect(depth).connect(bp.frequency);
   src.connect(bp).connect(body).connect(pan);
   // the safety valve: brighter and louder, chuffing about three times a second
   const hp = c.createBiquadFilter(), vent = c.createGain(), chuff = c.createGain(), lfo = c.createOscillator(), swing = c.createGain();
-  hp.type = 'highpass'; hp.frequency.value = 2500;
+  hp.type = 'highpass'; hp.frequency.value = 1800;
   vent.gain.value = 0;
   chuff.gain.value = 0.65; lfo.frequency.value = 3.1; swing.gain.value = 0.35;
   lfo.connect(swing).connect(chuff.gain);
@@ -157,8 +157,8 @@ export function boilerHiss(level: number, pan: number, venting: boolean) {
   if (!ctx || muted || (!hissing && level <= 0)) return;
   hissing ??= startHiss({ ctx, out: out! });
   const t = ctx.currentTime;
-  hissing.body.gain.setTargetAtTime(0.1 * level, t, 0.4);
-  hissing.vent.gain.setTargetAtTime(venting ? 0.16 * level : 0, t, 0.15);
+  hissing.body.gain.setTargetAtTime(0.32 * level, t, 0.4);
+  hissing.vent.gain.setTargetAtTime(venting ? 0.4 * level : 0, t, 0.15);
   hissing.pan.pan.setTargetAtTime(Math.max(-1, Math.min(1, pan)), t, 0.25);
 }
 
