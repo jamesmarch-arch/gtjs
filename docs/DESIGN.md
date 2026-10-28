@@ -215,5 +215,8 @@ from the same side.
 through a sliding filter, tones that fall or rise and die away), so there are no files to load and the sounds share a
 character the way the figures do. Each play varies a little in pitch and level. So far: gathering by hand (stone
 knocks, ore rings at its metal's pitch, coal crunches, planks knock, clay squelches, sand shushes, resin drips; a
-shift-click of ten strikes three times) and panels opening and closing. The speaker button in the toolbar (or M) mutes
-it, remembered in the browser. Browsers allow sound only after a click, so the audio starts on the first one.
+shift-click of ten strikes three times), panels opening and closing, and the boilers: one looping hiss for all the lit
+boilers (not one each), set every frame from where they are on screen (`Floor.hearing`: louder in the frame and
+zoomed in, panned across it), with the safety valve's chuffing roar on top while a boiler's steam net is full. The speaker button in the toolbar (or M) mutes
+it, remembered in the browser. Browsers allow sound only after a click, so the audio starts on the first click or
+key; a hidden tab goes quiet.

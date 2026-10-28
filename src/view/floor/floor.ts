@@ -127,6 +127,16 @@ export class Floor {
     this.cam = this.clampCam([this.cam[0] - (a + b) / 2, this.cam[1] - (b - a) / 2]);
   }
 
+  /** How a machine is heard from where the camera is: gain 0..1.5 (full in the frame, fading to nothing half a frame
+   * outside it, louder zoomed in) and pan -1..1 (its place across the frame). */
+  hearing(m: MachineState): { gain: number; pan: number } {
+    const [fw, fh] = MACHINES.get(m.def)!.footprint, [px, py] = this.iso(m.x + fw / 2, m.y + fh / 2, this.heightOf(m) / 2);
+    const nx = (px - this.cw / 2) / (this.cw / 2), ny = (py - this.ch / 2) / (this.ch / 2); // -1..1 across the frame
+    const out = Math.max(0, Math.abs(nx) - 1, Math.abs(ny) - 1); // how far outside the frame, in half-frames
+    const edge = Math.max(0, 1 - out * 2);
+    return { gain: edge * Math.min(1.5, 0.5 + 0.5 * this.getZoom()), pan: Math.max(-1, Math.min(1, nx * 0.8)) };
+  }
+
   /** Point the camera at the machines, or at the middle of an empty floor. */
   recenter() {
     const w = this.getWorld();

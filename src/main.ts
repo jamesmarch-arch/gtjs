@@ -2,14 +2,14 @@
 import { CONDUITS, FINAL_QUEST, GATHERABLE, MACHINES, itemName } from './sim/data';
 import { craft } from './sim/craft';
 import { checkQuests, claimQuest } from './sim/quests';
-import { netSteam, steamNets } from './sim/nets';
+import { netSteam, steamCapacity, steamNets } from './sim/nets';
 import { euNets } from './sim/power';
 import { deserialize, loadFrom, SAVE_KEY, SaveError, saveTo, serialize } from './sim/save';
 import { add, count, createWorld, costOf, TICKS_PER_SECOND, tick, type Buildable, type World } from './sim/world';
 import { Floor, type Tool } from './view/floor/floor';
 import { openMachineGui, type MachineGui } from './view/ui/gui';
 import { openOverlay, type Overlay } from './view/ui/overlay';
-import { closeSound, gatherSound, isMuted, openSound, setMuted } from './view/audio';
+import { boilerHiss, closeSound, gatherSound, isMuted, openSound, setMuted } from './view/audio';
 import { benchView, claimable, endHtml, questBookHtml, workbenchHtml, type BenchView } from './view/ui/sheets';
 
 const AUTOSAVE_MS = 10_000;
@@ -260,6 +260,20 @@ function refresh() {
 
 // fixed-step sim: 20 ticks per second times the speed; the floor is drawn every frame
 let last = performance.now(), owed = 0, shown = 0;
+// the burning boilers' hiss, from where they are on screen; louder with more of them, but one boiler is enough to hear
+function hearBoilers() {
+  let total = 0, panned = 0, venting = false;
+  for (const m of w.machines) {
+    if (!MACHINES.get(m.def)!.boiler || m.burn <= 0) continue;
+    const { gain, pan } = floor.hearing(m);
+    total += gain;
+    panned += gain * pan;
+    // the safety valve lifts when its steam net is full
+    if (gain > 0.1 && steamCapacity(m) > 0 && m.steam / steamCapacity(m) > 0.995) venting = true;
+  }
+  boilerHiss(1 - Math.exp(-0.9 * total), total ? panned / total : 0, venting);
+}
+
 function frame(now: number) {
   owed = Math.min(owed + ((now - last) / 1000) * TICKS_PER_SECOND * speed, 400);
   last = now;
@@ -272,6 +286,7 @@ function frame(now: number) {
   }
   w.events.length = 0;
   floor.draw(now);
+  hearBoilers();
   gui?.sync();
   if (now - shown > 100) { shown = now; refresh(); }
   requestAnimationFrame(frame);

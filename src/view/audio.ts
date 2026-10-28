@@ -29,12 +29,24 @@ function audio(): { ctx: AudioContext; out: GainNode } | null {
   return { ctx, out: out! };
 }
 
+// the first click or key anywhere starts the audio, so sounds that run on their own (the boilers) can play after it
+const unlock = () => { audio(); removeEventListener('pointerdown', unlock); removeEventListener('keydown', unlock); };
+addEventListener('pointerdown', unlock);
+addEventListener('keydown', unlock);
+// nothing plays from a hidden tab (the frame loop that sets the boilers' hiss stops there, mid-hiss)
+document.addEventListener('visibilitychange', () => {
+  if (!ctx) return;
+  if (document.visibilityState === 'hidden') void ctx.suspend();
+  else if (!muted) void ctx.resume();
+});
+
 export function isMuted(): boolean { return muted; }
 
 export function setMuted(m: boolean) {
   muted = m;
   try { localStorage.setItem(MUTE_KEY, m ? '1' : '0'); } catch { /* not remembered */ }
   if (m && ctx) void ctx.suspend();
+  else if (!m) audio();
 }
 
 // a little variety: a factor near 1
@@ -107,6 +119,47 @@ export function gatherSound(item: string, many = false) {
     if (pitch) oreStrike(at, pitch);
     else (STRIKE[KIND[item]] ?? STRIKE.stone)(at);
   }
+}
+
+/* ---------- the boilers ---------- */
+
+// one hiss for every boiler on the floor, not one each (fifty boilers would be fifty loops): the game sets how loud
+// and where from, every frame. Two layers from the same looping noise: the steady hiss of steam leaving a lit boiler,
+// and the safety valve's sharper, chuffing roar when its steam net is full and it vents.
+let hissing: { body: GainNode; vent: GainNode; pan: StereoPannerNode } | null = null;
+
+function startHiss(a: { ctx: AudioContext; out: GainNode }) {
+  const { ctx: c } = a, src = c.createBufferSource(), pan = c.createStereoPanner();
+  src.buffer = noise;
+  src.loop = true;
+  pan.connect(a.out);
+  // the steady hiss: high, soft, with a slow breathing wobble so it doesn't sound like a radio between stations
+  const bp = c.createBiquadFilter(), body = c.createGain(), breath = c.createOscillator(), depth = c.createGain();
+  bp.type = 'bandpass'; bp.frequency.value = 4200; bp.Q.value = 0.7;
+  body.gain.value = 0;
+  breath.frequency.value = 0.35; depth.gain.value = 600;
+  breath.connect(depth).connect(bp.frequency);
+  src.connect(bp).connect(body).connect(pan);
+  // the safety valve: brighter and louder, chuffing about three times a second
+  const hp = c.createBiquadFilter(), vent = c.createGain(), chuff = c.createGain(), lfo = c.createOscillator(), swing = c.createGain();
+  hp.type = 'highpass'; hp.frequency.value = 2500;
+  vent.gain.value = 0;
+  chuff.gain.value = 0.65; lfo.frequency.value = 3.1; swing.gain.value = 0.35;
+  lfo.connect(swing).connect(chuff.gain);
+  src.connect(hp).connect(chuff).connect(vent).connect(pan);
+  src.start(); breath.start(); lfo.start();
+  return { body, vent, pan };
+}
+
+/** How the burning boilers should sound now: level 0..1 (0 = silent), pan -1 (left) .. 1 (right), venting or not. */
+export function boilerHiss(level: number, pan: number, venting: boolean) {
+  // only once the audio has started (a click) and while it's on; silence needs no loop at all
+  if (!ctx || muted || (!hissing && level <= 0)) return;
+  hissing ??= startHiss({ ctx, out: out! });
+  const t = ctx.currentTime;
+  hissing.body.gain.setTargetAtTime(0.1 * level, t, 0.4);
+  hissing.vent.gain.setTargetAtTime(venting ? 0.16 * level : 0, t, 0.15);
+  hissing.pan.pan.setTargetAtTime(Math.max(-1, Math.min(1, pan)), t, 0.25);
 }
 
 /* ---------- the interface ---------- */
