@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { CRAFTS, CRAFT_TIERS } from '../../sim/data';
 import { emptyWorld } from '../../sim/world';
-import { BENCH_GROUPS, benchView, searchCrafts, workbenchHtml, type BenchView } from './sheets';
+import { BENCH_GROUPS, benchView, searchCrafts, workbenchHtml as withIcons, type BenchView } from './sheets';
+
+// the workbench's HTML as text: item icons (inline <svg>s) left out, so the tests read the words
+const workbenchHtml = (...a: Parameters<typeof withIcons>) => withIcons(...a).replace(/<svg class="ic[^"]*"[^>]*><use [^>]*\/><\/svg>/g, '');
 
 // one id per row: the row's Craft button (its "All" button also says data-n="1" when you can make exactly one)
 const craftIds = (html: string) => [...html.matchAll(/data-act="craft" data-id="([^"]+)" data-n="1"[^>]*>Craft</g)].map((m) => m[1]);

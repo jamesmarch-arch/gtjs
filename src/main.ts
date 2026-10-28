@@ -11,6 +11,7 @@ import { openMachineGui, type MachineGui } from './view/ui/gui';
 import { openOverlay, type Overlay } from './view/ui/overlay';
 import { boilerHiss, closeSound, gatherSound, isMuted, openSound, setMuted } from './view/audio';
 import { benchView, claimable, endHtml, questBookHtml, workbenchHtml, type BenchView } from './view/ui/sheets';
+import { icon } from './view/ui/icons';
 
 const AUTOSAVE_MS = 10_000;
 
@@ -252,7 +253,7 @@ function refresh() {
   }).join('') || '<li class="muted">none</li>';
   $('storage').innerHTML = Object.entries(w.storage)
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([id, n]) => `<li><span>${itemName(id)}</span><b>${n}</b></li>`).join('') || '<li class="muted">empty</li>';
+    .map(([id, n]) => `<li><span>${icon(id)}${itemName(id)}</span><b>${n}</b></li>`).join('') || '<li class="muted">empty</li>';
   for (const b of $('speed').querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.textContent === `${speed}×`));
   refreshTools();
   gui?.sync();

@@ -115,7 +115,12 @@ button[aria-pressed='true'] { background: var(--ink); color: var(--paper); }
 .crafts, .quests, .goals { list-style: none; margin: 0; padding: 0; }
 .crafts li { display: grid; grid-template-columns: 220px 1fr auto; gap: 12px; align-items: center; padding: 8px 0; border-top: 1px solid var(--rule); }
 .crafts li.cant .what b { color: var(--muted); }
-.crafts .what { display: flex; flex-direction: column; }
+.crafts .what { display: flex; align-items: center; gap: 10px; }
+.crafts .what > div { display: flex; flex-direction: column; min-width: 0; }
+/* item icons: drawn in code (src/view/ui/icons.ts), sat on the line of text they label */
+.ic { width: 20px; height: 20px; flex: none; vertical-align: -5px; margin-right: 3px; }
+.ic.big { width: 36px; height: 36px; vertical-align: middle; margin: 0; }
+.crafts li.cant .ic.big { opacity: .55; }
 .crafts .from .short { color: #b8372d; }
 .crafts .from .ok { color: #2e7d3a; }
 .crafts .from .ok small { color: #5f9a68; }

@@ -220,3 +220,12 @@ boilers (not one each), set every frame from where they are on screen (`Floor.he
 zoomed in, panned across it), with the safety valve's chuffing roar on top while a boiler's steam net is full. The speaker button in the toolbar (or M) mutes
 it, remembered in the browser. Browsers allow sound only after a click, so the audio starts on the first click or
 key; a hidden tab goes quiet.
+
+**Item icons.** `src/view/ui/icons.ts` draws every item in code in the figures' style (flat light / mid / dark bands,
+ink outline, the figures' palette). Most items are one of a few shapes coloured by what they are made of: ingot,
+plate, dust heap (specked when impure), ore in the rock, broken ore (purified glints, centrifuged spins), wire spool,
+cable coil, block (stone, brick, planks, glass, panel, coil), lump, drop. Ore and what it breaks into take the
+mineral's colour, not the metal's (rusty iron). About a dozen parts are drawn on their own (circuit, vacuum tube,
+resistor, motor, the hand tools). Machines use their floor sprite, trimmed to the drawing in the browser. Each icon is
+an SVG `<symbol>` defined once, and `icon(id)` returns a small `<svg><use>` for it, so long lists stay light. Icons
+show in the workbench (output and inputs), the storage list and quest rewards; a test checks every item has one.

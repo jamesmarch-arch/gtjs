@@ -4,6 +4,7 @@ import type { CraftDef, CraftTier, Goal } from '../../sim/data/types';
 import { maxCrafts } from '../../sim/craft';
 import { goalProgress, questState } from '../../sim/quests';
 import { TICKS_PER_SECOND, count, type World } from '../../sim/world';
+import { icon } from './icons';
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 
@@ -30,11 +31,11 @@ const ready = (w: World, list: CraftDef[]) => { const n = list.filter((c) => max
 function craftRow(w: World, c: CraftDef, max: number, where = ''): string {
   const inputs = c.inputs.map((s) => {
     const have = count(w, s.item);
-    return `<span class="${have >= s.count ? 'ok' : 'short'}">${s.count} ${esc(itemName(s.item))} <small>(${have})</small></span>`;
-  }).join(' + ') + (c.tools ?? []).map((t) => ` <span class="tool ${count(w, t) ? 'ok' : 'short'}">uses ${esc(itemName(t))}</span>`).join('');
+    return `<span class="${have >= s.count ? 'ok' : 'short'}">${s.count} ${icon(s.item)}${esc(itemName(s.item))} <small>(${have})</small></span>`;
+  }).join(' + ') + (c.tools ?? []).map((t) => ` <span class="tool ${count(w, t) ? 'ok' : 'short'}">uses ${icon(t)}${esc(itemName(t))}</span>`).join('');
   return `<li class="${max ? '' : 'cant'}">
-      <div class="what"><b>${c.output.count > 1 ? `${c.output.count} × ` : ''}${esc(itemName(c.output.item))}</b>
-        <small class="muted">${where ? `${where} · ` : ''}have ${count(w, c.output.item)}${c.note ? ` · ${esc(c.note)}` : ''}</small></div>
+      <div class="what">${icon(c.output.item, 'ic big')}<div><b>${c.output.count > 1 ? `${c.output.count} × ` : ''}${esc(itemName(c.output.item))}</b>
+        <small class="muted">${where ? `${where} · ` : ''}have ${count(w, c.output.item)}${c.note ? ` · ${esc(c.note)}` : ''}</small></div></div>
       <div class="from">${inputs}</div>
       <div class="row">
         <button data-act="craft" data-id="${c.id}" data-n="1" ${max >= 1 ? '' : 'disabled'}>Craft</button>
@@ -94,7 +95,7 @@ export function questBookHtml(w: World): string {
         return `<li class="${done ? 'ok' : ''}"><span>${goalText(g)}</span><b>${done ? g.count : n} / ${g.count}</b>
           <div class="bar"><i style="width:${(100 * (done ? 1 : n / g.count)).toFixed(0)}%"></i></div></li>`;
       }).join('');
-      const rewards = q.rewards.map((r) => `${r.count} ${esc(itemName(r.item))}`).join(', ');
+      const rewards = q.rewards.map((r) => `${r.count} ${icon(r.item)}${esc(itemName(r.item))}`).join(', ');
       return `<li class="quest ${st}"><h4>${st === 'claimed' ? '✓ ' : ''}${esc(q.title)}</h4><p>${esc(q.text)}</p>
           <ul class="goals">${goals}</ul>
           <div class="reward"><span class="muted">Reward: ${rewards}</span>
