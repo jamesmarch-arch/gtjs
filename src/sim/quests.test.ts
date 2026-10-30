@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { QUESTS } from './data';
-import { checkQuests, claimQuest, questState } from './quests';
-import { count, emptyWorld, placeMachine, setRecipe, tick } from './world';
+import type { Goal } from './data/types';
+import { checkQuests, claimQuest, goalProgress, goalText, questState } from './quests';
+import { count, emptyWorld, placeMachine, placePipe, placePort, setRecipe, tick, type World } from './world';
 
 const q = (id: string) => QUESTS.get(id)!;
 
@@ -63,5 +64,77 @@ describe('the quest book', () => {
     f.enabled = true;
     tick(w);
     expect(w.stats.burned).toBe(1);
+  });
+});
+
+describe('compact floor goals', () => {
+  const inside = (power?: 'steam' | 'eu'): Goal => ({ kind: 'inside', power, count: 1 });
+
+  /** A boiler outside piped to a 5x5 compact floor; inside, a steam macerator (and a pipe to the wall, if `port`). */
+  function rig(port: boolean) {
+    const w = emptyWorld();
+    w.storage = { coal: 4, iron_ore: 4 };
+    placeMachine(w, 'bronze_boiler', 0, 0).enabled = true;
+    placePipe(w, 1, 0);
+    const f = w.floors[placeMachine(w, 'compact_floor_5', 2, 0).inner!];
+    if (port) placePort(w, f, -1, 2, 'steam');
+    placePipe(w, 0, 2, f);
+    const mac = setRecipe(placeMachine(w, 'steam_macerator', 1, 2, f), 'macerate_iron_ore');
+    mac.enabled = true;
+    for (let i = 0; i < 300; i++) tick(w); // the boiler heats up and the steam reaches the macerator
+    return { w, f, mac };
+  }
+
+  it('counts a machine at work inside on steam let in through a port', () => {
+    const { w } = rig(true);
+    expect(goalProgress(w, inside('steam'))).toBe(1);
+    expect(goalProgress(w, inside())).toBe(1);
+    expect(goalProgress(w, inside('eu'))).toBe(0);
+  });
+
+  it("doesn't count one with no port to feed it, or one switched off", () => {
+    expect(goalProgress(rig(false).w, inside())).toBe(0);
+    const { w, mac } = rig(true);
+    mac.enabled = false;
+    tick(w);
+    expect(goalProgress(w, inside())).toBe(0);
+  });
+
+  it("doesn't count machines on the factory floor", () => {
+    const w = emptyWorld();
+    w.storage = { coal: 4, iron_ore: 4 };
+    placeMachine(w, 'bronze_boiler', 0, 0).enabled = true;
+    setRecipe(placeMachine(w, 'steam_macerator', 1, 0), 'macerate_iron_ore').enabled = true;
+    for (let i = 0; i < 300; i++) tick(w);
+    expect(w.machines[1].active).not.toBeNull();
+    expect(goalProgress(w, inside())).toBe(0);
+  });
+
+  it('measures how deep compact floors nest', () => {
+    const w: World = emptyWorld(), depth: Goal = { kind: 'depth', count: 2 };
+    expect(goalProgress(w, depth)).toBe(0);
+    const a = placeMachine(w, 'compact_floor_9', 0, 0);
+    placeMachine(w, 'compact_floor_5', 4, 4);
+    expect(goalProgress(w, depth)).toBe(1);
+    const b = placeMachine(w, 'compact_floor_5', 0, 0, w.floors[a.inner!]);
+    expect(goalProgress(w, depth)).toBe(2);
+    placeMachine(w, 'compact_floor_5', 1, 1, w.floors[b.inner!]);
+    expect(goalProgress(w, depth)).toBe(3);
+  });
+
+  it("completes the chapter's nesting quest when one floor is inside another", () => {
+    const w = emptyWorld();
+    w.quests = Object.fromEntries(q('compact_nest').after.map((id) => [id, 'claimed' as const]));
+    const a = placeMachine(w, 'compact_floor_9', 0, 0);
+    expect(checkQuests(w).map((x) => x.id)).not.toContain('compact_nest');
+    placeMachine(w, 'compact_floor_5', 2, 2, w.floors[a.inner!]);
+    expect(checkQuests(w).map((x) => x.id)).toContain('compact_nest');
+  });
+
+  it('says what every goal in the book asks for', () => {
+    expect(goalText(inside('eu'))).toBe('Run machines inside a compact floor on EU from a port');
+    expect(goalText({ kind: 'depth', count: 2 })).toBe('Nest compact floors, one inside another');
+    expect(goalText({ kind: 'built', machine: 'compact_floor_13', count: 1 })).toBe('Build Compact Floor (13×13)');
+    for (const quest of QUESTS.values()) for (const g of quest.goals) expect(goalText(g), quest.id).not.toMatch(/undefined/);
   });
 });

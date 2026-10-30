@@ -30,7 +30,13 @@ steam to the block's neighbours on the floor outside.
    inner walls. The machine GUI and tools work on whichever floor is shown.
 4. **Art.** A Colorfigures figure for the compact block (a casing with a window onto a tiny factory glowing inside),
    one per size tier, and port blocks; floor sprites from all four sides.
-5. **Content.** Crafting recipes per size tier, where they unlock (LV? MV?), quests.
+5. **Content.** Crafting recipes per size tier, where they unlock (LV? MV?), quests. **Done:** the 5x5 is the steam
+   age's (bronze hull, dense bronze plates, bricks, glass), the 9x9 LV's (LV hull and casings, circuits), the 13x13
+   comes after the EBF (dense steel plates, circuits, copper cable); a Compact Floors quest chapter of seven quests, with
+   new goal kinds for a machine at work inside on a port's steam or EU and for nesting depth (see DESIGN, "Nested
+   floors"). Follow-ups: the quest book (`src/view/ui/sheets.ts`) has its own goal text that calls every kind it doesn't
+   know (`eu`, `inside`, `depth`) "Burn fuel in a boiler"; it should use `goalText` from `src/sim/quests.ts`. Ports
+   are free; if they should cost something (a pipe, a cable), `build` / `demolish` need to charge and refund them.
 
 Order: 1 → 2 → 3 (one session can take 1–3 together: they share `world.ts`, `save.ts`, the nets and `floor.ts`).
 4 can run alongside anything. 5 after 1–3.

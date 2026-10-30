@@ -75,7 +75,10 @@ export type Goal =
   | { kind: 'have'; item: string; count: number } // in storage at once
   | { kind: 'built'; machine: string; count: number } // on the floor at once
   | { kind: 'burned'; count: number } // fuel burned in boilers, in total
-  | { kind: 'eu'; count: number }; // EU generated, in total
+  | { kind: 'eu'; count: number } // EU generated, in total
+  // machines at work at once on compact floors, on steam or EU let in through a port of that kind in their floor's wall
+  | { kind: 'inside'; power?: 'steam' | 'eu'; count: number }
+  | { kind: 'depth'; count: number }; // compact floors nested this deep: 1 is one on the factory floor, 2 one inside that
 
 export interface QuestDef {
   id: string;
