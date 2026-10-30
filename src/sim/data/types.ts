@@ -42,6 +42,7 @@ export interface MachineDef {
   heat?: number; // blast furnaces: the hottest its coils get, in kelvin
   // moves EU between the net on its front (+x) tile, the high side, and the nets on its other sides, the low side
   transformer?: { low: Tier; high: Tier; amps: number };
+  compact?: { size: number }; // a compact floor: a block with a size x size floor inside it (see world.ts)
   figure?: string; // public/figures/<figure>.html
 }
 

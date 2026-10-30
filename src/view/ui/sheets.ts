@@ -3,7 +3,7 @@ import { CHAPTERS, CRAFT_TIERS, CRAFTS, QUESTS, itemName } from '../../sim/data'
 import type { CraftDef, CraftTier, Goal } from '../../sim/data/types';
 import { maxCrafts } from '../../sim/craft';
 import { goalProgress, questState } from '../../sim/quests';
-import { TICKS_PER_SECOND, count, type World } from '../../sim/world';
+import { TICKS_PER_SECOND, allMachines, count, type World } from '../../sim/world';
 import { icon } from './icons';
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
@@ -114,7 +114,7 @@ export function endHtml(w: World): string {
   const rows: [string, string][] = [
     ['Game time', `${mins} minute${mins === 1 ? '' : 's'} at 20 ticks a second`],
     ['Quests done', `${Object.keys(w.quests).length} of ${QUESTS.size}`],
-    ['Machines on the floor', String(w.machines.length)],
+    ['Machines built', String(allMachines(w).length)],
     ['Coal burned', w.stats.burned.toLocaleString()],
     ['EU generated', Math.floor(w.stats.eu).toLocaleString()],
     ['Bronze ingots made', made('bronze_ingot')],

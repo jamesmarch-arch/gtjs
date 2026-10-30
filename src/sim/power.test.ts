@@ -120,7 +120,7 @@ describe('transformers and voltage', () => {
     placeMachine(w, 'lv_macerator', 4, 0);
     tick(w);
     expect(w.machines.map((m) => m.def)).toEqual(['lv_battery_buffer', 'lv_transformer']);
-    expect(w.events).toEqual([{ kind: 'explode', what: 'lv_macerator', x: 4, y: 0, volts: 128 }]);
+    expect(w.events).toEqual([{ kind: 'explode', what: 'lv_macerator', x: 4, y: 0, volts: 128, floor: 'factory' }]);
     expect(count(w, 'lv_macerator')).toBe(0);
   });
 

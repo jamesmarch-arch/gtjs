@@ -1,7 +1,7 @@
 // The quest book's rules: what a goal has reached, which quests are open, completing and claiming them.
 import { MACHINES, QUESTS } from './data';
 import type { Goal, QuestDef } from './data/types';
-import { add, count, type World } from './world';
+import { add, allMachines, count, type World } from './world';
 
 export type QuestState = 'locked' | 'active' | 'complete' | 'claimed';
 
@@ -9,7 +9,7 @@ export function goalProgress(w: World, g: Goal): number {
   switch (g.kind) {
     case 'made': return w.stats.made[g.item] ?? 0;
     case 'have': return count(w, g.item);
-    case 'built': return w.machines.filter((m) => m.def === g.machine).length;
+    case 'built': return allMachines(w).filter((m) => m.def === g.machine).length;
     case 'burned': return w.stats.burned;
     case 'eu': return Math.floor(w.stats.eu);
   }

@@ -59,8 +59,8 @@ Pollution, cable loss, machine sides and facing, item pipes and conveyors, hand 
 src/
   sim/        pure TypeScript game logic, no DOM. 20 ticks/s (like Minecraft).
     data/     items, recipes, machines, quests: plain data, no code
-    world.ts  floor grid, placed machines, storage
-    nets.ts   steam and EU nets (connected components of pipes and cables), power solving
+    world.ts  floors (the factory floor and compact floors' inner floors), placed machines, storage
+    nets.ts   steam nets (connected components of pipes, across floors through ports); power.ts: EU nets
     tick.ts   recipe processing, quest progress
     save.ts   localStorage + JSON export/import
   view/
@@ -229,3 +229,37 @@ mineral's colour, not the metal's (rusty iron). About a dozen parts are drawn on
 resistor, motor, the hand tools). Machines use their floor sprite, trimmed to the drawing in the browser. Each icon is
 an SVG `<symbol>` defined once, and `icon(id)` returns a small `<svg><use>` for it, so long lists stay light. Icons
 show in the workbench (output and inputs), the storage list and quest rewards; a test checks every item has one.
+
+**Nested floors (compact floors).** After Compact Machines: a compact floor block is a 1 x 1 machine with a floor of
+its own inside, which you step into and build on. Inner floors come in sized tiers (`src/sim/data/compact.ts`): 5 x 5
+(steam age), 9 x 9 (LV), 13 x 13 (MV); their crafting costs are placeholders until the content task. Blocks nest without
+a limit: a compact floor can hold compact floors.
+- *The world* (`src/sim/world.ts`). Every floor's layout is a `Level` (its size, machines, pipes, cables). The world is
+  the factory floor's level and holds every inner floor in `w.floors`, by id (`f<n>`); a compact block's machine
+  names its floor in `inner`, so each floor is owned by exactly one block. Layout functions (`placeMachine`, `build`,
+  `demolish`, `canBuild`, `occupant`, ...) take the level to work on as their last argument, the factory floor when it
+  is left out. `levels(w)` walks the floors depth first (each block's floor right after the floor it stands on), and
+  every floor ticks in that order, so a game replays the same after a save. Storage, stats and quests stay the world's:
+  every machine on every floor works from and into the one storage, so floors need no item ports.
+- *Removing a block refunds it.* Its floor is emptied first: everything on it, and on the floors inside that, is
+  demolished and goes back into storage as if removed by hand (unfinished recipes give back their inputs, steam and
+  EU are lost), then the floor is gone. Items are counts in one storage, so a block can't carry its contents away.
+- *Ports* sit on an inner floor's wall: the ring of tiles just off its edges (not the corners), where nothing else can
+  go. A steam port or an EU port is free to place and to remove; it is part of the block. Pipes and cables join it from
+  the tile inside. A block with a port of a kind becomes a link in the net of that kind round it outside, and every port
+  of that kind inside it is the same link, so the net runs straight through the wall, at any depth (`floorLinks` in
+  `src/sim/nets.ts`; `steamNets` and `euNets` build nets over all floors at once). Links hold nothing and carry any
+  voltage, so one net is one net whichever floors it spans: an LV machine inside fed MV through a port explodes, a tin
+  cable two floors down burns at 128 V. A block has no sides: pipes touching it on two sides join through it. A block
+  with no port of a kind is not in that kind's net.
+- *Saves* are format 5: `floors` holds each inner floor (machines, pipes, cables, ports) by id, written in tick order,
+  and a block's machine carries `inner`. Loading places each floor's contents through the normal rules when it places
+  the block that owns it; a block whose floor is missing, or two blocks naming one floor, is refused. Format 4 and
+  older saves load as one floor, unchanged. Tests: `src/sim/floors.test.ts`.
+- *The view* (`src/view/floor/floor.ts`) shows one floor at a time. Opening a compact block steps into its floor; a
+  breadcrumb over the floor (Factory › Compact Floor (9×9) at (16, 16) › ...) steps back out, as does Backspace. Each
+  floor keeps its own camera; one seen for the first time fits the frame, and a step eases the zoom in or out. An inner
+  floor is drawn with a low wall round it and its ports in the wall (bronze for steam, steel with a yellow band for
+  EU). The tools, the machine GUI, the hiss of boilers and explosions work on whichever floor is shown; the port tools
+  show only on an inner floor. A breakage on another floor is a toast that says where. Compact blocks and ports are
+  plain inked boxes until they get figures (the art task), and the figure test lets compact floors off until then.

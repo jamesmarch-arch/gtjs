@@ -4,11 +4,14 @@
 //
 // A transformer belongs to two nets: its high side is the tile in front of it (+x), its low side the other three.
 // Step-down moves EU from the high net into the low net at LV; step-up moves it from low to high at MV.
+//
+// Nets span floors: an EU port on a compact floor's wall joins the net inside to the one outside (see euNets), so a
+// machine on an inner floor fed too high a voltage through a port explodes like any other.
 import { CONDUITS, MACHINES } from './data';
 import type { MachineDef } from './data/types';
-import { footprint } from './nets';
+import { floorKey, floorLinks, footprint, tickOrder } from './nets';
 import { VOLTAGE, type Tier } from './tiers';
-import type { CableState, MachineState, Tank, World } from './world';
+import { allMachines, isInner, levels, type CableState, type MachineState, type PortState, type Tank, type World } from './world';
 
 export interface EuNet {
   machines: MachineState[]; // ordinary members: generators, batteries, machines
@@ -20,7 +23,6 @@ export interface EuNet {
   stored: number; // set each tick, for display
 }
 
-const key = (x: number, y: number) => `${x},${y}`;
 const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const;
 
 export function joinsEu(m: MachineState): boolean {
@@ -32,21 +34,35 @@ const defOf = (m: MachineState): MachineDef => MACHINES.get(m.def)!;
 const isTransformer = (m: MachineState) => !!defOf(m).transformer;
 const front = (m: MachineState): [number, number] => [m.x + 1, m.y];
 
-type Node = { k: 'm'; m: MachineState } | { k: 'c'; c: CableState } | { k: 'hi'; m: MachineState } | { k: 'lo'; m: MachineState };
+// a link is a compact block with EU ports, or one of those ports: it joins nets across floors and carries any voltage
+type Node = { k: 'm'; m: MachineState } | { k: 'c'; c: CableState } | { k: 'hi'; m: MachineState } | { k: 'lo'; m: MachineState }
+  | { k: 'x'; o: MachineState | PortState };
+type Tile = { m?: MachineState; c?: CableState; x?: MachineState | PortState };
 
 const cache = new WeakMap<World, { rev: number; nets: EuNet[] }>();
 
+/** Every EU net on every floor. An EU port joins the net inside a compact floor to the net its block is part of
+ *  outside, at any depth, so one net can span floors: its voltage is the same on all of them. */
 export function euNets(w: World): EuNet[] {
   const hit = cache.get(w);
   if (hit && hit.rev === w.layoutRev) return hit.nets;
 
-  const at = new Map<string, { m?: MachineState; c?: CableState }>();
-  for (const m of w.machines) if (joinsEu(m)) for (const [x, y] of footprint(m)) at.set(key(x, y), { m });
-  for (const c of w.cables) at.set(key(c.x, c.y), { c });
+  const links = floorLinks(w, 'eu');
+  const at = new Map<string, Tile>(), li = new Map<object, number>(); // what is on each tile, and the floor each thing is on
+  const put = (o: Tile, of: object, l: number, tiles: [number, number][]) => { li.set(of, l); for (const [x, y] of tiles) at.set(floorKey(l, x, y), o); };
+  levels(w).forEach(({ level }, l) => {
+    for (const m of level.machines) {
+      if (joinsEu(m)) put({ m }, m, l, footprint(m));
+      else if (links.has(m)) put({ x: m }, m, l, footprint(m));
+    }
+    for (const c of level.cables) put({ c }, c, l, [[c.x, c.y]]);
+    if (isInner(level)) for (const p of level.ports) if (p.carries === 'eu') put({ x: p }, p, l, [[p.x, p.y]]);
+  });
   // one node object per member (and two per transformer), so the search can mark them seen
   const nodes = new Map<object, Node>(), hi = new Map<MachineState, Node>(), lo = new Map<MachineState, Node>();
-  const nodeOf = (o: { m?: MachineState; c?: CableState }, fromX: number, fromY: number): Node => {
+  const nodeOf = (o: Tile, fromX: number, fromY: number): Node => {
     if (o.c) { if (!nodes.has(o.c)) nodes.set(o.c, { k: 'c', c: o.c }); return nodes.get(o.c)!; }
+    if (o.x) { if (!nodes.has(o.x)) nodes.set(o.x, { k: 'x', o: o.x }); return nodes.get(o.x)!; }
     const m = o.m!;
     if (isTransformer(m)) {
       const [fx, fy] = front(m), side = fx === fromX && fy === fromY ? hi : lo;
@@ -57,17 +73,19 @@ export function euNets(w: World): EuNet[] {
     return nodes.get(m)!;
   };
   const neighbours = (n: Node): Node[] => {
+    const self = n.k === 'c' ? n.c : n.k === 'x' ? n.o : n.m, l = li.get(self)!;
     let tiles: [number, number][];
     if (n.k === 'c') tiles = [[n.c.x, n.c.y]];
-    else if (n.k === 'm') tiles = footprint(n.m);
+    else if (n.k === 'm' || (n.k === 'x' && 'def' in n.o)) tiles = footprint(n.k === 'm' ? n.m : n.o as MachineState);
+    else if (n.k === 'x') tiles = [[n.o.x, n.o.y]];
     else tiles = [[n.m.x, n.m.y]];
-    const out: Node[] = [];
+    const out: Node[] = n.k === 'x' ? links.get(n.o)!.map((o) => nodeOf({ x: o as MachineState | PortState }, NaN, NaN)) : [];
     for (const [x, y] of tiles) for (const [dx, dy] of DIRS) {
       const nx = x + dx, ny = y + dy;
       if (n.k === 'hi' && !(nx === front(n.m)[0] && ny === front(n.m)[1])) continue; // the high side only looks forward
       if (n.k === 'lo' && nx === front(n.m)[0] && ny === front(n.m)[1]) continue; // the low side looks everywhere else
-      const o = at.get(key(nx, ny));
-      if (!o || (o.m && n.k !== 'c' && o.m === n.m)) continue; // another tile of the same machine
+      const o = at.get(floorKey(l, nx, ny));
+      if (!o || ((o.m || o.x) && n.k !== 'c' && (o.m ?? o.x) === self)) continue; // another tile of the same machine
       out.push(nodeOf(o, x, y));
     }
     return out;
@@ -75,10 +93,10 @@ export function euNets(w: World): EuNet[] {
 
   // every member starts a search; a transformer starts both its sides
   const starts: Node[] = [];
-  for (const o of at.values()) if (o.c || !isTransformer(o.m!)) starts.push(nodeOf(o, NaN, NaN));
-  for (const m of w.machines) if (joinsEu(m) && isTransformer(m)) { starts.push(nodeOf({ m }, ...front(m))); starts.push(nodeOf({ m }, NaN, NaN)); }
+  for (const o of at.values()) if (!o.m || !isTransformer(o.m)) starts.push(nodeOf(o, NaN, NaN));
+  for (const m of allMachines(w)) if (joinsEu(m) && isTransformer(m)) { starts.push(nodeOf({ m }, ...front(m))); starts.push(nodeOf({ m }, NaN, NaN)); }
 
-  const seen = new Set<Node>(), nets: EuNet[] = [];
+  const seen = new Set<Node>(), nets: EuNet[] = [], order = tickOrder(w);
   for (const start of starts) {
     if (seen.has(start)) continue;
     const net: EuNet = { machines: [], cables: [], highOf: [], lowOf: [], capacity: 0, voltage: 0, stored: 0 }, queue = [start];
@@ -87,11 +105,12 @@ export function euNets(w: World): EuNet[] {
       const n = queue.pop()!;
       if (n.k === 'm') { net.machines.push(n.m); net.capacity += euCapacity(n.m); }
       else if (n.k === 'c') net.cables.push(n.c);
-      else (n.k === 'hi' ? net.highOf : net.lowOf).push(n.m);
+      else if (n.k !== 'x') (n.k === 'hi' ? net.highOf : net.lowOf).push(n.m);
       for (const next of neighbours(n)) if (!seen.has(next)) { seen.add(next); queue.push(next); }
     }
-    net.machines.sort((a, b) => w.machines.indexOf(a) - w.machines.indexOf(b));
-    nets.push(net);
+    net.machines.sort((a, b) => order.get(a)! - order.get(b)!);
+    // a net of nothing but links holds nothing
+    if (net.machines.length || net.cables.length || net.highOf.length || net.lowOf.length) nets.push(net);
   }
   cache.set(w, { rev: w.layoutRev, nets });
   return nets;
@@ -155,7 +174,7 @@ export function tickPower(w: World, consume: (m: MachineState, tank: Tank, volts
     }
   }
   // transformers move up to their amps at their low voltage each tick
-  for (const t of w.machines) {
+  for (const t of allMachines(w)) {
     const spec = defOf(t).transformer;
     if (!spec || !t.enabled) { if (spec) t.rate = 0; continue; }
     const hiNet = netOfSide(t, 'highOf'), loNet = netOfSide(t, 'lowOf');

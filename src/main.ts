@@ -5,7 +5,9 @@ import { checkQuests, claimQuest } from './sim/quests';
 import { netSteam, steamCapacity, steamNets } from './sim/nets';
 import { euNets } from './sim/power';
 import { deserialize, loadFrom, SAVE_KEY, SaveError, saveTo, serialize } from './sim/save';
-import { add, count, createWorld, costOf, TICKS_PER_SECOND, tick, type Buildable, type World } from './sim/world';
+import {
+  add, allMachines, count, createWorld, costOf, FACTORY, floorPath, isInner, isPort, PORT_NAMES, TICKS_PER_SECOND, tick, type Buildable, type World,
+} from './sim/world';
 import { Floor, type Tool } from './view/floor/floor';
 import { openMachineGui, type MachineGui } from './view/ui/gui';
 import { openOverlay, type Overlay } from './view/ui/overlay';
@@ -58,7 +60,7 @@ app.innerHTML = `
       <div class="zoom"><button id="mute" class="icon" aria-pressed="false"></button>
         <button id="tleft" aria-label="Turn the view left" title="Turn left (Q)">⟲</button><button id="tright" aria-label="Turn the view right" title="Turn right (E)">⟳</button>
         <button id="zout" aria-label="Zoom out">−</button><span id="zval">100%</span><button id="zin" aria-label="Zoom in">+</button></div></div>
-    <div class="floor-host" id="floor"></div>
+    <div class="floor-host" id="floor"><nav class="crumbs" id="crumbs" aria-label="Floors"></nav></div>
     <p class="statusline" id="status">&nbsp;</p>
   </main>
   <div class="toastbox" id="toasts" aria-live="polite"></div>
@@ -67,7 +69,7 @@ const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getEleme
 
 /* ---------- the floor and its tools ---------- */
 const floor = new Floor($('floor'), () => w, {
-  inspect: (m) => openGui(m.uid),
+  inspect: (m) => (m.inner ? floor.enter(m.inner) : openGui(m.uid)), // a compact block: step into its floor
   changed: () => refresh(),
   status: (text) => { $('status').textContent = text || ' '; },
 });
@@ -79,7 +81,11 @@ const tools: { label: string; hint: string; tool: Tool }[] = [
     const c = CONDUITS.get(id)!;
     return { label: c.name, hint: `Drag to lay; each tile uses one from storage${c.maxVoltage ? ` · carries up to ${c.maxVoltage} V` : ''}`, tool: { kind: 'build', what: id } as Tool };
   }),
-  ...[...MACHINES.values()].map((d) => ({ label: d.name, hint: `${d.footprint.join('×')} · craft it at the workbench, then place it`, tool: { kind: 'build', what: d.id } as Tool })),
+  ...[...MACHINES.values()].map((d) => ({ label: d.name, hint: d.compact
+    ? `A floor of ${d.compact.size}×${d.compact.size} inside: open it to step in · craft it at the workbench, then place it`
+    : `${d.footprint.join('×')} · craft it at the workbench, then place it`, tool: { kind: 'build', what: d.id } as Tool })),
+  // on an inner floor's wall: join the nets in here to the ones round the block outside
+  ...(['steam_port', 'eu_port'] as const).map((id) => ({ label: PORT_NAMES[id], hint: `Click a wall tile of this floor: it joins the ${id === 'steam_port' ? 'steam' : 'EU'} net inside to the one the block touches outside`, tool: { kind: 'build', what: id } as Tool })),
 ];
 $('tools').innerHTML = tools.map((t, i) => `<button data-i="${i}" title="${t.hint}"><span>${t.label}</span>${
   t.tool.kind === 'build' ? '<small></small>' : ''}</button>`).join('');
@@ -88,6 +94,23 @@ $('tools').onclick = (e) => {
   if (b) floor.setTool(tools[+b.dataset.i!].tool);
 };
 $('floor').addEventListener('toolchange', () => refreshTools());
+// the breadcrumb: the floors from the factory down to the one on show; click one to step back out to it
+function showCrumbs() {
+  const path = floorPath(w, floor.shownFloor());
+  $('crumbs').hidden = path.length < 2;
+  $('crumbs').innerHTML = path.map((f, i) => (i === path.length - 1 ? `<b aria-current="page">${f.name}</b>` : `<button data-floor="${f.id}">${f.name}</button>`)).join('<span aria-hidden="true">›</span>');
+}
+$('crumbs').onclick = (e) => {
+  const b = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-floor]');
+  if (b) floor.enter(b.dataset.floor!);
+};
+$('floor').addEventListener('floorchange', () => {
+  // ports go only on an inner floor's walls: put the tool down when stepping out to the factory
+  const t = floor.getTool();
+  if (t.kind === 'build' && isPort(t.what) && !isInner(floor.level())) floor.setTool({ kind: 'inspect' });
+  showCrumbs();
+  refreshTools();
+});
 const zoomBy = (k: number) => { floor.setZoom(floor.getZoom() * k); $('zval').textContent = `${Math.round(floor.getZoom() * 100)}%`; };
 $('zin').onclick = () => zoomBy(1.4);
 $('zout').onclick = () => zoomBy(1 / 1.4);
@@ -117,6 +140,7 @@ addEventListener('keydown', (e) => {
   else if (key === 'q') floor.rotate(-1);
   else if (key === 'e') floor.rotate(1);
   else if (key === 'Home') floor.recenter();
+  else if (key === 'Backspace') { const path = floorPath(w, floor.shownFloor()); if (path.length > 1) floor.enter(path[path.length - 2].id); } // step out
   else if (key === 'm') toggleMute();
 });
 
@@ -126,6 +150,11 @@ function refreshTools() {
     const t = tools[+b.dataset.i!].tool;
     b.setAttribute('aria-pressed', String(t.kind === cur.kind && (t.kind !== 'build' || (cur.kind === 'build' && cur.what === t.what))));
     if (t.kind !== 'build') continue;
+    if (isPort(t.what)) { // free, and only on an inner floor
+      b.hidden = !isInner(floor.level());
+      b.querySelector('small')!.textContent = 'on the walls';
+      continue;
+    }
     const have = count(w, costOf(t.what as Buildable)[0].item);
     // the toolbar is a hotbar: only what you have (and the tool in hand) shows
     b.hidden = have === 0 && b.getAttribute('aria-pressed') !== 'true';
@@ -176,7 +205,7 @@ function toast(text: string, bad = false) {
 function openGui(uid: string) {
   gui?.close();
   sheet?.close();
-  const m = w.machines.find((x) => x.uid === uid);
+  const m = allMachines(w).find((x) => x.uid === uid);
   if (!m) return;
   gui = openMachineGui(m, () => w, () => refresh(), () => { gui = null; }, floor.figureYaw());
 }
@@ -235,7 +264,7 @@ for (const s of [1, 5, 20]) {
 }
 
 function refresh() {
-  if (gui && !w.machines.includes(gui.machine)) gui.close(); // removed from under its GUI
+  if (gui && !allMachines(w).includes(gui.machine)) gui.close(); // removed from under its GUI
   for (const q of checkQuests(w)) toast(`Quest complete: ${q.title}. Claim the reward in the quest book.`);
   const n = claimable(w);
   $('badge').hidden = !n;
@@ -256,15 +285,17 @@ function refresh() {
     .map(([id, n]) => `<li><span>${icon(id)}${itemName(id)}</span><b>${n}</b></li>`).join('') || '<li class="muted">empty</li>';
   for (const b of $('speed').querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.textContent === `${speed}×`));
   refreshTools();
+  showCrumbs(); // a block's floor can go (removed, or a game loaded) while you are on it
   gui?.sync();
 }
 
 // fixed-step sim: 20 ticks per second times the speed; the floor is drawn every frame
 let last = performance.now(), owed = 0, shown = 0;
-// the burning boilers' hiss, from where they are on screen; louder with more of them, but one boiler is enough to hear
+// the burning boilers' hiss on the floor on show, from where they are on screen; louder with more of them, but one
+// boiler is enough to hear
 function hearBoilers() {
   let total = 0, panned = 0, venting = false;
-  for (const m of w.machines) {
+  for (const m of floor.level().machines) {
     if (!MACHINES.get(m.def)!.boiler || m.burn <= 0) continue;
     const { gain, pan } = floor.hearing(m);
     total += gain;
@@ -281,9 +312,11 @@ function frame(now: number) {
   while (owed >= 1) { tick(w); owed--; }
   for (const e of w.events) {
     floor.boom(e);
+    // broke on another floor: say which
+    const where = e.floor === floor.shownFloor() || e.floor === FACTORY ? '' : ` (inside ${floorPath(w, e.floor).slice(1).map((f) => f.name).join(' › ')})`;
     toast(e.kind === 'explode'
-      ? `${MACHINES.get(e.what)?.name ?? e.what} exploded: ${e.volts} V on a machine built for less. It's gone.`
-      : `${CONDUITS.get(e.what as 'cable')?.name ?? 'A cable'} at (${e.x}, ${e.y}) burned out at ${e.volts} V.`, true);
+      ? `${MACHINES.get(e.what)?.name ?? e.what}${where} exploded: ${e.volts} V on a machine built for less. It's gone.`
+      : `${CONDUITS.get(e.what as 'cable')?.name ?? 'A cable'} at (${e.x}, ${e.y})${where} burned out at ${e.volts} V.`, true);
   }
   w.events.length = 0;
   floor.draw(now);
