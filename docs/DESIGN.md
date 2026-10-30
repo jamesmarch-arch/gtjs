@@ -163,7 +163,8 @@ credit them on the game's About screen. Figures may set `credit:false` inside th
 - **M5** LV: generators, EU nets, explosions, LV machines, the full ore processing chain, circuits. Done:
   - EU nets (`src/sim/power.ts`): cables and EU machines that touch share one buffer. A net runs at the voltage
     that feeds it each tick; a machine above its tier explodes (lost, with what it was working on) and a cable above
-    its rating burns out. Tin cable 32 V, copper cable 128 V.
+    its rating burns out. Tin cable 32 V, copper cable 128 V. A switched-on generator holding EU feeds its net even
+    when the net is full and it makes nothing, so a full net loaded from a save still has its voltage.
   - Generators: LV steam turbine (2 L steam per EU, 32 EU/t; it sits on a pipe and a cable), LV semi-fluid
     generator (creosote, 8 EU/L). LV battery buffer (40,000 EU). High pressure coal boiler (15 L/t) for the steam.
   - LV/MV transformer: its high side is the tile in front (+x), its low side the other three. Step-down moves up to
