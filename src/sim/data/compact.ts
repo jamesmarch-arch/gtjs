@@ -23,12 +23,13 @@ const s = (item: string, count = 1): Stack => ({ item, count });
 // Each size costs what a few of its tier's machines do, as in Compact Machines, where a bigger room takes more and
 // better wall: a hull for the block itself, dense plates or casings for the walls, glass for the window onto the floor
 // inside, and circuits from LV on. The 5x5 is the steam age's (bronze, bricks); the 9x9 is LV's (casings, circuits);
-// the 13x13 has steel walls, so it comes after the blast furnace, with MV cable in them.
+// the 13x13 has steel walls, so it comes after the blast furnace, with MV cable in them. The bigger rooms are bigger
+// inside than out, as in Compact Machines, which takes ender pearls (the 13x13 holds its shape with diamonds as well).
 export const crafts: CraftDef[] = [
   { id: id(5), group: 'machines', tier: 'steam', inputs: [s('bronze_hull'), s('dense_bronze_plate', 3), s('brick', 16), s('glass', 4)], output: s(id(5)) },
-  { id: id(9), group: 'machines', tier: 'lv', inputs: [s('lv_hull'), s('lv_casing', 4), s('circuit_lv', 4), s('glass', 8)], output: s(id(9)) },
+  { id: id(9), group: 'machines', tier: 'lv', inputs: [s('lv_hull'), s('lv_casing', 4), s('circuit_lv', 4), s('glass', 8), s('ender_pearl')], output: s(id(9)) },
   {
     id: id(13), group: 'machines', tier: 'mv',
-    inputs: [s('lv_hull'), s('dense_steel_plate', 4), s('circuit_lv', 8), s('glass', 16), s('copper_cable', 4)], output: s(id(13)),
+    inputs: [s('lv_hull'), s('dense_steel_plate', 4), s('circuit_lv', 8), s('glass', 16), s('copper_cable', 4), s('ender_pearl', 2), s('diamond', 2)], output: s(id(13)),
   },
 ];

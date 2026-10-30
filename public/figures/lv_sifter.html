@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LV Sifter</title>
+<script src="cf-head.js"></script></head><body>
+<script src="core.js"></script>
+<script src="gt-bridge.js"></script>
+<script src="gt-parts.js"></script>
+<script src="gt-lv.js"></script>
+<script>
+/* LV Sifter (gtjs, LV, after Ex Nihilo): a block of gravel, sand, dust or dirt on an electric vibrating screen.
+
+   How it works (truth first)
+   1. A block drops from the hopper on the roof, through a throat, onto the high end of a sloping wire mesh.
+   2. The mesh's frame sits on four coil springs. An electric vibrator motor is bolted under the frame, with an eccentric
+      weight on each end of its shaft; as they spin the whole frame buzzes on its springs, far faster than a cam could
+      rock it, and each buzz throws what is on the mesh a little way down the slope.
+   3. Fines drop through the mesh onto a sloping steel pan, slide to the back and go away down the waste duct.
+   4. What is too big to pass (the finds) walks off the mesh's open front, down a chute to the output slot and into the
+      tray. Each find is its own chance per block, so one block can give several things or nothing.
+   Where the block is: hopper -> throat -> mesh -> fines to pan -> duct, finds -> chute -> slot -> tray.
+   Where the power is: cable -> socket -> control board -> motor lead -> vibrator motor -> eccentric weights -> frame.
+
+   Parts
+   OUTSIDE  the LV case (see gt-lv.js) . window on the face with the screen buzzing behind glass . hopper on the roof .
+            output tray . waste duct's stub out of the back
+   INSIDE   bulkhead . two support rails . four coil springs . screen frame (two side rails, back rail, cross bar) .
+            wire mesh . vibrator motor . two eccentric weights . motor lead . throat . waste pan . waste duct . chute
+
+   Contact checks (numbers)
+   - window y 12..68, z 18..58, inside the face recess (y 8..72, z 15..60). The chamber behind it runs back to the
+     bulkhead at x 40, so everything shows: from the default view a part 1 unit back looks 1 unit further along y.
+   - frame x 46..66, y 14..66, fixed slope 0.25 rad and 6 lower than its local frame: from about z 32 at the back to a
+     front lip at z 27, under the throat (z 60).
+   - springs at (x 50 and x 62, y 15 and y 65) from the support rails' tops (z 20) up to the frame's rails.
+   - cross bar local x 55..59, z 36.5..38 under the mesh; motor r 3.5 under it, local z 33.5, y 30..50: touching.
+   - throat x 48..58, y 35..45 from the roof (z 84) to z 60; block 9 cube lands at local x 53.
+   - chute from under the lip (x 66, z 25) to the slot (x 74, z 10.5). Pan x 42..64, z 14.5..20, clear of the chute.
+   - duct from the pan's low end (x 42, y 40, z 15) out of the back wall at z 12.
+*/
+const LSF_WIN = [12, 18, 68, 58], LSF_BX = 40, LSF_CY = 40, LSF_FLOOR = 14, LSF_CEIL = 60;
+const LSF_A0 = .25, LSF_PIV = { x: 47, z: 38 }, LSF_MESHZ = 39.2, LSF_DROP = 6;
+const LSF_CHUTE = { y0: 33, y1: 47, x0: 66, z0: 25, x1: LV.W, z1: 10.5 };
+const LSF_STEEL = { l:'#d9dfe3', m:'#a9b2b9', d:'#5d666e' }, LSF_LINE = { l:'#7d858b', m:'#596066', d:'#33393e' };
+
+/* ---------- a sort that holds with this many parts: only pairs that overlap on screen are ordered, each by a plane
+   that separates them. ext: a part's true extent, when its box is cheating to go under or over something. ---------- */
+function lsfSort(parts){
+  const items = parts.filter(Boolean).map(p => { const b = p.ext || p.box, pts = [];
+    for (const x of [b[0][0], b[1][0]]) for (const y of [b[0][1], b[1][1]]) for (const z of [b[0][2], b[1][2]]) pts.push(P(x, y, z));
+    return { p, h: hull(pts), d: depthOf(boxMid(p.box)), n: 0, after: [], done: false }; });
+  // do two convex outlines overlap on screen? (separating axis)
+  const apart = (A, B) => { for (const [P1, P2] of [[A, B], [B, A]]) for (let i = 0; i < P1.length; i++){ const a = P1[i], c = P1[(i + 1) % P1.length], nx = c[1] - a[1], ny = a[0] - c[0];
+      const pr = H => H.map(q => q[0]*nx + q[1]*ny), ra = pr(P1), rb = pr(P2);
+      if (Math.max(...ra) <= Math.min(...rb) || Math.max(...rb) <= Math.min(...ra)) return true; }
+    return false; };
+  for (let i = 0; i < items.length; i++) for (let j = i + 1; j < items.length; j++){ const a = items[i], b = items[j];
+    if (apart(a.h, b.h)) continue;
+    const o = sepOrder(a.p, b.p); if (o < 0){ a.after.push(b); b.n++; } else if (o > 0){ b.after.push(a); a.n++; } }
+  let out = '';
+  for (let c = 0; c < items.length; c++){ let best = null;
+    for (const it of items) if (!it.done && (!best || it.n < best.n || (it.n === best.n && it.d < best.d))) best = it;
+    best.done = true; out += best.p.svg; for (const b of best.after) b.n--; }
+  return out;
+}
+
+/* ---------- what is on the mesh, and what falls out: by the recipe ---------- */
+const LSF_STAGES = {
+  gravel: { col:'#9a958c', finds:[['#38342f', .3], ['#c98d6b', .3], ['#e5874c', .3], ['#dcdad0', .2]] },      // coal, iron, copper, tin
+  sand: { col:'#e8d58f', finds:[['#c96a4a', .15], ['#d8342c', .15], ['#2f5fc4', .08], ['#7fe8e0', .01]] },    // bauxite, redstone, lapis, diamond
+  stone_dust: { col:'#d9d4c6', finds:[['#d8d6a8', .15], ['#f2c94c', .08], ['#1f7f6e', .01]] },                // nickel, gold, ender pearl
+  dirt: { col:'#7a5532', finds:[['#4f9a3c', .25]] },                                                          // saplings
+};
+const lsfStage = st => LSF_STAGES[((st.recipe && st.recipe.id) || '').match(/gravel|sand|stone_dust|dirt/)?.[0] || 'gravel'];
+const lsfRand = (a, b) => { const s = Math.sin(a*12.9898 + b*78.233)*43758.5453; return s - Math.floor(s); };
+// which finds this block gives: the game rolls the true chances when the block is done, so this is a picture of the
+// rolling, at twice the odds so that a short look at the machine still shows something
+function lsfFinds(st){
+  const s = lsfStage(st), out = [];
+  s.finds.forEach(([col, ch], i) => { if (lsfRand((st.blk || 0) + 1, i + 1) < Math.min(.8, ch*2 + .05)) out.push({ col, i }); });
+  return out;
+}
+function lsfFindPos(i, p){
+  const p0 = .22 + .09*i, u = (p - p0)/.33, y = LSF_CY + [-7, 7, -2, 4][i % 4], S = LSF_CHUTE;
+  if (u < 0) return null;
+  if (u < 1) return { on:'mesh', at:[56 + 10*u, y, LSF_MESHZ + 1.1] };
+  const v = (u - 1)*.33/.1;
+  if (v < 1) return { on:'chute', at:[S.x0 + (S.x1 - S.x0)*v, LSF_CY + (y - LSF_CY)*.8, S.z0 + (S.z1 - S.z0)*v + 1.2] };
+  const w = (v - 1)*.1/.05;
+  if (w < 1) return { on:'tray', at:[S.x1 + 11*w, LSF_CY + (y - LSF_CY)*.8, S.z1 + 1.2 - (S.z1 - .5)*w*w] };
+  return null;
+}
+function lsfFlow(st){
+  const p = st.progress || 0, on = !!st.active, o = { p, on, drop: on && p < .1, sieve: on && p >= .08 && p < .82 && !!st.running };
+  const left = 1 - gtClamp((p - .1)/.7);
+  o.heapH = on && p >= .1 && p < .8 ? .8 + 8.2*left : 0;
+  o.heapR = 5 + 3.5*(1 - left);
+  o.heapX = 53 + 2*(1 - left);
+  return o;
+}
+// the screen's frame: its fixed slope, plus the buzz while it runs
+const lsfTf = st => { const t = st.t || 0, r = st.running ? 1 : 0, vx = r*.55*Math.cos(t*38), vz = r*.75*Math.sin(t*38);
+  return p => { const q = gtTilt(p, LSF_PIV.x, LSF_PIV.z, LSF_A0); return [q[0] + vx, q[1], q[2] + vz - LSF_DROP]; }; };
+function lsfTBox(T, x0, y0, z0, x1, y1, z1, m, w = .8){
+  const c = (x, y, z) => T([x, y, z]), o = T([0, 0, 0]), dir = v => sub(T(v), o);
+  const F = [[[0,1,0], [[x0,y1,z0],[x1,y1,z0],[x1,y1,z1],[x0,y1,z1]]], [[1,0,0], [[x1,y0,z0],[x1,y1,z0],[x1,y1,z1],[x1,y0,z1]]],
+    [[0,-1,0], [[x0,y0,z0],[x1,y0,z0],[x1,y0,z1],[x0,y0,z1]]], [[-1,0,0], [[x0,y0,z0],[x0,y1,z0],[x0,y1,z1],[x0,y0,z1]]],
+    [[0,0,1], [[x0,y0,z1],[x1,y0,z1],[x1,y1,z1],[x0,y1,z1]]], [[0,0,-1], [[x0,y0,z0],[x1,y0,z0],[x1,y1,z0],[x0,y1,z0]]]];
+  return F.map(([n, q]) => { const d = dir(n); return facing(d) ? shape(q.map(p => c(...p)), toneI(d, m), w) : ''; }).join('');
+}
+
+/* ---------- the screen and what is on it ---------- */
+function lsfScreen(st, flow){
+  const T = lsfTf(st), R = GT.IRON, stage = lsfStage(st), parts = [], put = (b, svg) => parts.push({ box: b, svg }), t = st.t || 0, zm = LSF_MESHZ, cy = LSF_CY;
+  const tb = (x0, y0, z0, x1, y1, z1, m, w) => put([[x0, y0, z0], [x1, y1, z1]], lsfTBox(T, x0, y0, z0, x1, y1, z1, m, w));
+  tb(46, 14, 38, 66, 16, 43, R, 1);
+  tb(46, 64, 38, 66, 66, 43, R, 1);
+  tb(46, 16, 38, 48, 64, 43, R, 1);
+  // the cross bar, the motor under it, an eccentric weight on each end of its shaft
+  tb(55, 16, 36.5, 59, 64, 38, GT_TRIM, .8);
+  const mc = 33.5, ang = t*38, wx = 1.6*Math.cos(ang), wz = 1.6*Math.sin(ang);
+  put([[53.5, 30, 30], [60.5, 50, 36.5]], rod(T([57, 30, mc]), T([57, 50, mc]), 3.5, GT.COPPER, toneI, 1, 3.5, 18));
+  put([[52.5, 27.5, 29], [61.5, 30, 38]], rod(T([57 + wx, 27.5, mc + wz]), T([57 + wx, 30, mc + wz]), 3, GT_TRIM, toneI, .9, 3, 16));
+  put([[52.5, 50, 29], [61.5, 52.5, 38]], rod(T([57 + wx, 50, mc + wz]), T([57 + wx, 52.5, mc + wz]), 3, GT_TRIM, toneI, .9, 3, 16));
+  // the mesh
+  const q = [[48, 16, zm], [66, 16, zm], [66, 64, zm], [48, 64, zm]].map(T);
+  let wires = ''; for (let x = 50; x < 66; x += 2.6) wires += pd([T([x, 16, zm]), T([x, 64, zm])], false);
+  for (let y = 18; y < 64; y += 2.6) wires += pd([T([48, y, zm]), T([66, y, zm])], false);
+  put([[48, 16, zm - .1], [66, 64, zm]], fill(pd(q), '#1d2125', 'opacity=".3"') + `<path d="${wires}" fill="none" stroke="#e8edf0" stroke-width=".5"/>` + ink(pd(q), .9));
+  const mm = matOf(stage.col);
+  if (flow.on && flow.p >= .1 && flow.heapH > 0){ const r = flow.heapR, x = flow.heapX, h = flow.heapH;
+    const A = on(PZ(zm), ellUV(x, cy, r, r*.95, 12)).map(T), B = on(PZ(zm + h), ellUV(x, cy, r*.45, r*.42, 12)).map(T);
+    let dots = ''; for (let i = 0; i < 7; i++) dots += pd([T([x + (lsfRand(i, 3) - .5)*r*.8, cy + (lsfRand(i, 5) - .5)*r*.7, zm + h + .05]), T([x + (lsfRand(i, 3) - .5)*r*.8 + .3, cy + (lsfRand(i, 5) - .5)*r*.7, zm + h + .05])], false);
+    put([[x - r, cy - r, zm], [x + r, cy + r, zm + h]], loft(A, B, n => toneI(n, mm)) + fill(pd(B), mm.l) + hullInk([...A, ...B], 1.1)
+      + `<path d="${dots}" fill="none" stroke="${mm.d}" stroke-width="1.1" stroke-linecap="round"/>`); }
+  for (const fd of lsfFinds(st)){ const pos = flow.on ? lsfFindPos(fd.i, flow.p) : null;
+    if (pos && pos.on === 'mesh'){ const [x, y, z] = pos.at; put([[x - 2, y - 2, zm], [x + 2, y + 2, zm + 3]], gtLump(T([x, y, z]), .55, null, matOf(fd.col))); } }
+  let s = lsfSort(parts);
+  if (flow.drop){ const u = (flow.p/.1)**2, zs = T([53, cy, zm])[2], z = LSF_CEIL + (zs - LSF_CEIL)*u;
+    s = box(48.5, cy - 4.5, z, 57.5, cy + 4.5, z + 9, mm, toneI, 1) + s; }
+  return { box:[[46, 14, 32], [66, 66, 46]], ext:[[46, 14, 21], [67, 66, 41]], svg: s };
+}
+// a coil spring from a support rail's top up to the frame's rail
+function lsfSpring(T, x, y){
+  const z0 = 20, top = T([x, y, 38]), pts = [[x, y, z0]], n = 7;
+  for (let i = 1; i < n; i++){ const u = i/n, sgn = i % 2 ? 1 : -1; pts.push([x + (top[0] - x)*u + 1.5*sgn, y, z0 + (top[2] - z0)*u]); }
+  pts.push(top);
+  const d = pd(pts, false);
+  return { box:[[x - 2, y - 1, z0], [x + 2, y + 1, 32]], svg: `<path d="${d}" fill="none" stroke="${INK}" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/><path d="${d}" fill="none" stroke="#dfe5e9" stroke-width="1" stroke-linejoin="round" stroke-linecap="round"/>` };
+}
+function lsfChute(st, flow){
+  const S = LSF_CHUTE, M = GT.IRON, nn = norm([S.z0 - S.z1, 0, S.x1 - S.x0]), y0 = S.y0, y1 = S.y1;
+  const plate = shape([[S.x0, y0, S.z0], [S.x1, y0, S.z1], [S.x1, y1, S.z1], [S.x0, y1, S.z0]], toneI(nn, M), .9);
+  const lip = y => shape([[S.x0, y, S.z0], [S.x1, y, S.z1], [S.x1, y, S.z1 + 3], [S.x0, y, S.z0 + 3]], toneI([0, y > LSF_CY ? 1 : -1, 0], M), .8);
+  let lumps = '';
+  if (flow.on) for (const fd of lsfFinds(st)){ const pos = lsfFindPos(fd.i, flow.p); if (pos && pos.on === 'chute') lumps += gtLump(pos.at, .55, null, matOf(fd.col)); }
+  const near = CAM_V[1] >= 0 ? y1 : y0, far = near === y1 ? y0 : y1;
+  return { box:[[S.x0, y0, S.z1], [S.x1, y1, S.z0 + 3]], svg: lip(far) + plate + lumps + lip(near) };
+}
+function lsfPan(st, flow){
+  const x0 = 42, x1 = 64, z0 = 14.5, z1 = 20, y0 = 18, y1 = 62, nn = norm([z0 - z1, 0, x1 - x0]), col = lsfStage(st).col;
+  let s = shape([[x0, y0, z0], [x1, y0, z1], [x1, y1, z1], [x0, y1, z0]], toneI(nn, LSF_STEEL), .9);
+  if (flow.on){ const h = .4 + .5*Math.sin(Math.PI*gtClamp(flow.p)); for (let i = 0; i < 12; i++){ const x = x0 + 2 + lsfRand(i, 7)*16, y = LSF_CY + (lsfRand(i, 9) - .5)*26, [X, Y] = P(x, y, z0 + (z1 - z0)*(x - x0)/(x1 - x0) + .2);
+    s += `<circle cx="${f(X)}" cy="${f(Y)}" r="${f(.8 + h)}" fill="${col}" stroke="${INK}" stroke-width=".3"/>`; } }
+  return { box:[[x0, y0, z0], [x1, y1, z1]], svg: s };
+}
+function lsfFines(st, flow){
+  if (!flow.sieve) return null;
+  const col = lsfStage(st).col, t = st.t || 0, T = lsfTf(st); let s = '';
+  for (let i = 0; i < 18; i++){ const u = (t*1.8 + i/18) % 1, sx = 51 + lsfRand(i, 1)*13, sy = LSF_CY + (lsfRand(i, 2) - .5)*26;
+    const top = T([sx, sy, LSF_MESHZ])[2], zb = 14.5 + 5.5*(sx - 42)/22, z = top + (zb - top)*u*u, [X, Y] = P(sx, sy, z);
+    s += `<circle cx="${f(X)}" cy="${f(Y)}" r="1.1" fill="${col}" stroke="${INK}" stroke-width=".4"/>`; }
+  return { box:[[48, 16, 20], [65, 64, 21]], ext:[[48, 16, 15], [65, 64, 34]], svg: s };
+}
+// the screen's chamber: shared by the window and the see-through
+function lsfChamber(st, flow){
+  const T = lsfTf(st);
+  return [lsfPan(st, flow),
+    { box:[[44, 12, 18], [LV.W, 17, 20]], svg: box(44, 12, 18, LV.W, 17, 20, GT.IRON, toneI, .9) },
+    { box:[[44, 63, 18], [LV.W, 68, 20]], svg: box(44, 63, 18, LV.W, 68, 20, GT.IRON, toneI, .9) },
+    lsfSpring(T, 50, 15), lsfSpring(T, 62, 15), lsfSpring(T, 50, 65), lsfSpring(T, 62, 65),
+    lsfScreen(st, flow), lsfFines(st, flow), lsfChute(st, flow)];
+}
+
+/* ---------- the face: the window, and the chamber behind it ---------- */
+function lsfFace(st){
+  const flow = lsfFlow(st), [y0, z0, y1, z1] = LSF_WIN, W = LV.W, xb = LSF_BX, L = LSF_LINE, open = lvOn(rrUV(y0, z0, y1, z1, 3), .5);
+  let inner = fill(pd(open), L.d);
+  const zf = LSF_FLOOR, zc = LSF_CEIL, yl = 10, yr = 70;
+  inner += shape(on(PX(xb), rectUV(yl, zf, yr, zc)), toneI([1,0,0], L), .8);
+  if (facing([0,1,0])) inner += shape([[xb, yl, zf], [W, yl, zf], [W, yl, zc], [xb, yl, zc]], toneI([0,1,0], L), .8);
+  if (facing([0,-1,0])) inner += shape([[xb, yr, zf], [W, yr, zf], [W, yr, zc], [xb, yr, zc]], toneI([0,-1,0], L), .8);
+  inner += shape([[xb, yl, zf], [W, yl, zf], [W, yr, zf], [xb, yr, zf]], toneI([0,0,1], L), .8);
+  inner += lsfSort(lsfChamber(st, flow));
+  // glass: two streaks of light
+  inner += fill(pd(lvOn([[y0 + 3, z1 - 6], [y0 + 13, z1 - 2], [y0 + 8, z1 - 2], [y0 + 2, z1 - 4]], .6)), '#ffffff', 'opacity=".3"')
+    + fill(pd(lvOn([[y1 - 12, z0 + 3], [y1 - 3, z0 + 11], [y1 - 3, z0 + 7], [y1 - 8, z0 + 3]], .6)), '#ffffff', 'opacity=".2"');
+  return clipTo(open, inner) + ink(pd(open), 1.8);
+}
+
+/* ---------- what stands outside: hopper, tray with its finds in their own colours, the duct's stub ---------- */
+function lsfTray(st, flow){
+  const [x0, y0, x1, y1] = LV_TRAY, A = on(PZ(0), rectUV(x0, y0, x1, y1)), B = on(PZ(LV_TRAY_H), rectUV(x0, y0, x1, y1));
+  let inner = fill(pd(on(PZ(.6), rectUV(x0 + .6, y0 + .6, x1 - .6, y1 - .6))), GT.IRON.d);
+  const fs = lsfStage(st).finds, items = [];
+  for (let i = 0; i < Math.min(8, st.output | 0); i++){ const at = [x0 + 5 + (i % 2)*9, y0 + 4.5 + Math.floor(i/2)*6.2, 2];
+    items.push({ box:[[at[0] - 2.2, at[1] - 2.2, .6], [at[0] + 2.2, at[1] + 2.2, 4]], svg: gtLump(at, .75, null, matOf(fs[i % fs.length][0])) }); }
+  if (flow.on) for (const fd of lsfFinds(st)){ const pos = lsfFindPos(fd.i, flow.p);
+    if (pos && pos.on === 'tray'){ const a = pos.at; items.push({ box:[[a[0] - 2, a[1] - 2, a[2] - 2], [a[0] + 2, a[1] + 2, a[2] + 2]], svg: gtLump(a, .55, null, matOf(fd.col)) }); } }
+  inner += byDepth(items);
+  return openShell(A, B, n => toneI(n, GT.IRON), inner) + ink(pd(B), 1.3) + hullInk([...A, ...B], 1.6);
+}
+const LSF_HOP = { bot: [46, 30, 60, 50], top: [40, 24, 66, 56], h: 11 };
+function lsfParts(st, k, fade){
+  // a new block whenever progress starts again: it picks which finds this one gives
+  if ((st.progress || 0) < (st.lastP || 0) - .2) st.blk = (st.blk || 0) + 1;
+  st.lastP = st.progress || 0;
+  const flow = lsfFlow(st), mm = matOf(lsfStage(st).col), H = LSF_HOP;
+  const cubes = [[49, 34], [57, 34], [49, 46], [57, 46]].slice(0, Math.min(4, st.input | 0)).map(([x, y]) =>
+    ({ box:[[x - 3.5, y - 3.5, LV.ZT + .5], [x + 3.5, y + 3.5, LV.ZT + 7.5]], svg: box(x - 3.5, y - 3.5, LV.ZT + .5, x + 3.5, y + 3.5, LV.ZT + 7.5, mm, toneI, .9) }));
+  return [
+    // the box starts further back than the hopper: separated from the cable along x as well as y, the sort goes round in a circle
+    { box:[[20, H.top[1], LV.ZT], [H.top[2], H.top[3], LV.ZT + H.h]], svg: act('hopper', fade(gtHopper(LV.ZT, H.bot, H.top, H.h, GT_STEEL, cubes, flow.drop))) },
+    { box:[[LV_TRAY[0], LV_TRAY[1], 0], [LV_TRAY[2], LV_TRAY[3], LV_TRAY_H]], svg: lsfTray(st, flow) },
+    { box:[[-3.5, 37, 9], [0, 43, 15]], svg: rod([-3.5, 40, 12], [0, 40, 12], 2.8, GT_TRIM, toneI, .9) },
+  ];
+}
+
+/* ---------- see-through ---------- */
+function lsfInside(st, k){
+  const flow = lsfFlow(st), out = lsfChamber(st, flow), put = (b, svg) => out.push({ box: b, svg }), cy = LSF_CY, T = lsfTf(st);
+  put([[39, 10, LSF_FLOOR], [40, 70, LSF_CEIL]], `<g opacity=".38">${box(39, 10, LSF_FLOOR, 40, 70, LSF_CEIL, LSF_STEEL, toneI, .9)}</g>`);   // faint, or it hides the screen from behind
+  put([[48, 35, LSF_CEIL], [58, 45, LV.ZT]], box(48, 35, LSF_CEIL, 58, 45, LV.ZT, LSF_STEEL, toneI, .9));
+  // the waste duct: from the pan's low end, through the bulkhead, out of the back wall
+  put([[40, cy - 2.2, 12.8], [43, cy + 2.2, 17.2]], rod([43, cy, 15], [40, cy, 15], 2.2, GT_TRIM, toneI, .8));
+  put([[0, cy - 2.2, 9.8], [39, cy + 2.2, 17.2]], rod([39, cy, 15], [0, cy, 12], 2.2, GT_TRIM, toneI, .8));
+  // the motor lead from the board along the bulkhead's edge up to the motor's end (the lead flexes as it buzzes)
+  const m = T([57, 50, 33.5]);
+  out.push(gtWire([[4.5, 58, 46], [10, 58, 26], [38, 58, 26]], st.running ? '#f6b98a' : GT.COPPER.m, .6));
+  out.push(gtWire([[41, 58, 26], [50, 56, 24], m], st.running ? '#f6b98a' : GT.COPPER.m, .6));
+  // sorted here (the case's byDepth isn't transitive with this many parts), as one part behind the case's own
+  return [{ box:[[0, 10, 9], [LV.W, 70, LV.ZT]], svg: lsfSort(out) }];
+}
+
+gtLv({
+  fig:'LV9', title:'LV Sifter', name:'SIFTER', face: lsfFace, parts: lsfParts, inside: lsfInside,
+  product: () => null,   // the case's slot, but the tray is drawn here: its finds are in several colours
+  shadowPts: [[LSF_HOP.top[0], LSF_HOP.top[1], LV.ZT + LSF_HOP.h], [LSF_HOP.top[2], LSF_HOP.top[3], LV.ZT + LSF_HOP.h], [LV_TRAY[2], LV_TRAY[1], 0], [LV_TRAY[2], LV_TRAY[3], 0]],
+  recipes:[{ id:'lv_sift_gravel', name:'Sift Gravel' }, { id:'lv_sift_sand', name:'Sift Sand' }, { id:'lv_sift_stone_dust', name:'Sift Dust' }, { id:'lv_sift_dirt', name:'Sift Dirt' }],
+  loadLabel:'Load blocks', outLabel:'Found', inLabel:'Blocks',
+  params: (s, q) => { if (q.has('blk')) s.blk = +q.get('blk'); },
+  callouts: st => [{ at: [53, 24, LV.ZT + LSF_HOP.h], text: 'HOPPER', on: lsfFlow(st).drop },
+    { at: [LV_TRAY[2], 40, LV_TRAY_H], text: 'OUTPUT TRAY', on: (st.output || 0) > 0 },
+    ...(facing([1,0,0]) ? [{ at: [LV.W, 40, 57], text: 'VIBRATING MESH', on: !!st.running }] : []),
+    ...(facing([-1,0,0]) ? [{ at: [-3.5, 40, 12], text: 'WASTE OUT', on: lsfFlow(st).sieve }] : [])],
+  insideCallouts: st => { const run = !!st.running, sv = lsfFlow(st).sieve; return [
+    { at: [60, 52, 31], text: 'WIRE MESH', on: run },
+    { at: [57, 45, 23], text: 'VIBRATOR MOTOR', on: run },
+    { at: [57, 28.5, 23], text: 'ECCENTRIC WEIGHT', on: run },
+    { at: [62, 15, 24], text: 'COIL SPRING', on: run },
+    { at: [50, 28, 17], text: 'WASTE PAN', on: sv },
+    { at: [20, 40, 13.5], text: 'WASTE DUCT', on: sv },
+    { at: [53, 40, 72], text: 'THROAT', on: lsfFlow(st).drop },
+    { at: [70, 33, 18], text: 'CHUTE', on: lsfFlow(st).on } ]; },
+});
+</script>
+<script src="cf-tail.js"></script>
+</body></html>

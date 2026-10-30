@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Soaking Barrel</title>
+<script src="cf-head.js"></script></head><body>
+<script src="core.js"></script>
+<script src="gt-bridge.js"></script>
+<script src="gt-parts.js"></script>
+<script>
+/* Soaking Barrel (gtjs, from cobblestone): a cobblestone tub bound with two iron hoops, plumbed to the water main.
+   No fire, no steam, no power: only water and time.
+
+   How it works (truth first)
+   1. Water comes up from the main (not an item: it just comes) in a small iron pipe behind the barrel, through a
+      quarter-turn tap on the arm over the back rim, and runs out of the spout into the tub. The handle lies across the
+      pipe when shut and along it when open.
+   2. A scoop of the charge (stone dust or sand) from the bin beside the barrel goes in. It floats, wets, then sinks
+      onto a strainer: a slotted iron plate hung inside the tub on four lugs, just under the water.
+   3. It soaks. Stone dust slakes into clay; sand with the silt in the water turns into dirt. It darkens as it wets.
+   4. The bung at the foot of the front wall lets the dirty water drip away, and the finished lumps go on the tray.
+   Where the water is: main -> riser -> tap -> spout -> tub -> strainer -> floor -> drain -> tray.
+   Where the charge is: bin -> water surface -> strainer -> tray.
+
+   x = depth (front at x = 99), y = width (+y = viewer-left), z = up. 1 unit = 1 cm.
+
+   Parts
+   OUTSIDE  cobblestone tub . stone rim . two iron hoops with riveted lugs . water surface . bung and drain spigot .
+            draining tray with lumps . wooden charge bin with its heap . riser with floor flange and wall clamp . tap with
+            quarter-turn handle . arm . spout
+   INSIDE   tub floor . water body . slotted strainer on four lugs . charge lumps . drain rose . drain pipe through the wall .
+            water stream . bubbles
+
+   Contact checks (numbers)
+   - tub: centre (46, 50), outer radius 32 at z 0 and z 46, 35 at z 23; so x 11..81, y 15..85. Bore radius 27.
+   - riser x 5, y 50, from the flange on the ground up to z 56; clamp at z 25 reaches the wall at x 11.
+   - arm z 56 from x 5 to x 24, over the back rim (x 14..19). Spout down to z 51 at x 24; water falls to the surface at z 41.
+   - strainer at z 31 (10 under the water), held by four lugs on the bore, radius 27.
+   - drain: rose at x 66, z 10; pipe through the front wall (x 79 at that height) to the bung at x 88, above the tray (x 83..99, rim z 6).
+   - bin x 28..64, y 86..100: clear of the tub (y 85).
+*/
+const sbrCX = 46, sbrCY = 50, sbrTop = 46, sbrBore = 27, sbrFloor = 8, sbrWL = 41, sbrShelf = 31;
+const sbrTipX = 24, sbrArmZ = 56, sbrRiserX = 5, sbrTapX = 10;
+const sbrTray = [83, 30, 99, 70], sbrTrayH = 6, sbrBin = [28, 86, 64, 100], sbrBinH = 8;
+const sbrHoops = [[12.5, 17], [31, 35.5]];
+const sbrStone = { l:'#cfc9be', m:'#a39d93', d:'#6a645b' }, sbrWood = { l:'#d9a86c', m:'#bf8a4f', d:'#6e4a26' };
+const sbrR = z => 32 + 3*(1 - ((z - 23)/23)**2);          // the tub's outer radius at height z: it bellies like a barrel
+const sbrRing = (z, r = sbrR(z), n = 44) => on(PZ(z), ellUV(sbrCX, sbrCY, r, r, n));
+const sbrRand = (a, b) => { const s = Math.sin(a*12.9898 + b*78.233)*43758.5453; return s - Math.floor(s); };
+const sbrWet = st => /sand/.test((st.recipe && st.recipe.id) || '')
+  ? { from:'#e8d9a8', to:'#6b4a30', name:'DIRT' } : { from:'#bdb8ad', to:'#85796c', name:'CLAY' };
+
+/* ---------- the cobbled wall: rows of stones wrapped on the barrel, only the ones turned toward the viewer ---------- */
+function sbrCobbles(){
+  const cam = YAW*Math.PI/180, lim = 86*Math.PI/180; let fills = '', lines = '';
+  for (let row = 0, v = 0; v < sbrTop - .5; row++, v += 11.5){
+    const vt = Math.min(sbrTop, v + 11.5);
+    for (let k = 0, a = row % 2 ? .22 : 0; a < Math.PI*2 - .04 + (row % 2 ? .22 : 0); k++){
+      const w = (17 + 7*sbrRand(row + 3, k))/34, b = a + w; const a0 = a; a = b;
+      const mid = (a0 + b)/2, rel = Math.atan2(Math.sin(mid - cam), Math.cos(mid - cam)), half = (b - a0)/2;
+      const r0 = Math.max(-lim, rel - half + .03), r1 = Math.min(lim, rel + half - .03);
+      if (r1 - r0 < .03) continue;
+      const pts = [], z0 = v + 1, z1 = vt - 1, at = (ra, z) => { const t = cam + ra, r = sbrR(z) + .15; return [sbrCX + r*Math.cos(t), sbrCY + r*Math.sin(t), z]; };
+      for (let i = 0; i <= 5; i++) pts.push(at(r0 + .04 + (r1 - r0 - .08)*i/5, z0));
+      pts.push(at(r1, z0 + 1.6), at(r1, z1 - 1.6));
+      for (let i = 5; i >= 0; i--) pts.push(at(r0 + .04 + (r1 - r0 - .08)*i/5, z1));
+      pts.push(at(r0, z1 - 1.6), at(r0, z0 + 1.6));
+      const t = cam + rel, zm = (z0 + z1)/2, base = tone([Math.cos(t), Math.sin(t), (zm - 23)/60], sbrStone), sh = sbrRand(row + 11, k + 5);
+      fills += fill(pd(pts), sh < .33 ? mix(base, '#ffffff', .1) : sh < .66 ? base : mix(base, '#000000', .07));
+      lines += pd(pts);
+    }
+  }
+  return fills + `<path d="${lines}" fill="none" stroke="${INK}" stroke-width=".8" opacity=".55"/>`;
+}
+/* ---------- an iron hoop: a band round the belly, with a riveted lug where its ends lap ---------- */
+function sbrHoop([z0, z1], lugA){
+  const r0 = sbrR(z0) + .9, r1 = sbrR(z1) + .9, [na, nb] = nearHalf();
+  let s = loft(sbrRing(z0, r0), sbrRing(z1, r1), n => tone(n, GT.IRON));
+  s += line(on(PZ(z0), arcUV(sbrCX, sbrCY, r0, na, nb, 26)), .9) + line(on(PZ(z1), arcUV(sbrCX, sbrCY, r1, na, nb, 26)), 1);
+  const dir = [Math.cos(lugA), Math.sin(lugA), 0];
+  if (facing(dir)){ const r = Math.max(r0, r1), zm = (z0 + z1)/2, across = [-dir[1], dir[0], 0];
+    const pt = (u, v, o = 0) => [sbrCX + dir[0]*(r + o) + across[0]*u, sbrCY + dir[1]*(r + o) + across[1]*u, zm + v];
+    s += shape([pt(-3.4, -2.9, .5), pt(3.4, -2.9, .5), pt(3.4, 2.9, .5), pt(-3.4, 2.9, .5)], GT.IRON.m, .8);
+    for (const u of [-2, 2]) s += fill(pd(Array.from({ length:8 }, (_, i) => pt(u + .7*Math.cos(i*Math.PI/4), .7*Math.sin(i*Math.PI/4), .7))), GT.IRON.d); }
+  return s;
+}
+/* ---------- the stone rim, seen from above ---------- */
+function sbrRim(){
+  const n = 13, A = sbrRing(sbrTop), B = sbrRing(sbrTop, sbrBore); let fills = '', lines = '';
+  for (let i = 0; i < n; i++){
+    const a0 = i/n*360 + 3 + 7*sbrRand(i, 2), a1 = (i + 1)/n*360 - 3 + 7*sbrRand(i + 1, 2);
+    const pts = [...on(PZ(sbrTop + .1), arcUV(sbrCX, sbrCY, 31.4, a0, a1, 5)), ...on(PZ(sbrTop + .1), arcUV(sbrCX, sbrCY, sbrBore + .6, a1, a0, 5))];
+    fills += fill(pd(pts), [sbrStone.l, mix(sbrStone.l, sbrStone.m, .4), sbrStone.m][Math.floor(sbrRand(i + 4, 7)*3)]);
+    lines += pd(pts);
+  }
+  return fill(pd(A) + pd(B), mix(sbrStone.m, sbrStone.d, .25), 'fill-rule="evenodd"') + fills
+    + `<path d="${lines}" fill="none" stroke="${INK}" stroke-width=".8" opacity=".55"/>` + ink(pd(B), 1.4) + ink(pd(A), 1.2);
+}
+
+/* ---------- the charge: lumps floating on the surface that sink to the strainer and darken ---------- */
+const sbrLumpsAt = [[-9, -6, 0], [-3, -9, 0], [5, -7, 0], [10, -2, 0], [-11, 2, 0], [-5, 3, 0], [3, 1, 0], [9, 6, 0], [-7, 9, 0], [1, 9, 0], [-2, -3, 3], [4, -3, 3], [-1, 4, 3]];
+function sbrLumps(st){
+  if (!st.active) return [];
+  const p = gtClamp(st.progress || 0), wet = sbrWet(st);
+  return sbrLumpsAt.map(([dx, dy, up], i) => {
+    const delay = i/sbrLumpsAt.length*.35, q = ease(gtClamp((p - delay)/.55));
+    // spreading out as they settle: they arrive in a tight floating raft
+    const sp = .55 + .45*q, x = sbrCX + dx*sp, y = sbrCY + dy*sp, z = (sbrWL + .4 + up*.25)*(1 - q) + (sbrShelf + 1.2 + up)*q;
+    return { x, y, z, r: 3 + (i % 3)*.5, col: mix(wet.from, wet.to, gtClamp(p*1.15)) };
+  });
+}
+function sbrLumpSvg(l){
+  const [X, Y] = P(l.x, l.y, l.z), rx = l.r*CAM_K, ry = rx*.8, lt = mix(l.col, '#ffffff', .22);
+  return `<ellipse cx="${f(X)}" cy="${f(Y)}" rx="${f(rx)}" ry="${f(ry)}" fill="${l.col}" stroke="${INK}" stroke-width=".8"/>`
+    + `<ellipse cx="${f(X + rx*.2)}" cy="${f(Y - ry*.3)}" rx="${f(rx*.45)}" ry="${f(ry*.35)}" fill="${lt}"/>`;
+}
+const sbrSortLumps = ls => ls.slice().sort((a, b) => depthOf([a.x, a.y, a.z]) - depthOf([b.x, b.y, b.z])).map(sbrLumpSvg).join('');
+/* ---------- the water surface: tinted, with ripples from the stream while it runs ---------- */
+function sbrSurface(st, op = .62){
+  const r = sbrBore - .1, Sf = on(PZ(sbrWL), ellUV(sbrCX, sbrCY, r, r, 40));
+  let s = fill(pd(Sf), GT.WATER, `opacity="${op}"`);
+  // two still streaks of light, which belong to the surface and not the view
+  s += `<path d="${pd(on(PZ(sbrWL), arcUV(sbrCX, sbrCY, r - 4, YAW + 100, YAW + 170, 10)), false)}${pd(on(PZ(sbrWL), arcUV(sbrCX, sbrCY, r - 8, YAW + 120, YAW + 150, 8)), false)}" fill="none" stroke="#ffffff" stroke-width="1.3" stroke-linecap="round" opacity=".55"/>`;
+  if (st.running) for (const ph of [0, .33, .66]){ const t = ((st.t || 0)*.7 + ph) % 1, rr = 2 + 10*t;
+    s += `<path d="${pd(on(PZ(sbrWL + .05), ellUV(sbrTipX, sbrCY, rr, rr, 16)))}" fill="none" stroke="#ffffff" stroke-width=".9" opacity="${f(.75*(1 - t))}"/>`; }
+  return s;
+}
+const sbrStream = (z1, z0) => `<path d="${pd([[sbrTipX, sbrCY, z1], [sbrTipX, sbrCY, z0]], false)}" fill="none" stroke="${INK}" stroke-width="3" stroke-linecap="round"/>`
+  + `<path d="${pd([[sbrTipX, sbrCY, z1], [sbrTipX, sbrCY, z0]], false)}" fill="none" stroke="${GT.WATER}" stroke-width="1.9" stroke-linecap="round"/>`;
+
+/* ---------- what shows over the rim, in the closed view ---------- */
+function sbrInside(st){
+  const clip = sbrRing(sbrTop, sbrBore);
+  const lumps = sbrLumps(st), under = lumps.filter(l => l.z < sbrWL), over = lumps.filter(l => l.z >= sbrWL);
+  const deep = mix('#39505c', GT.WATER, .15);
+  let s = fill(pd(sbrRing(sbrFloor, sbrBore)), deep)
+    + loft(sbrRing(sbrFloor, sbrBore), clip, n => mix(toneI(n, sbrStone), '#39505c', .25), true);
+  s += sbrSortLumps(under) + sbrSurface(st) + sbrSortLumps(over);
+  if (st.running) s += sbrStream(sbrTop, sbrWL);
+  return clipTo(clip, s);
+}
+function sbrBody(st){
+  const zs = [0, 6, 12, 18, 23, 28, 34, 40, sbrTop];
+  let s = '';
+  for (let i = 0; i < zs.length - 1; i++) s += loft(sbrRing(zs[i]), sbrRing(zs[i + 1]), n => tone(n, sbrStone));
+  s += sbrCobbles();
+  s += sbrHoop(sbrHoops[0], .9) + sbrHoop(sbrHoops[1], 4.1);
+  s += sbrRim() + sbrInside(st);
+  const silhouette = []; for (const z of [0, 12, 23, 34, sbrTop]) silhouette.push(...sbrRing(z));
+  return s + ink(pd(sbrRing(sbrTop, sbrBore)), 1.4) + hullInk(silhouette, 2.8);
+}
+
+/* ---------- the tap, arm and spout: the inlet from the main ---------- */
+function sbrRiserLow(){
+  const x = sbrRiserX, y = sbrCY;
+  return { box:[[x - 5, y - 5, 0], [11, y + 5, sbrTop]], svg: byDepth([
+    { box:[[x - 4.5, y - 4.5, 0], [x + 4.5, y + 4.5, 1.6]], svg: cyl(x, y, 0, 1.6, 4.5, GT.IRON, toneI, 1) },
+    { box:[[x - 2, y - 2, 1.6], [x + 2, y + 2, 21.5]], svg: cyl(x, y, 1.6, 21.5, 2, GT.IRON, toneI, 1) },
+    // the clamp that holds the riser to the tub's wall
+    { box:[[x - 2.8, y - 2.8, 21.5], [x + 2.8, y + 2.8, 25.5]], svg: cyl(x, y, 21.5, 25.5, 2.8, GT.IRON, toneI, 1) },
+    { box:[[x + 2.8, y - 1.5, 22.5], [11, y + 1.5, 24.5]], svg: box(x + 2.8, y - 1.5, 22.5, 11, y + 1.5, 24.5, GT.IRON, toneI, .8) },
+    { box:[[x - 2, y - 2, 25.5], [x + 2, y + 2, sbrTop]], svg: cyl(x, y, 25.5, sbrTop, 2, GT.IRON, toneI, 1) } ]) };
+}
+function sbrInlet(st){
+  const y = sbrCY, x = sbrRiserX, z = sbrArmZ, open = gtClamp(st.heat || 0), parts = [], put = (b, svg) => parts.push({ box:b, svg });
+  put([[x - 2, y - 2, sbrTop], [x + 2, y + 2, z]], cyl(x, y, sbrTop, z, 2, GT.IRON, toneI, 1));
+  put([[x - 2.5, y - 2.5, z - 2.5], [x + 2.5, y + 2.5, z + 2.5]], box(x - 2.5, y - 2.5, z - 2.5, x + 2.5, y + 2.5, z + 2.5, GT.IRON, toneI, 1));
+  put([[x + 2.5, y - 2, z - 2], [sbrTapX - 3, y + 2, z + 2]], rod([x + 2.5, y, z], [sbrTapX - 3, y, z], 2, GT.IRON, toneI, 1));
+  // the tap: a brass body on the arm, and a quarter-turn handle on its stem
+  const a = (1 - open)*Math.PI/2, hx = Math.cos(a), hy = Math.sin(a), tz = z + 4.4;
+  let tap = rod([sbrTapX - 3.2, y, z], [sbrTapX + 3.2, y, z], 3.1, GT_BRZ, toneI, 1) + rod([sbrTapX, y, z + 3], [sbrTapX, y, tz], 1, GT.IRON, toneI, .8);
+  tap += rod([sbrTapX - hx*1.8, y - hy*1.8, tz + .4], [sbrTapX + hx*6, y + hy*6, tz + .4], 1.05, GT.REDW, toneI, .9);
+  put([[sbrTapX - 3.2, y - 6.5, z - 3.1], [sbrTapX + 6.5, y + 6.5, tz + 2]], act('valve', tap));
+  put([[sbrTapX + 3.2, y - 2, z - 2], [sbrTipX - 2, y + 2, z + 2]], rod([sbrTapX + 3.2, y, z], [sbrTipX - 2, y, z], 2, GT.IRON, toneI, 1));
+  put([[sbrTipX - 2.5, y - 2.5, z - 2.5], [sbrTipX + 2.5, y + 2.5, z + 2.5]], box(sbrTipX - 2.5, y - 2.5, z - 2.5, sbrTipX + 2.5, y + 2.5, z + 2.5, GT.IRON, toneI, 1));
+  put([[sbrTipX - 2, y - 2, 51], [sbrTipX + 2, y + 2, z - 2.5]], cyl(sbrTipX, y, 51, z - 2.5, 2, GT.IRON, toneI, 1) + fill(pd(on(PZ(51), ellUV(sbrTipX, y, 1.2, 1.2, 10))), GT.RECESS));
+  if (st.running) put([[sbrTipX - 1, y - 1, sbrTop], [sbrTipX + 1, y + 1, 51]], sbrStream(51, sbrTop));
+  return byDepth(parts);
+}
+/* ---------- the drain spigot, its bung and the drip ---------- */
+function sbrSpigot(){
+  const y = sbrCY, z = 10, x0 = sbrCX + sbrR(z);
+  return rod([x0 - 1, y, z], [x0 + 1.4, y, z], 3.6, GT.IRON, toneI, 1) + rod([x0 + 1.4, y, z], [87, y, z], 1.9, GT.IRON, toneI, 1)
+    + rod([87, y, z], [89.2, y, z], 2.3, sbrWood, toneI, .9, 1.6);
+}
+function sbrDrip(st){
+  if (!st.running || (st.progress || 0) < .6) return '';
+  const t = ((st.t || 0)*1.3) % 1, z = 7.4 - 6*t, [X, Y] = P(87, sbrCY, z), r = 1*CAM_K;
+  return `<path d="M${f(X)} ${f(Y - r*1.6)}Q${f(X + r)} ${f(Y)} ${f(X)} ${f(Y + r)}Q${f(X - r)} ${f(Y)} ${f(X)} ${f(Y - r*1.6)}Z" fill="${GT.WATER}" stroke="${INK}" stroke-width=".6"/>`;
+}
+/* ---------- beside the tub: the draining tray and the charge bin ---------- */
+function sbrTraySvg(st){
+  const [x0, y0, x1, y1] = sbrTray, A = on(PZ(0), rectUV(x0, y0, x1, y1)), B = on(PZ(sbrTrayH), rectUV(x0, y0, x1, y1)), wet = sbrWet(st);
+  let inner = fill(pd(on(PZ(.6), rectUV(x0 + .6, y0 + .6, x1 - .6, y1 - .6))), GT.IRON.d);
+  const it = []; for (let i = 0; i < Math.min(8, st.output | 0); i++){ const at = [87 + (i % 2)*8, 35 + Math.floor(i/2)*9.5, .7 + 1.8];
+    it.push({ x: at[0], y: at[1], z: at[2], r: 3.3, col: wet.to }); }
+  inner += sbrSortLumps(it);
+  return openShell(A, B, n => toneI(n, GT.IRON), inner) + ink(pd(B), 1.3) + hullInk([...A, ...B], 1.6);
+}
+function sbrBinSvg(st){
+  const [x0, y0, x1, y1] = sbrBin, A = on(PZ(0), rectUV(x0, y0, x1, y1)), B = on(PZ(sbrBinH), rectUV(x0, y0, x1, y1)), wet = sbrWet(st);
+  let inner = fill(pd(on(PZ(.6), rectUV(x0 + .6, y0 + .6, x1 - .6, y1 - .6))), sbrWood.d);
+  const fullness = Math.min(1, (st.input | 0)/12);
+  if ((st.input | 0) > 0){ const cx = (x0 + x1)/2, cy = (y0 + y1)/2, h = 4 + 8*fullness;
+    const a = on(PZ(1), ellUV(cx, cy, 15, 5.8, 18)), b = on(PZ(h), ellUV(cx, cy, 5 + 3*fullness, 2.2, 18)), M = matOf(wet.from);
+    inner += loft(a, b, n => toneI(n, M)) + fill(pd(b), M.l) + hullInk([...a, ...b], .9); }
+  let planks = ''; for (const z of [2.7, 5.4]) planks += pd([[x0, y1 + .05, z], [x1, y1 + .05, z]], false) + pd([[x1 + .05, y0, z], [x1 + .05, y1, z]], false)
+    + pd([[x0, y0 - .05, z], [x1, y0 - .05, z]], false) + pd([[x0 - .05, y0, z], [x0 - .05, y1, z]], false);
+  return openShell(A, B, n => toneI(n, sbrWood), inner) + `<path d="${planks}" fill="none" stroke="${INK}" stroke-width=".7" opacity=".6"/>` + ink(pd(B), 1.2) + hullInk([...A, ...B], 1.6);
+}
+
+/* ---------- see-through: floor, water body, strainer, charge, drain ---------- */
+let sbrLabels = '';
+function sbrMech(st, k){
+  const fl = sbrFloor, y = sbrCY, lumps = sbrLumps(st);
+  let s = shape(sbrRing(fl, sbrBore), mix(sbrStone.m, '#39505c', .3), 1);
+  const items = [];
+  // the drain: a rose on the floor, a pipe through the front wall, to the bung
+  items.push({ box:[[66, y - 3, fl], [70, y + 3, 13]], svg: rod([66, y, 10], [70, y, 10], 3, GT.IRON, toneI, .9) });
+  items.push({ box:[[70, y - 2, 8], [88, y + 2, 12]], svg: rod([70, y, 10], [87, y, 10], 1.9, GT.IRON, toneI, 1) });
+  // the bed: the slotted plate and its lugs
+  let lugs = ''; for (const a of [45, 135, 225, 315]){ const r = a*Math.PI/180, c = Math.cos(r), n = Math.sin(r);
+    lugs += box(sbrCX + c*25 - 2, sbrCY + n*25 - 2, sbrShelf - 2, sbrCX + c*25 + 2, sbrCY + n*25 + 2, sbrShelf - .4, GT.IRON, toneI, .7); }
+  const plate = on(PZ(sbrShelf), ellUV(sbrCX, sbrCY, sbrBore - 2.5, sbrBore - 2.5, 32));
+  let slots = ''; for (let u = -18; u <= 18; u += 6){ const half = Math.sqrt(Math.max(0, 21*21 - u*u)); slots += pd([[sbrCX + u, sbrCY - half, sbrShelf + .05], [sbrCX + u, sbrCY + half, sbrShelf + .05]], false); }
+  items.push({ box:[[sbrCX - 27, sbrCY - 27, sbrShelf - 2], [sbrCX + 27, sbrCY + 27, sbrShelf + .1]],
+    svg: lugs + shape(plate, GT.IRON.m, 1.1) + `<path d="${slots}" fill="none" stroke="${GT.IRON.d}" stroke-width="1.3" stroke-linecap="round"/>` });
+  // the water body, faint enough to see what is in it
+  const wA = sbrRing(fl, sbrBore), wB = sbrRing(sbrWL, sbrBore);
+  s += byDepth(items);
+  s += loft(wA, wB, () => GT.WATER, true).replace(/<path /g, '<path opacity=".2" ');
+  s += sbrSortLumps(lumps.filter(l => l.z < sbrWL));
+  if (st.running){ // bubbles coming off the charge
+    for (const [dx, dy, ph] of [[-6, 3, 0], [4, -4, .4], [1, 6, .7]]){ const t = ((st.t || 0)*.8 + ph) % 1, [X, Y] = P(sbrCX + dx, sbrCY + dy, sbrShelf + 2 + (sbrWL - sbrShelf - 2)*t);
+      s += `<circle cx="${f(X)}" cy="${f(Y)}" r="${f(.8 + .5*t)}" fill="#e8f6fb" stroke="${INK}" stroke-width=".5"/>`; } }
+  s += sbrSurface(st, .34);
+  s += loft(wA, wB, () => GT.WATER).replace(/<path /g, '<path opacity=".22" ');
+  s += sbrSortLumps(lumps.filter(l => l.z >= sbrWL));
+  if (st.running) s += sbrStream(sbrTop, sbrWL);
+  s += ink(pd(wB), .9);
+  sbrLabels = k <= .6 ? '' : xrCallouts([
+    { at: [sbrRiserX, y + 2, 34], text: 'RISER FROM MAIN', on: !!st.running },
+    { at: [sbrTapX, y, sbrArmZ + 5], text: 'TAP', on: !!st.running },
+    { at: [sbrTipX, y + 2, 53], text: 'INLET', on: !!st.running },
+    { at: [sbrCX - 18, sbrCY + 18, sbrWL], text: 'WATER', on: !!st.running },
+    { at: [sbrCX, sbrCY, st.active ? (lumps[6] || { z:sbrWL }).z : sbrShelf], text: st.active ? 'CHARGE' : 'STRAINER', on: !!st.active },
+    { at: [66, y, 12], text: 'DRAIN', on: !!st.running && (st.progress || 0) > .6 },
+    { at: [88, y, 10], text: 'BUNG', on: false },
+    { at: [sbrTray[2], 50, sbrTrayH], text: 'TRAY', on: (st.output || 0) > 0 },
+    { at: [46, sbrBin[3], sbrBinH], text: 'CHARGE BIN', on: (st.input || 0) > 0 } ], [0, 99, 0, 100, 0, 62]);
+  return s;
+}
+
+/* ---------- scene ---------- */
+function sbrScene(st){
+  const k = ease(st.xr || 0), fade = svg => k > 0 ? `<g opacity="${f(1 - .7*k)}">${svg}</g>` : svg;
+  let s = castShadow([...sbrRing(0), ...sbrRing(sbrTop), [sbrRiserX, sbrCY, sbrArmZ], [sbrTipX, sbrCY, sbrArmZ]]).replace('<path ', `<path opacity="${f(1 - .75*k)}" `);
+  let body = sbrBody(st);
+  if (k > 0) body = fill(pd(sbrRing(0, 35)), '#f2efe7', `opacity="${f(.85*k)}"`)
+    + xrGhostRings(body, '', k, sbrRing(0, 33), sbrRing(sbrTop, 33), sbrStone) + `<g opacity="${f(k)}">${sbrMech(st, k)}</g>`;
+  const riser = sbrRiserLow();
+  s += byDepth([
+    { box:[[11, 15, 0], [81, 85, sbrTop]], svg: body },
+    riser,
+    { box:[[81, sbrCY - 3.6, 6.4], [89.2, sbrCY + 3.6, 13.6]], svg: sbrSpigot() + sbrDrip(st) },
+    { box:[[sbrTray[0], sbrTray[1], 0], [sbrTray[2], sbrTray[3], sbrTrayH]], svg: fade(sbrTraySvg(st)) },
+    { box:[[sbrBin[0], sbrBin[1], 0], [sbrBin[2], sbrBin[3], sbrBinH]], svg: fade(sbrBinSvg(st)) } ]);
+  // what stands over the rim goes in its own pass, after the tub (see the design notes)
+  s += sbrInlet(st);
+  if (k > .6) s += sbrLabels;
+  else s += xrCallouts([
+    { at: [sbrCX + 16, sbrCY - 16, sbrWL], text: 'WATER', on: !!st.running },
+    { at: [sbrTapX, sbrCY, sbrArmZ + 5], text: 'TAP', on: !!st.running },
+    ...(facing([1,0,0]) ? [{ at: [sbrCX + sbrR(33), sbrCY, 33], text: 'IRON HOOP', on: false }, { at: [88, sbrCY, 10], text: 'BUNG', on: false }] : []),
+    { at: [sbrTray[2], 50, sbrTrayH], text: 'TRAY', on: (st.output || 0) > 0 },
+    { at: [46, sbrBin[3], sbrBinH], text: 'CHARGE BIN', on: (st.input || 0) > 0 } ], [0, 99, 0, 100, 0, 62]);
+  return s;
+}
+
+gtMachine({
+  fig:'S1', title:'Soaking Barrel', size:[99, 100, 64], center:[50, 50], scene: sbrScene, heatTime: .6, demoSeconds: 6,
+  recipes:[{ id:'soak_stone_dust', name:'Clay from Stone Dust' }, { id:'soak_sand', name:'Dirt from Sand' }],
+  toggleLabel:'Tap', loadLabel:'Add charge',
+  stats: st => [{ label:'Soaked', value: st.active ? `${Math.round((st.progress || 0)*100)}%` : '-' },
+                { label:'Charge', value: st.input | 0, small:true }, { label: sbrWet(st).name === 'DIRT' ? 'Dirt' : 'Clay', value: st.output | 0, small:true }],
+  tile:[[0, 0, 0], [100, 0, 0], [100, 100, 0], [0, 100, 0]],
+});
+</script>
+<script src="cf-tail.js"></script>
+</body></html>

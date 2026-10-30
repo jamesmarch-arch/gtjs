@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tree Farm</title>
+<script src="cf-head.js"></script></head><body>
+<script src="core.js"></script>
+<script src="gt-bridge.js"></script>
+<script src="gt-parts.js"></script>
+<script>
+/* Tree Farm (gtjs, from cobblestone): a walled bed of dirt holding one sapling. No fire, no steam, no power: only time.
+
+   How it works (truth first)
+   1. A sapling is planted in the dirt. The farm holds it and it is never used up: when the tree is felled, a shoot from
+      the same stool grows again (coppicing). With no sapling the bed is bare.
+   2. Growing, the roots spread through the dirt, over a layer of gravel that lets the bed drain through a weep hole in
+      the wall. The trunk thickens and the crown fills out.
+   3. Once the trunk is thick enough to take it, a spile is driven in at waist height. Sap rises under the bark, seeps out of
+      the spile and drips into a cup on the dirt: sticky resin, poured off into the pot beside the bed.
+   4. A full tree is felled and sawn into planks, which are stacked beside the bed. Then it starts again.
+   Where the wood is: dirt and rain -> roots -> trunk -> planks in the stack. Where the resin is: sap -> spile -> cup -> pot.
+
+   x = depth (front at x = 100), y = width (+y = viewer-left), z = up. 1 unit = 1 cm, with the tree kept small to fit its tile.
+
+   State: progress 0..1 is the tree's growth. input > 0: it holds a sapling. output: planks in storage. No hopper: the
+   recipe has no inputs.
+
+   Parts
+   OUTSIDE  cobblestone wall . stone rim . dirt . clods . stool mound . sapling and leaves . trunk with bark . branches .
+            crown . spile . resin bead and drip . drip cup . plank stack . resin pot with its resin
+   INSIDE   soil . drain gravel . weep hole . tap root . side roots and their rootlets . sap channel to the spile
+
+   Contact checks (numbers)
+   - bed x 0..76, y 12..88, wall height 16, walls 7 thick. Dirt at z 13, floor at z 2. Tree at (38, 50).
+   - crown at full growth: 32 from the trunk at most, so x 6..70, y 18..82: over the bed, and clear of the stack (x 80). Top at z 122.
+   - spile enters the trunk at z 35, its tip at x 49, z 33.6, right above the cup (x 49, r 3.4, z 13..19).
+   - roots stay within z 3..13 and 29 of the trunk, inside the walls (the nearest is 31 away).
+   - stack x 80.5..99, y 18..58, beside the wall; pot at (89.5, 76), radius 8.5.
+*/
+const tfmBed = { x0:0, x1:76, y0:12, y1:88, h:16, wall:7, dirt:13, floor:2 };
+const tfmX = 38, tfmY = 50, tfmH = 124, tfmSpileZ = 35, tfmTipX = 49;
+const tfmOut = rectUV(tfmBed.y0, 0, tfmBed.y1, tfmBed.h);
+const tfmStone = { l:'#cfc9be', m:'#a39d93', d:'#6a645b' }, tfmWood = { l:'#e4ba82', m:'#c99a5e', d:'#7a5430' };
+const tfmBark = { l:'#a67c52', m:'#7f5a38', d:'#4e3520' }, tfmLeaf = { l:'#93cf6c', m:'#62ab4b', d:'#386f2f' };
+const tfmSoil = { l:'#8a6443', m:'#70502f', d:'#4c3620' }, tfmPotM = { l:'#d9a37a', m:'#b97f55', d:'#6b4026' };
+const tfmRESIN = '#d98f2b';
+const tfmRand = (a, b) => { const s = Math.sin(a*12.9898 + b*78.233)*43758.5453; return s - Math.floor(s); };
+const tfmGrow = st => st.input > 0 ? gtClamp(st.progress || 0) : 0;
+
+/* ---------- cobblestone: rows of irregular stones on a face, the same every time ---------- */
+function tfmStones(plane, u0, u1, v0, v1, base, seed, rowH = 8, len = 12){
+  let fills = '', lines = '';
+  for (let v = v0, row = 0; v < v1 - 1; v += rowH, row++){
+    const vt = Math.min(v1, v + rowH);
+    for (let u = u0 - (row % 2 ? len/2 : 0), k = 0; u < u1 - .5; k++){
+      const w = len + len*.4*tfmRand(row + seed, k), a = Math.max(u0, u), b = Math.min(u1, u + w); u += w;
+      if (b - a < 2.5) continue;
+      const pts = on(plane, rrUV(a + .7, v + .7, b - .7, vt - .7, 1.6, 2)), sh = tfmRand(seed + k, row + 3);
+      fills += fill(pd(pts), sh < .33 ? base.l : sh < .66 ? mix(base.l, base.m, .5) : base.m);
+      lines += pd(pts);
+    }
+  }
+  return fills + `<path d="${lines}" fill="none" stroke="${INK}" stroke-width=".8" opacity=".55"/>`;
+}
+const tfmShadeStone = n => { const t = tone(n, tfmStone); return { l: mix(t, '#ffffff', .1), m: mix(t, '#000000', .07) }; };
+
+/* ---------- the bed: wall, rim, dirt ---------- */
+function tfmDirt(st){
+  const B = tfmBed, z = B.dirt, ix0 = B.x0 + B.wall, ix1 = B.x1 - B.wall, iy0 = B.y0 + B.wall, iy1 = B.y1 - B.wall;
+  const clip = on(PZ(B.h), rectUV(ix0, iy0, ix1, iy1));
+  let s = fill(pd(on(PZ(z), rectUV(ix0, iy0, ix1, iy1))), tfmSoil.m);
+  // clods and tilth, from a fixed scatter
+  let clods = ''; for (let i = 0; i < 26; i++){ const x = ix0 + 2 + (ix1 - ix0 - 4)*tfmRand(i, 1), y = iy0 + 2 + (iy1 - iy0 - 4)*tfmRand(i, 2), r = .9 + 1.3*tfmRand(i, 3);
+    if (Math.hypot(x - tfmX, y - tfmY) < 6 && st.input > 0) continue;
+    clods += `<path d="${pd(on(PZ(z + .05), ellUV(x, y, r*1.3, r, 7)))}" fill="${i % 2 ? tfmSoil.l : tfmSoil.d}" stroke="${INK}" stroke-width=".35"/>`; }
+  s += clods;
+  if (st.input > 0) s += shape(on(PZ(z + .1), ellUV(tfmX, tfmY, 5.5, 5.5, 14)), tfmSoil.l, .8);   // the mound the stool stands in
+  else s += shape(on(PZ(z + .1), ellUV(tfmX, tfmY, 3, 3, 12)), tfmSoil.d, .9);                     // a bare planting hole
+  // the far inner walls, between the dirt and the rim
+  if (facing([1,0,0])) s += shape([[ix0, iy0, z], [ix0, iy1, z], [ix0, iy1, B.h], [ix0, iy0, B.h]], toneI([1,0,0], tfmStone), .7);
+  if (facing([-1,0,0])) s += shape([[ix1, iy0, z], [ix1, iy1, z], [ix1, iy1, B.h], [ix1, iy0, B.h]], toneI([-1,0,0], tfmStone), .7);
+  if (facing([0,1,0])) s += shape([[ix0, iy0, z], [ix1, iy0, z], [ix1, iy0, B.h], [ix0, iy0, B.h]], toneI([0,1,0], tfmStone), .7);
+  if (facing([0,-1,0])) s += shape([[ix0, iy1, z], [ix1, iy1, z], [ix1, iy1, B.h], [ix0, iy1, B.h]], toneI([0,-1,0], tfmStone), .7);
+  return clipTo(clip, s) + ink(pd(clip), 1.2);
+}
+function tfmBody(st){
+  const B = tfmBed, FRONT = facing([1,0,0]), BACK = facing([-1,0,0]), LEFT = facing([0,1,0]), RIGHT = facing([0,-1,0]);
+  let s = extrude(tfmOut, B.x0, B.x1, tfmStone);
+  if (FRONT) s += fill(pd(on(PX(B.x1), tfmOut)), tone([1,0,0], tfmStone)) + tfmStones(PX(B.x1 + .2), B.y0, B.y1, 0, B.h, tfmShadeStone([1,0,0]), 1);
+  if (BACK) s += fill(pd(on(PX(B.x0), tfmOut)), tone([-1,0,0], tfmStone)) + tfmStones(PX(B.x0 - .2), B.y0, B.y1, 0, B.h, tfmShadeStone([-1,0,0]), 2);
+  if (LEFT) s += tfmStones(PY(B.y1 + .2), B.x0, B.x1, 0, B.h, tfmShadeStone([0,1,0]), 3);
+  if (RIGHT) s += tfmStones(PY(B.y0 - .2), B.x0, B.x1, 0, B.h, tfmShadeStone([0,-1,0]), 4);
+  // the weep hole, low in the back wall: the bed's drain
+  if (BACK) s += shape(on(PX(B.x0 - .3), ellUV(tfmY, 4, 1.8, 1.8, 10)), GT.RECESS, .9);
+  // the top of the wall: four strips of capping stones
+  const zt = B.h + .1, PZy = ([u, v]) => [v, u, zt], M = { l: tfmStone.l, m: mix(tfmStone.l, tfmStone.m, .6) };
+  s += shape(on(PZ(B.h), rectUV(B.x0, B.y0, B.x1, B.y1)), tfmStone.m, 0);
+  s += tfmStones(PZ(zt), B.x0, B.x1, B.y0, B.y0 + B.wall, M, 5, B.wall, 12) + tfmStones(PZ(zt), B.x0, B.x1, B.y1 - B.wall, B.y1, M, 6, B.wall, 12);
+  s += tfmStones(PZy, B.y0 + B.wall, B.y1 - B.wall, B.x0, B.x0 + B.wall, M, 7, B.wall, 12) + tfmStones(PZy, B.y0 + B.wall, B.y1 - B.wall, B.x1 - B.wall, B.x1, M, 8, B.wall, 12);
+  s += tfmDirt(st);
+  if (FRONT) s += ink(pd(on(PX(B.x1), tfmOut)), 2.2);
+  if (BACK) s += ink(pd(on(PX(B.x0), tfmOut)), 2.2);
+  if (LEFT) s += ink(pd(on(PY(B.y1), rectUV(B.x0, 0, B.x1, B.h))), 2.2);
+  if (RIGHT) s += ink(pd(on(PY(B.y0), rectUV(B.x0, 0, B.x1, B.h))), 2.2);
+  return s + ink(pd(on(PZ(B.h), rectUV(B.x0, B.y0, B.x1, B.y1))), 1.8) + hullInk([...on(PX(B.x0), tfmOut), ...on(PX(B.x1), tfmOut)], 2.8);
+}
+
+/* ---------- the tree: a function of growth ---------- */
+const tfmCrown = [ // dx, dy, z above the dirt, radius, at full growth
+  [17, 6, 59, 14], [6, 17, 60, 14], [-11, 13, 58, 14], [-18, -2, 60, 14], [-5, -17, 59, 14], [11, -12, 61, 14],
+  [11, 6, 76, 15], [-4, 12, 78, 15], [-12, -3, 76, 15], [2, -11, 79, 15], [0, 2, 95, 14] ];
+const tfmTrunkH = g => 12 + 70*g, tfmRad = (g, zr) => { const h = tfmTrunkH(g), rb = .9 + 4.6*g, rt = .45 + 1.9*g; return rb + (rt - rb)*gtClamp(zr/h); };
+const tfmScale = g => .16 + .84*g;
+function tfmBlob(x, y, z, r, seed){
+  const [X, Y] = P(x, y, z), R = r*CAM_K, ph = tfmRand(seed, 1)*6; let d = '';
+  // a gently lobed outline, not a circle: leaves, not a balloon
+  for (let i = 0; i < 28; i++){ const a = i/28*Math.PI*2, rr = R*(1 + .045*Math.sin(a*5 + ph) + .025*Math.sin(a*11 + ph*2));
+    d += (i ? 'L' : 'M') + f(X + rr*Math.cos(a)) + ' ' + f(Y + rr*Math.sin(a)); }
+  d += 'Z';
+  // a few leaf ticks in the mid tone, always in the same place on the clump
+  let ticks = ''; for (let i = 0; i < 4; i++){ const a = (i*1.57 + ph), q = R*(.42 + .28*tfmRand(seed, i + 2)), tx0 = X + q*Math.cos(a), ty0 = Y + q*Math.sin(a), w = R*.13;
+    ticks += `M${f(tx0 - w)} ${f(ty0)}Q${f(tx0)} ${f(ty0 + w)} ${f(tx0 + w)} ${f(ty0)}`; }
+  return `<path d="${d}" fill="${tfmLeaf.d}" stroke="${INK}" stroke-width="1.1" stroke-linejoin="round"/>`
+    + `<circle cx="${f(X + R*.09)}" cy="${f(Y - R*.1)}" r="${f(R*.8)}" fill="${tfmLeaf.m}"/>`
+    + `<circle cx="${f(X + R*.26)}" cy="${f(Y - R*.3)}" r="${f(R*.46)}" fill="${tfmLeaf.l}"/>`
+    + `<path d="${ticks}" fill="none" stroke="${tfmLeaf.d}" stroke-width=".8" stroke-linecap="round" opacity=".7"/>`;
+}
+// a leaf from a to b: flat toward the viewer, so it reads from every side
+function tfmLeafAt(a, b, w){
+  const m = [(a[0] + b[0])/2, (a[1] + b[1])/2, (a[2] + b[2])/2], c = [CAM_R[0]*w, CAM_R[1]*w, CAM_R[2]*w];
+  return shape([a, [m[0] + c[0], m[1] + c[1], m[2] + c[2]], b, [m[0] - c[0], m[1] - c[1], m[2] - c[2]]], tfmLeaf.l, .8) + line([a, b], .5);
+}
+function tfmSapling(g){
+  const k = 1 - gtClamp(g/.22); if (k <= 0) return '';
+  const z0 = tfmBed.dirt, h = tfmTrunkH(g), top = z0 + h, x = tfmX, y = tfmY, s = 1.35;
+  const leaves = [[.55, 1, .35, 5.5], [.55, -1, -.35, 5.5], [.78, .3, -1, 5], [.78, -.3, 1, 5], [1, 1, 1, 4.4], [1, -1, -1, 4.4]];
+  const items = leaves.map(([fz, dx, dy, l]) => { const a = [x, y, z0 + h*fz], L = l*s*k;
+    const b = [x + dx*L*.8, y + dy*L*.8, a[2] + L*.5]; return { at: [(a[0] + b[0])/2, (a[1] + b[1])/2, (a[2] + b[2])/2], svg: tfmLeafAt(a, b, L*.26) }; });
+  items.push({ at: [x, y, top], svg: tfmLeafAt([x, y, top], [x, y, top + 6*s*k], 1.5*s*k) });
+  return byDepth(items);
+}
+function tfmTapParts(st, g){
+  const tp = gtClamp((g - .4)/.15); if (tp <= 0) return [];
+  const y = tfmY, r = tfmRad(g, tfmSpileZ - tfmBed.dirt), x0 = tfmX + r - .5, zt = tfmSpileZ, tipX = tfmTipX, tipZ = zt - 1.4, parts = [];
+  // the spile: a tapered wooden spout driven into the trunk, carried on with its base as the trunk thickens
+  parts.push({ box:[[x0, y - 1.5, tipZ - 1.5], [tipX + .5, y + 1.5, zt + 1.6]], svg: rod([x0, y, zt], [tipX, y, tipZ], 1.15*tp + .2, tfmWood, toneI, .9, .75*tp + .2)
+    + fill(pd([[tipX, y - .35, tipZ + .25], [tipX + .1, y + .35, tipZ + .25], [tipX + .1, y + .35, tipZ - .25], [tipX, y - .35, tipZ - .25]]), tfmRESIN) });
+  // the cup on the dirt under the tip
+  const A = on(PZ(tfmBed.dirt), ellUV(tipX, y, 2.8*tp, 2.8*tp, 14)), B = on(PZ(tfmBed.dirt + 6*tp), ellUV(tipX, y, 3.4*tp, 3.4*tp, 14));
+  const lvl = on(PZ(tfmBed.dirt + 1 + 3.8*tp*g), ellUV(tipX, y, 3*tp, 3*tp, 14));
+  parts.push({ box:[[tipX - 3.4, y - 3.4, tfmBed.dirt], [tipX + 3.4, y + 3.4, tfmBed.dirt + 6]], svg: openShell(A, B, n => toneI(n, tfmWood), fill(pd(lvl), tfmRESIN)) + ink(pd(B), .9) + hullInk([...A, ...B], 1.1) });
+  // the bead on the tip, and the falling drop while it runs
+  const [bx, by] = P(tipX + .2, y, tipZ - .9), br = .85*tp*CAM_K;
+  const bead = { box:[[tipX - 1, y - 1, tfmBed.dirt + 6], [tipX + 1, y + 1, tipZ - .2]], svg: `<circle cx="${f(bx)}" cy="${f(by)}" r="${f(br)}" fill="${tfmRESIN}" stroke="${INK}" stroke-width=".6"/>` };
+  if (st.running && tp >= 1){
+    const t = ((st.t || 0)*.9) % 1, z = tipZ - 1 + (tfmBed.dirt + 6 - tipZ + 1)*t*t, [X, Y] = P(tipX + .2, y, z), q = .95*CAM_K;
+    bead.svg += `<path d="M${f(X)} ${f(Y - q*1.7)}Q${f(X + q)} ${f(Y)} ${f(X)} ${f(Y + q)}Q${f(X - q)} ${f(Y)} ${f(X)} ${f(Y - q*1.7)}Z" fill="${tfmRESIN}" stroke="${INK}" stroke-width=".6"/>`;
+  }
+  parts.push(bead);
+  return parts;
+}
+function tfmTree(st, g, k){
+  const zd = tfmBed.dirt, x = tfmX, y = tfmY, h = tfmTrunkH(g), s0 = tfmScale(g), grow = gtClamp(g/.28);
+  const blobs = grow > .02 ? tfmCrown.map(([dx, dy, z, r], i) => ({ x: x + dx*s0, y: y + dy*s0, z: zd + z*s0, r: r*s0*(.45 + .55*grow), i })) : [];
+  const zSplit = Math.min(zd + h, zd + h*.55);
+  // the lower trunk and what is fixed to it, sorted on their own under the crown
+  const low = [{ box:[[x - 5.5, y - 5.5, zd], [x + 5.5, y + 5.5, zSplit]], svg: (() => {
+    const r0 = tfmRad(g, 0), r1 = tfmRad(g, zSplit - zd);
+    let s = rod([x, y, zd], [x, y, zSplit], r0, tfmBark, toneI, 1.2, r1);
+    if (g > .25){ let d = ''; for (const off of [-50, -12, 26, 58]){ const a = (YAW + off)*Math.PI/180;
+        d += pd([[x + r0*Math.cos(a), y + r0*Math.sin(a), zd + 2], [x + r1*Math.cos(a), y + r1*Math.sin(a), zSplit - 1 - (off & 7)]], false); }
+      s += `<path d="${d}" fill="none" stroke="${INK}" stroke-width=".7" opacity=".6"/>`; }
+    return s; })() }, ...tfmTapParts(st, g)];
+  // the upper trunk, the branches and the crown, by depth
+  const up = [];
+  up.push({ at:[x, y, (zSplit + zd + h)/2], svg: rod([x, y, zSplit], [x, y, zd + h], tfmRad(g, zSplit - zd), tfmBark, toneI, 1.1, tfmRad(g, h)) });
+  for (const b of blobs){ const zb = Math.min(zd + h, b.z - 2);
+    if (b.i < 10) up.push({ at:[(x + b.x)/2, (y + b.y)/2, zb], svg: rod([x, y, zb - 8*s0], [b.x, b.y, b.z], Math.max(.35, 1.5*s0), tfmBark, toneI, .8, Math.max(.2, .7*s0)) }); }
+  const crown = blobs.map(b => ({ at:[b.x, b.y, b.z], svg: tfmBlob(b.x, b.y, b.z, b.r, b.i) }));
+  const leafy = byDepth(crown);
+  // in see-through the crown fades so the trunk shows; otherwise it sorts in with the branches
+  if (k > 0) return byDepth(low) + tfmSapling(g) + byDepth(up) + `<g opacity="${f(1 - .72*k)}">${leafy}</g>`;
+  return byDepth(low) + tfmSapling(g) + byDepth([...up, ...crown]);
+}
+
+/* ---------- see-through: the soil, gravel, roots and sap ---------- */
+const tfmRootPlan = [[0, 7, 5, 26], [62, 9, 4, 27], [125, 6, 6, 25], [183, 10, 4, 28], [245, 7, 5, 26], [305, 9, 5, 27]];
+function tfmRoots(g){
+  const s = .22 + .78*g, zd = tfmBed.dirt, x = tfmX, y = tfmY, parts = [], put = (a, b, r, r1) => parts.push({ at:[(a[0] + b[0])/2, (a[1] + b[1])/2, (a[2] + b[2])/2], svg: rod(a, b, r, tfmBark, toneI, .7, r1) });
+  const R0 = .55 + 1.4*g;
+  put([x, y, zd], [x + .5*s, y - .5*s, zd - 9*Math.min(1, s*1.4)], R0, .3);   // the tap root
+  for (const [deg, zo, zt, len] of tfmRootPlan){ const a = deg*Math.PI/180, c = Math.cos(a), n = Math.sin(a), L = len*s;
+    const crown = [x, y, zd - .5], mid = [x + c*L*.5, y + n*L*.5, zd - 1 - zo*.35*s], tip = [x + c*L + n*2*s, y + n*L - c*2*s, Math.max(3, zd - zo - zt*.2*s)];
+    put(crown, mid, R0*.62, R0*.4); put(mid, tip, R0*.4, .22);
+    // a rootlet off each root
+    const off = [mid[0] + (c*.4 - n*.6)*L*.45, mid[1] + (n*.4 + c*.6)*L*.45, Math.max(3.5, mid[2] - 2*s)];
+    put(mid, off, R0*.26, .18); }
+  return byDepth(parts);
+}
+function tfmSap(st, g){
+  const tp = gtClamp((g - .4)/.15); if (tp <= 0) return '';
+  const zd = tfmBed.dirt, r = tfmRad(g, tfmSpileZ - zd), side = [tfmX + r*.8, tfmY, 0], p0 = [side[0], tfmY, zd], p1 = [side[0], tfmY, tfmSpileZ];
+  const off = st.running ? -((st.t || 0)*14 % 8) : 0;
+  return `<path d="${pd([p0, p1], false)}" fill="none" stroke="${tfmRESIN}" stroke-width="1.5" stroke-dasharray="3 5" stroke-dashoffset="${f(off)}" stroke-linecap="round"/>`;
+}
+function tfmMech(st, k, g){
+  const B = tfmBed, ix0 = B.x0 + B.wall, ix1 = B.x1 - B.wall, iy0 = B.y0 + B.wall, iy1 = B.y1 - B.wall;
+  // the block of soil, faint, its top edge inked
+  let s = `<g opacity=".32">${box(ix0, iy0, B.floor, ix1, iy1, B.dirt, tfmSoil, toneI, 0)}</g>` + ink(pd(on(PZ(B.dirt), rectUV(ix0, iy0, ix1, iy1))), .9);
+  // the gravel it drains through, along the floor, out of the weep hole
+  const gr = []; for (let i = 0; i < 34; i++){ const x = ix0 + 3 + (ix1 - ix0 - 6)*tfmRand(i, 8), y = iy0 + 3 + (iy1 - iy0 - 6)*tfmRand(i, 9), [X, Y] = P(x, y, B.floor + 1), r = (1 + .7*tfmRand(i, 10))*CAM_K;
+    gr.push({ at:[x, y, B.floor + 1], svg: `<ellipse cx="${f(X)}" cy="${f(Y)}" rx="${f(r)}" ry="${f(r*.72)}" fill="${['#b5afa4', '#918b80', '#a39d93'][i % 3]}" stroke="${INK}" stroke-width=".5"/>` }); }
+  s += byDepth(gr);
+  s += rod([B.x0, tfmY, 4], [ix0 + 2, tfmY, 4], 1.5, GT.IRON, toneI, .8);
+  if (st.input > 0) s += tfmRoots(g);
+  return s;
+}
+function tfmXrLabels(st, g){
+  const has = st.input > 0, tp = g > .55, s0 = tfmScale(g), run = !!st.running;
+  return xrCallouts([
+    ...(has ? [{ at:[tfmX - 12*s0, tfmY + 9*s0, Math.max(5, tfmBed.dirt - 5*s0)], text:'ROOTS', on: run }] : []),
+    ...(has && g > .22 ? [{ at:[tfmX, tfmY + tfmRad(g, 25), tfmBed.dirt + 25*Math.min(1, s0*1.3)], text:'TRUNK', on: run }] : has ? [{ at:[tfmX, tfmY, tfmBed.dirt + tfmTrunkH(g)], text:'SAPLING', on: run }] : []),
+    ...(has && g > .22 ? [{ at:[tfmX, tfmY, tfmBed.dirt + 85*s0], text:'CROWN', on: run }] : []),
+    ...(tp ? [{ at:[tfmTipX, tfmY, tfmSpileZ - 1], text:'RESIN TAP', on: run }, { at:[tfmTipX, tfmY, tfmBed.dirt + 5], text:'DRIP CUP', on: run }] : []),
+    { at:[tfmBed.x0 + 9, tfmY + 18, tfmBed.floor + 1], text:'DRAIN GRAVEL', on: false },
+    { at:[tfmBed.x0, tfmY, 4], text:'WEEP HOLE', on: false },
+    { at:[tfmBed.x1 - 6, tfmY - 20, tfmBed.dirt], text:'DIRT', on: has },
+    ...((st.output | 0) > 0 ? [{ at:[90, 40, 2.2*Math.ceil(Math.min(12, st.output | 0)/3)], text:'PLANKS', on: false }] : []),
+    { at:[89.5, 76 + 8, 11], text:'RESIN POT', on: (st.output | 0) > 0 } ], [0, 100, 0, 100, 0, tfmH]);
+}
+/* ---------- beside the bed: the plank stack and the resin pot ---------- */
+function tfmStack(st){
+  const n = Math.min(12, st.output | 0), items = [];
+  for (let i = 0; i < n; i++){ const col = i % 3, lay = Math.floor(i/3), x0 = 80.5 + col*6.2, x1 = x0 + 5.7, y0 = 18 + lay*.8, y1 = 58 - lay*.8, z0 = lay*2.2, z1 = z0 + 2.2;
+    const grain = facing([0,0,1]) ? `<path d="${pd([[x0 + 1.8, y0 + 3, z1 + .02], [x0 + 1.8, y1 - 8, z1 + .02]], false)}${pd([[x0 + 3.8, y0 + 8, z1 + .02], [x0 + 3.8, y1 - 3, z1 + .02]], false)}" fill="none" stroke="${tfmWood.d}" stroke-width=".6" opacity=".8"/>` : '';
+    items.push({ box:[[x0, y0, z0], [x1, y1, z1]], svg: box(x0, y0, z0, x1, y1, z1, tfmWood, toneI, .8) + grain }); }
+  return byDepth(items);
+}
+function tfmPot(st){
+  const x = 89.5, y = 76, A = on(PZ(0), ellUV(x, y, 6, 6, 20)), B = on(PZ(11), ellUV(x, y, 8.5, 8.5, 20)), Bi = on(PZ(11), ellUV(x, y, 7.2, 7.2, 20));
+  const full = Math.min(1, (st.output | 0)/16), inside = fill(pd(on(PZ(1), ellUV(x, y, 6, 6, 16))), tfmPotM.d)
+    + ((st.output | 0) > 0 ? fill(pd(on(PZ(2 + 7*full), ellUV(x, y, 6.2 + 1*full, 6.2 + 1*full, 16))), tfmRESIN) : '');
+  return openShell(A, B, n => toneI(n, tfmPotM), inside) + fill(pd(B) + pd(Bi), tfmPotM.l, 'fill-rule="evenodd"') + ink(pd(Bi), .8) + ink(pd(B), 1.2) + hullInk([...A, ...B], 1.6);
+}
+
+/* ---------- scene ---------- */
+function tfmScene(st){
+  const k = ease(st.xr || 0), g = tfmGrow(st), fade = svg => k > 0 ? `<g opacity="${f(1 - .7*k)}">${svg}</g>` : svg, B = tfmBed;
+  // the bed's shadow and, when there is a tree, the crown's joined to it: kept short, a tall crown would throw one off the page
+  const pts = [...on(PX(B.x0), tfmOut), ...on(PX(B.x1), tfmOut)];
+  if (st.input > 0){ const s0 = tfmScale(g), zs = Math.min(46, B.dirt + 60*s0), rs = 26*s0; pts.push(...on(PZ(zs), ellUV(tfmX, tfmY, rs, rs, 12))); }
+  let s = castShadow(pts).replace('<path ', `<path opacity="${f(1 - .75*k)}" `);
+  let body = tfmBody(st);
+  if (k > 0) body = fill(pd(on(PZ(0), rectUV(B.x0, B.y0, B.x1, B.y1))), '#f2efe7', `opacity="${f(.85*k)}"`)
+    + xrGhost(body, '', k, tfmOut, B.x0, B.x1, tfmStone) + `<g opacity="${f(k)}">${tfmMech(st, k, g)}</g>`;
+  const items = [
+    { box:[[B.x0, B.y0, 0], [B.x1, B.y1, B.h]], svg: body },
+    { box:[[80, 18, 0], [99, 58, 9]], svg: fade(tfmStack(st)) },
+    { box:[[81, 67.5, 0], [98, 84.5, 11]], svg: fade(tfmPot(st)) } ];
+  if (st.input > 0) items.push({ box:[[B.x0 + 4, B.y0 + 4, B.h], [B.x1 - 4, B.y1 - 4, tfmH]], svg: tfmTree(st, g, k) + (k > 0 ? tfmSap(st, g) : '') });
+  s += byDepth(items);
+  if (k > .6) s += tfmXrLabels(st, g);
+  else s += xrCallouts([
+    ...(st.input > 0 ? [g > .22 ? { at:[tfmX, tfmY, B.dirt + 85*tfmScale(g)], text:'TREE', on: !!st.running } : { at:[tfmX, tfmY, B.dirt + tfmTrunkH(g)], text:'SAPLING', on: !!st.running }] : []),
+    ...(g > .55 ? [{ at:[tfmTipX, tfmY, tfmSpileZ - 1], text:'RESIN TAP', on: !!st.running }] : []),
+    { at:[B.x1 - 3, 70, B.h], text:'WALLED BED', on: false },
+    ...((st.output | 0) > 0 ? [{ at:[90, 40, 2.2*Math.ceil(Math.min(12, st.output | 0)/3)], text:'PLANKS', on: false }] : []),
+    { at:[89.5, 84, 11], text:'RESIN POT', on: (st.output | 0) > 0 } ], [0, 100, 0, 100, 0, tfmH]);
+  return s;
+}
+
+const tfmUi = gtMachine({
+  fig:'S2', title:'Tree Farm', size:[100, 100, tfmH], center:[50, 50], scene: tfmScene, heatTime: .6, demoSeconds: 9,
+  recipes:[{ id:'grow_tree', name:'Grow Trees' }],
+  state:{ input: 1 },
+  toggleLabel:'Tend', loadLabel:'Plant sapling',
+  stats: st => [{ label:'Grown', value: st.active ? `${Math.round((st.progress || 0)*100)}%` : '-' },
+                { label:'Sapling', value: st.input > 0 ? 'Yes' : 'No', small:true }, { label:'Planks', value: st.output | 0, small:true }],
+  // a floor sprite shows the farm with a tree on it (the sprite tool sends no progress); the page itself starts at 0
+  params: (s, q) => { if (q.get('sprite') === '1' && !q.has('progress')) s.progress = .85; },
+  tile:[[0, 0, 0], [100, 0, 0], [100, 100, 0], [0, 100, 0]],
+});
+// the demo: the farm holds its sapling for good. gtMachine's demo takes one input per cycle, so here it can only be planted.
+if (!gtBridge.embedded){ const s = tfmUi.st; let held = s.input > 0 ? 1 : 0;
+  Object.defineProperty(s, 'input', { get: () => held, set: n => { if (n > held) held = 1; }, enumerable: true, configurable: true }); }
+</script>
+<script src="cf-tail.js"></script>
+</body></html>

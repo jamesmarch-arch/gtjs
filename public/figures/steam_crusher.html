@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Steam Crusher</title>
+<script src="cf-head.js"></script></head><body>
+<script src="core.js"></script>
+<script src="gt-bridge.js"></script>
+<script src="gt-parts.js"></script>
+<script>
+/* Steam Crusher (gtjs, steam age): a stamp battery, the way mines broke rock under steam. Three iron-shod stamps are
+   lifted in turn by cams on a shaft and dropped into a mortar box. One stage per run, one for one:
+   cobblestone -> gravel -> sand -> stone dust.
+
+   How it works (truth first)
+   1. Steam comes up the riser beside the left wall, through the valve, into the case, up a pipe through the roof and
+      into the small engine on the roof: a cylinder, a piston rod, a crosshead on a slide, and a connecting rod to the
+      crank on the end of the camshaft. Spent steam leaves by the vent stack on the cylinder.
+   2. The camshaft runs across the roof in two bearings, with a heavy flywheel on the far end to carry it between strokes.
+      It has three cams, set a third of a turn apart.
+   3. Each cam comes up under the tappet on a stamp's stem and lifts it about 10 cm. The cam's tip then passes the tappet
+      and the stamp (stem, head and iron shoe) simply falls, guided by the bar on the roof, onto the stone in the mortar.
+   4. Stone drops from the hopper on the roof, down the feed chute and through a slot in the back of the bay into the
+      mortar. When it is fine enough the stamps' splash carries it through the screen on the mortar's front; it falls to
+      the bed, slides out of the bay, down the spout and into the tray.
+   Where the stone is: hopper -> feed chute -> back slot -> mortar -> under the shoes -> screen -> bed -> spout -> tray.
+   Where the steam is: riser -> valve -> inside pipe -> roof -> cylinder -> vent stack -> air.
+
+   x = depth (front at x = W), y = width (+y = viewer-left: the steam side), z = up. 1 unit = 1 cm.
+
+   Parts
+   CASE     bronze case on four feet . riveted front . open stamp bay (lined, riveted frame, slot in its back wall) . name
+            plate . pressure gauge . running lamp . service hatch (back) . louvres (right side) . hopper with feed flap .
+            spout . output tray
+   ENGINE   cylinder on two saddles . piston (see-through) . piston rod . slide on two pedestals . crosshead . connecting
+            rod . crank . vent stack
+   SHAFT    two bearing frames with caps . camshaft . three cams . flywheel with hub and spokes
+   STAMPS   three stems . three tappets . guide bar . three heads with iron shoes . mortar box with its screen . bed
+   STEAM    riser with floor flange, valve and handwheel . wall flange . inside pipe up to the roof . pipe into the cylinder
+   FEED     feed chute . back slot . feed lip
+
+   Contact checks (numbers)
+   - camshaft r 2.5 along y at (x 52, z 98), y 6..70, in frames at y 16..20 and y 62..66 standing on the roof (z 78).
+   - cams on it at y 31.4, 44.4, 57.4 (1.4 either side), tip r 8. A stem is at x 62 (r 1.4), y 28, 41, 54, so a cam's tip (x <= 60)
+     clears the stem; the tappet (x 56.5..64, y from the stem -1.8 to +5) reaches over into the cam's plane.
+   - the cam lifts from 40 degrees below level to 40 above: tip z 92.86 to 103.14, a lift of 10.3. Tappet bottom 92.86 at rest.
+   - shoe bottom 27.5 at rest, on 1.5 of stone on the mortar's top (z 26): the rigid stem keeps tappet - shoe = 65.36.
+     Head x 57..67, y +-4.5, 12 tall: lifted, its top is 49.8, under the bay's ceiling (z 62).
+   - guide bar x 56..65, y 16..66, z 84..87, fixed to the two frames' faces (x 56).
+   - flywheel r 13 at y 6..11: bottom z 85, above the roof; x 39..65.
+   - engine line y 72, z 98: cylinder x 12..32 (r 6); crank r 5, connecting rod 17, so the crosshead's centre runs x 35..45 on
+     the slide (x 32..47, top z 95.5), and the piston x 17..27 in the cylinder.
+   - hopper x 5..31, y 24..58 stops short of the flywheel (x 39) and the cylinder (y 66). Chute from (18, z 78) to (44, z 26.2).
+   - bed top z 19 runs to the front; spout (W, z 19) to (78, z 13), over the tray (top z 7).
+*/
+const STC = { W: 70, D: 80, Z0: 6, ZT: 78,
+  bay: [22, 12, 60, 62], bx: 44, slot: [36, 26, 46, 31], cy: 41, ys: [28, 41, 54], sx: 62, DIE: 26, BED: 19, rest: 27.5, headH: 12,
+  sh: { x: 52, z: 98, r: 2.5, R: 8, th: 40*Math.PI/180 }, fly: { y0: 6, y1: 11, r: 13 }, frames: [16, 62],
+  eng: { y: 72, x0: 12, x1: 32, r: 6, crank: 5, rod: 17 }, stk: 104,
+  hopBot: [11, 30, 25, 52], hopTop: [5, 24, 31, 58], hopH: 11, tray: [74, 26, 96, 56], trayH: 7, spout: [78, 13], sy: [30, 52], riserX: 22, speed: 5.5 };
+const STC_OUT = rrUV(0, STC.Z0, STC.D, STC.ZT, 5);
+const STC_LINE = { l:'#8d7c6a', m:'#66584b', d:'#3b322a' };
+const STC_SHOE = matOf('#5a6166');
+const STC_MAT = { cobblestone:{ col:'#8f8b84', s:.8 }, gravel:{ col:'#a2968a', s:.45 }, sand:{ col:'#e8d59c', s:0 }, stone_dust:{ col:'#e6e2d8', s:0 } };
+const STC_NEXT = { cobblestone:'gravel', gravel:'sand', sand:'stone_dust' };
+const stcFrom = st => ((st.recipe && st.recipe.id) || '').match(/cobblestone|gravel|sand/)?.[0] || 'cobblestone';
+const stcMats = st => { const a = stcFrom(st); return [STC_MAT[a], STC_MAT[STC_NEXT[a]]]; };
+const stcSpeck = ([x, y, z], r, col) => { const [X, Y] = P(x, y, z); return `<circle cx="${f(X)}" cy="${f(Y)}" r="${f(r)}" fill="${col}" stroke="${INK}" stroke-width=".4"/>`; };
+
+/* ---------- the works, from the clock and progress ---------- */
+function stcFlow(st){
+  const A = (st.t || 0)*STC.speed + .9, { R, th } = STC.sh, maxL = R*2*Math.sin(th);
+  const stamps = STC.ys.map((y, i) => {
+    let ph = (A - i*2*Math.PI/3 + 1.3*(i === 2 ? 1 : 0)) % (2*Math.PI); if (ph > Math.PI) ph -= 2*Math.PI; if (ph < -Math.PI) ph += 2*Math.PI;
+    let lift = 0, dust = 0;
+    if (ph > -th && ph <= th) lift = R*(Math.sin(ph) + Math.sin(th));
+    else if (ph > th){ const d = (ph - th)/.5; if (d < 1) lift = maxL*(1 - d*d); else if (d < 2.4 && st.running) dust = 1 - (d - 1)/1.4; }
+    return { y, lift, dust, cam: A - i*2*Math.PI/3 + 1.3*(i === 2 ? 1 : 0) };
+  });
+  const p = st.active ? (st.progress || 0) : 0, xc = STC.sh.x + STC.eng.crank*Math.cos(A) - STC.eng.rod;
+  return { A, stamps, p, xc, active: !!st.active, feed: st.active && p < .12, grind: st.active && p >= .12 && p < .85, out: st.active && p >= .85 };
+}
+
+/* ---------- a heap of stuff, lumpy or fine ---------- */
+function stcHeap(x, y, z0, zt, rx, ry, col, lumps, seed = 1){
+  const mm = matOf(col), a = on(PZ(z0), ellUV(x, y, rx, ry, 14)), b = on(PZ(zt), ellUV(x, y, rx*.45, ry*.45, 14));
+  let s = loft(a, b, n => toneI(n, mm)) + fill(pd(b), mm.l) + hullInk([...a, ...b], .6);
+  if (lumps > .1) for (let i = 0; i < 5; i++){ const u = (i*2.399 + seed) % 6.283, r = .25 + .3*(i % 3)/2;
+    s += gtLump([x + rx*r*Math.cos(u), y + ry*r*Math.sin(u), zt - (zt - z0)*r*.7 + .3], lumps*.75, null, mm); }
+  return s;
+}
+
+/* ---------- the stamps in their mortar (the bay view and the see-through share them) ---------- */
+function stcStampParts(st, fl, zStemTop){
+  const parts = [], put = (b, svg) => parts.push({ box: b, svg }), { sx, DIE, BED, rest, headH, W } = STC, [from, to] = stcMats(st), p = fl.p;
+  const stage = gtClamp((p - .12)/.73), col = mix(from.col, to.col, stage), size = from.s + (to.s - from.s)*stage;
+  const amt = !fl.active ? 0 : p < .12 ? p/.12 : p < .85 ? 1 : Math.max(0, 1 - (p - .85)/.1);
+  const m0 = 24, m1 = 58;
+  // the bed, the mortar box with its screen on the front
+  put([[STC.bx, m0, 12], [W, m1, BED]], box(STC.bx, m0, 12, W, m1, BED, GT.IRON, toneI, 1));
+  let mortar = box(50, m0, BED, 68, m1, DIE, STC_LINE, toneI, 1.1);
+  if (facing([1,0,0])){ mortar += shape(on(PX(68.05), rrUV(m0 + 2, BED + 1, m1 - 2, DIE - .8, .6)), GT.RECESS, .7);
+    let g = ''; for (let y = m0 + 4; y < m1 - 2; y += 2.4) g += pd([[68.1, y, BED + 1], [68.1, y, DIE - .8]], false);
+    mortar += `<path d="${g}" fill="none" stroke="${GT.IRON.l}" stroke-width=".7"/>`; }
+  put([[50, m0, BED], [68, m1, DIE]], mortar);
+  // the feed lip from the back slot to the mortar
+  put([[STC.bx, 36, 23], [50, 46, DIE]], box(STC.bx, 36, 23, 50, 46, DIE, GT.IRON, toneI, .8));
+  for (const s of fl.stamps){
+    const hb = rest + s.lift, y = s.y;
+    // the stone under this shoe
+    if (amt > .01) put([[sx - 6, y - 6, DIE], [sx + 6, y + 6, rest]], stcHeap(sx, y, DIE, DIE + 1 + .5*amt, 5.4*amt + .6, 5.4*amt + .6, col, size*amt, y));
+    // head and shoe, the stem up from it
+    put([[sx - 5, y - 4.5, hb], [sx + 5, y + 4.5, hb + 3]], box(sx - 5, y - 4.5, hb, sx + 5, y + 4.5, hb + 3, STC_SHOE, toneI, 1.1));
+    put([[sx - 4, y - 3.8, hb + 3], [sx + 4, y + 3.8, hb + headH]], box(sx - 4, y - 3.8, hb + 3, sx + 4, y + 3.8, hb + headH, GT.IRON, toneI, 1.1)
+      + (facing([1,0,0]) ? gtRivets(PX(sx + 4.05), [[y - 2, hb + 9.5], [y + 2, hb + 9.5]], GT.IRON.d) : ''));
+    put([[sx - 1.4, y - 1.4, hb + headH], [sx + 1.4, y + 1.4, zStemTop]], rod([sx, y, hb + headH], [sx, y, zStemTop], 1.4, GT.IRON, toneI, .8));
+    // a puff of dust as it lands
+    if (s.dust > 0 && amt > .1){ const r = 3 + 5*(1 - s.dust); let d = '';
+      for (const [dy, dx] of [[-5, 2], [5, 3], [0, 6]]){ const q = P(sx + dx, y + dy, DIE + 2.5 + (1 - s.dust)*3); d += `<circle cx="${f(q[0])}" cy="${f(q[1])}" r="${f(r*.5)}" fill="${mix(col, '#ffffff', .35)}" stroke="${INK}" stroke-width=".5" opacity="${f(s.dust*.8)}"/>`; }
+      put([[sx - 7, y - 7, DIE + 2], [sx + 7, y + 7, DIE + 8]], d); }
+  }
+  // the charge coming in along the lip
+  if (fl.feed && p > .07){ const u = (p - .07)/.05, x = STC.bx + (sx - STC.bx - 4)*u; put([[x - 2.4, STC.cy - 2.2, DIE], [x + 2.4, STC.cy + 2.2, DIE + 4]], gtLump([x, STC.cy, DIE + 2], .8, null, matOf(from.col))); }
+  // what has gone through the screen, on its way out across the bed
+  if (fl.out) for (let i = 0; i < 6; i++){ const u = ((p - .85)*8 + i/6) % 1, x = 68 + (W - 68)*u, py = 28 + (i*5.3) % 26;
+    put([[x - 1, py - 1, BED], [x + 1, py + 1, BED + 2]], stcSpeck([x, py, BED + .7], 1, to.col)); }
+  return parts;
+}
+
+/* ---------- the case ---------- */
+function stcCase(st, m, fl){
+  const { W, D, Z0, ZT } = STC, FRONT = facing([1,0,0]), BACK = facing([-1,0,0]), LEFT = facing([0,1,0]), RIGHT = facing([0,-1,0]);
+  let s = '';
+  if (FRONT) s += fill(pd(on(PX(W), STC_OUT)), tone([1,0,0], m));
+  if (BACK) s += fill(pd(on(PX(0), STC_OUT)), tone([-1,0,0], m));
+  s += extrude(STC_OUT, 0, W, m);
+  if (FRONT){ const dk = mix(m.d, m.m, .35), rv = [];
+    s += ink(pd(on(PX(W + .25), rrUV(3.5, Z0 + 3.5, D - 3.5, ZT - 3.5, 3))), 1);
+    for (let y = 7; y <= D - 7; y += 7) rv.push([y, Z0 + 1.8], [y, ZT - 1.8]);
+    s += gtRivets(PX(W + .3), rv, dk);
+    s += gtNamePlate(W, 24, 65, 58, 75, 'CRUSHER', 'STEAM AGE', 4.8);
+    s += stcBay(st, m, fl);
+  }
+  if (BACK) s += shape(on(PX(-.25), rrUV(18, 18, 62, 58, 3)), mix(m.m, m.d, .25), 1.4) + gtRivets(PX(-.3), [[21, 21], [59, 21], [21, 55], [59, 55]], m.d);
+  if (LEFT){ const rv = []; for (let x = 7; x <= W - 7; x += 7) rv.push([x, Z0 + 1.8], [x, ZT - 1.8]);
+    s += gtRivets(PY(D + .3), rv, mix(m.d, m.m, .35)) + shape(on(PY(D + .25), ellUV(STC.riserX, 34, 5.2, 5.2, 18)), mix(m.d, m.m, .2), .9); }
+  if (RIGHT){ let v = ''; for (let z = 30; z <= 60; z += 5) v += pd([[14, -.25, z], [56, -.25, z]], false);
+    s += `<path d="${v}" fill="none" stroke="${INK}" stroke-width="1.5" opacity=".75"/>`; }
+  if (FRONT) s += ink(pd(on(PX(W), STC_OUT)), 2.2);
+  if (BACK) s += ink(pd(on(PX(0), STC_OUT)), 2.2);
+  return s + hullInk([...on(PX(0), STC_OUT), ...on(PX(W), STC_OUT)], 2.8);
+}
+function stcBay(st, m, fl){
+  const [y0, z0, y1, z1] = STC.bay, xb = STC.bx, W = STC.W, L = STC_LINE, open = on(PX(W + .3), rectUV(y0, z0, y1, z1));
+  let s = shape(on(PX(W + .15), rrUV(y0 - 2.5, z0 - 2, y1 + 2.5, z1 + 2, 1.5)), mix(m.d, m.m, .45), 1.2);
+  let inner = fill(pd(open), L.d);
+  inner += shape(on(PX(xb), rectUV(y0, z0, y1, z1)), toneI([1,0,0], L), .8);
+  inner += shape(on(PX(xb + .1), rectUV(...STC.slot)), GT.RECESS, .8);
+  if (facing([0,1,0])) inner += shape([[xb, y0, z0], [W, y0, z0], [W, y0, z1], [xb, y0, z1]], toneI([0,1,0], L), .8);
+  if (facing([0,-1,0])) inner += shape([[xb, y1, z0], [W, y1, z0], [W, y1, z1], [xb, y1, z1]], toneI([0,-1,0], L), .8);
+  if (facing([0,0,1])) inner += shape([[xb, y0, z0], [W, y0, z0], [W, y1, z0], [xb, y1, z0]], toneI([0,0,1], L), .8);
+  if (facing([0,0,-1])) inner += shape([[xb, y0, z1], [W, y0, z1], [W, y1, z1], [xb, y1, z1]], toneI([0,0,-1], L), .8);
+  inner += byDepth(stcStampParts(st, fl, z1));
+  s += clipTo(open, inner) + ink(pd(open), 1.8);
+  s += gtRivets(PX(W + .35), [[y0 - 1.2, z0 - .8], [y1 + 1.2, z0 - .8], [y0 - 1.2, z1 + .8], [y1 + 1.2, z1 + .8], [y0 - 1.2, (z0 + z1)/2], [y1 + 1.2, (z0 + z1)/2]], mix(m.d, m.m, .2));
+  return s;
+}
+function stcSpout(st, fl){
+  const W = STC.W, [x1, z1] = STC.spout, z0 = STC.BED, [y0, y1] = STC.sy, sm = GT.BRZD, ym = (y0 + y1)/2, [, to] = stcMats(st);
+  const lip = y => shape([[W, y, z0], [x1, y, z1], [x1, y, z1 + 3], [W, y, z0 + 4]], tone([0, y > ym ? 1 : -1, 0], sm), 1);
+  let plate = shape([[W, y0, z0], [x1, y0, z1], [x1, y1, z1], [W, y1, z0]], tone(norm([6, 0, 8]), sm), 1);
+  if (facing([1,0,0])) plate += shape([[x1, y0, z1], [x1, y1, z1], [x1, y1, z1 - 1], [x1, y0, z1 - 1]], sm.d, .9);
+  if (fl.out) for (let i = 0; i < 6; i++){ const u = ((fl.p - .85)*8 + i/6 + .3) % 1; plate += stcSpeck([W + (x1 - W)*u, 32 + (i*3.7) % 18, z0 + (z1 - z0)*u + .7], 1, to.col); }
+  return byDepth([
+    { box:[[W, y0 - .5, z1], [x1, y0 + .5, z0 + 4]], svg: lip(y0) },
+    { box:[[W, y0 + .5, z1 - 1], [x1, y1 - .5, z0 + 1]], svg: plate },
+    { box:[[W, y1 - .5, z1], [x1, y1 + .5, z0 + 4]], svg: lip(y1) } ]);
+}
+function stcTray(st, fl){
+  const [x0, y0, x1, y1] = STC.tray, A = on(PZ(0), rectUV(x0, y0, x1, y1)), B = on(PZ(STC.trayH), rectUV(x0, y0, x1, y1)), [, to] = stcMats(st);
+  let inner = fill(pd(on(PZ(.6), rectUV(x0 + .6, y0 + .6, x1 - .6, y1 - .6))), GT.IRON.d);
+  const n = st.output | 0, full = gtClamp(n/8), items = [];
+  if (n > 0 || fl.out) for (const [y, seed, w] of [[34, 1, .8], [48, 2, 1]]){ const zt = 2 + 5.5*full*w;
+    items.push({ box: [[80, y - 8, .6], [92, y + 8, zt]], svg: stcHeap(86, y, .6, zt, 7, 7.5, to.col, to.s*.8, seed) }); }
+  if (fl.out) for (let i = 0; i < 4; i++){ const u = ((fl.p - .85)*8 + i/4) % 1; items.push({ box: [[79, 30, 1], [81, 52, 13]], svg: stcSpeck([80, 34 + i*4.5, 12.5 - 10*u], 1, to.col) }); }
+  inner += byDepth(items);
+  return openShell(A, B, nn => toneI(nn, GT.IRON), inner) + ink(pd(B), 1.4) + hullInk([...A, ...B], 1.8);
+}
+const stcFeet = () => [[4, 4], [58, 4], [4, 68], [58, 68]].map(([x, y]) => ({ box:[[x, y, 0], [x + 8, y + 8, STC.Z0]], svg: box(x, y, 0, x + 8, y + 8, STC.Z0, DARK, toneI, 1) }));
+
+/* ---------- on the roof: frames, shaft, cams, tappets, stems, flywheel, engine ---------- */
+function stcCam(y, ang){
+  const { x, z, R } = STC.sh, r = 3.6, al = Math.acos(r/R), n = 12, y0 = y - 1.4, y1 = y + 1.4;
+  const ring = yy => { const o = [[x + R*Math.cos(ang), yy, z + R*Math.sin(ang)]];
+    for (let i = 0; i <= n; i++){ const a = ang + al + (2*Math.PI - 2*al)*i/n; o.push([x + r*Math.cos(a), yy, z + r*Math.sin(a)]); } return o; };
+  const A = ring(y0), B = ring(y1), yf = facing([0,1,0]), cap = yf ? B : A;
+  return loft(A, B, nn => toneI(nn, GT.BRZD)) + shape(cap, toneI(yf ? [0,1,0] : [0,-1,0], GT.BRZD), .9) + hullInk([...A, ...B], 1);
+}
+function stcFly(fl){
+  const { x, z } = STC.sh, { y0, y1, r } = STC.fly, M = GT.IRON;
+  let s = rod([x, y0, z], [x, y1, z], r, M, toneI, 1.5, r, 36);
+  const end = facing([0,1,0]) ? y1 + .05 : facing([0,-1,0]) ? y0 - .05 : null;
+  if (end !== null){ const pl = PY(end);
+    s += shape(on(pl, ellUV(x, z, r - 2.4, r - 2.4, 28)), GT.RECESS, .8);
+    for (let i = 0; i < 6; i++){ const a = fl.A + i*Math.PI/3, c = Math.cos(a), sn = Math.sin(a), wx = -sn, wz = c;
+      const q = (rr, w) => [x + rr*c + wx*w, z + rr*sn + wz*w];
+      s += shape(on(pl, [q(2.5, 1.2), q(r - 2, .8), q(r - 2, -.8), q(2.5, -1.2)]), M.m, .6); }
+    s += shape(on(pl, ellUV(x, z, 3.6, 3.6, 14)), M.l, .8) + fill(pd(on(pl, ellUV(x, z, 1.4, 1.4, 8))), M.d); }
+  return s;
+}
+function stcRoof(st, fl, k, fade){
+  const parts = [], put = (b, svg) => parts.push({ box: b, svg }), M = GT.BRZD, { ZT, sx, sh, eng, stk } = STC, { x, z, r } = sh;
+  const shaftSeg = (a, b) => put([[x - r, a, z - r], [x + r, b, z + r]], rod([x, a, z], [x, b, z], r, GT.IRON, toneI, .9));
+  // bearing frames with their caps
+  for (const y0 of STC.frames) put([[44, y0, ZT], [56, y0 + 4, z + 4]], fade(box(48, y0, ZT, 56, y0 + 4, z - 3, M, toneI, 1.2) + box(46, y0, ZT, 58, y0 + 4, ZT + 2, M, toneI, 1)
+    + box(47, y0 - .3, z - 3, 57, y0 + 4.3, z + 3.5, GT_BRZ, toneI, 1.1) + (facing([1,0,0]) ? gtRivets(PX(57.05), [[y0 + 2, z - 1.5], [y0 + 2, z + 1.5]], M.d) : '')));
+  // the flywheel, the shaft in lengths between the things on it
+  put([[x - 13, STC.fly.y0, z - 13], [x + 13, STC.fly.y1, z + 13]], stcFly(fl));
+  shaftSeg(STC.fly.y1, 16);
+  // each stamp's cam, tappet and the top of its stem: a group, split from the next by the shaft
+  const segs = [[20, 26.2], [33, 39.2], [46, 52.2], [59, 62], [66, 68.5]];
+  for (const [a, b] of segs) shaftSeg(a, b);
+  for (const s of fl.stamps){
+    const y = s.y, zt = z - sh.R*Math.sin(sh.th) + s.lift;
+    const cam = stcCam(y + 3.4, s.cam) + rod([x, y - 1.8, z], [x, y + 5, z], r, GT.IRON, toneI, .8);
+    const tappet = box(56.5, y - 1.8, zt, 64, y + 5, zt + 2.5, GT.IRON, toneI, .9);
+    const stem = rod([sx, y, 87], [sx, y, zt + 6.5], 1.4, GT.IRON, toneI, .8) + box(sx - 2, y - 2, zt + 2.5, sx + 2, y + 2, zt + 4, GT.IRON, toneI, .7);
+    const nearX = CAM_V[0] > 0;
+    put([[x - 8, y - 1.8, 87], [sx + 2, y + 5, zt + 6.5]], nearX ? cam + stem + tappet : stem + tappet + cam);
+    // the stem below the guide bar, down to the roof gland
+    put([[sx - 3, y - 3, ZT], [sx + 3, y + 3, 84]], rod([sx, y, ZT + 1], [sx, y, 84], 1.4, GT.IRON, toneI, .8) + cyl(sx, y, ZT, ZT + 1.6, 3, M, toneI, .9));
+  }
+  // the guide bar across the stems, fixed to the frames
+  put([[56, 16, 84], [65, 66, 87]], box(56, 16, 84, 65, 66, 87, M, toneI, 1.2)
+    + (facing([0,0,1]) ? fl.stamps.map(s => shape(on(PZ(87.05), ellUV(sx, s.y, 2.2, 2.2, 10)), GT.RECESS, .6)).join('') : ''));
+  // the crank on the end of the shaft
+  const cx = x + eng.crank*Math.cos(fl.A), cz = z + eng.crank*Math.sin(fl.A);
+  put([[x - 8, 68.5, z - 8], [x + 8, 70, z + 8]], rod([x, 68.5, z], [x, 70, z], 7.4, M, toneI, 1.1, 7.4, 20)
+    + (facing([0,1,0]) ? fill(pd(on(PY(70.05), ellUV(x - 3*Math.cos(fl.A), z - 3*Math.sin(fl.A), 2.6, 2.6, 10))), M.d) : ''));
+  // the slide on its pedestals, the crosshead, rods
+  put([[34, 70, ZT], [37, 74, 94]], box(34, 70, ZT, 37, 74, 94, M, toneI, 1));
+  put([[42, 70, ZT], [45, 74, 94]], box(42, 70, ZT, 45, 74, 94, M, toneI, 1));
+  put([[32, 70, 94], [47, 74, 95.5]], box(32, 70, 94, 47, 74, 95.5, GT.IRON, toneI, 1));
+  const xc = fl.xc;
+  put([[32, 70, 95.5], [60, 74, 103.5]], rod([eng.x1, eng.y, z], [xc, eng.y, z], .9, GT.IRON, toneI, .7)
+    + box(xc - 2.2, eng.y - 2, 95.5, xc + 2.2, eng.y + 2, 100.5, GT_BRZ, toneI, 1)
+    + rod([xc, eng.y, z], [cx, eng.y, cz], 1.1, GT.IRON, toneI, .8) + rod([cx, 70, cz], [cx, eng.y + 1, cz], 1.4, GT.IRON, toneI, .7));
+  // the cylinder on its saddles (the piston shows through it in the see-through), the steam pipe into it, the stack on it
+  for (const xs of [14, 26]) put([[xs, 67, ZT], [xs + 4, 77, z - 5.5]], fade(box(xs, 67, ZT, xs + 4, 77, z - 5.5, M, toneI, 1)));
+  const pm = matOf(st.valve > .5 ? '#d9d2c2' : GT.BRZD.m);
+  put([[18.5, 77, ZT], [25.5, 80, z]], fade(cyl(22, 78, ZT, ZT + 1.5, 2, M, toneI, .8) + rod([22, 78, ZT + 1.5], [22, 78, z], 1.2, pm, toneI, .7)));
+  const px = xc - 18;
+  let cy = rod([eng.x0, eng.y, z], [eng.x0 + 1.6, eng.y, z], eng.r + 1.3, M, toneI, 1, eng.r + 1.3, 26) + rod([eng.x0 + 1.6, eng.y, z], [eng.x1 - 1.6, eng.y, z], eng.r, GT_BRZ, toneI, 1.4, eng.r, 26)
+    + rod([eng.x1 - 1.6, eng.y, z], [eng.x1, eng.y, z], eng.r + 1.3, M, toneI, 1, eng.r + 1.3, 26);
+  if (k > 0) cy = `<g opacity="${f(k)}">` + rod([px + 3, eng.y, z], [eng.x1, eng.y, z], .9, GT.IRON, toneI, .7) + rod([px, eng.y, z], [px + 3, eng.y, z], eng.r - .6, GT.IRON, toneI, 1, eng.r - .6, 20) + `</g><g opacity="${f(1 - .65*k)}">${cy}</g>`;
+  put([[eng.x0, eng.y - eng.r - 1.3, z - 5.5], [eng.x1, eng.y + eng.r + 1.3, stk]], cy);
+  const stack = gtStack(22, eng.y, stk, 12);
+  put(stack.box, fade(stack.svg));
+  return parts;
+}
+
+/* ---------- see-through: the stems' full length, the inside pipe, the feed chute ---------- */
+let STC_LABELS = '';
+function stcMech(st, k, fl){
+  const parts = stcStampParts(st, fl, STC.ZT), put = (b, svg) => parts.push({ box: b, svg }), { cy, D, ZT, bx, DIE, riserX } = STC, [from] = stcMats(st);
+  const pm = matOf(st.valve > .5 ? '#d9d2c2' : GT.BRZD.m);
+  // the inside steam pipe: in at the wall, up to the roof
+  put([[riserX - 1.8, 76, 32], [riserX + 1.8, D, 36]], rod([riserX, D, 34], [riserX, 78, 34], 1.8, pm, toneI, .7));
+  put([[riserX - 1.8, 76, 34], [riserX + 1.8, 79.8, ZT]], rod([riserX, 78, 34], [riserX, 78, ZT], 1.2, pm, toneI, .7));
+  // the feed chute
+  const a = [18, ZT], b = [bx, DIE + .2], y0 = cy - 5, y1 = cy + 5, M = GT.IRON;
+  const sl = shape([[a[0], y0, a[1]], [b[0], y0, b[1]], [b[0], y1, b[1]], [a[0], y1, a[1]]], toneI(norm([a[1] - b[1], 0, b[0] - a[0]]), M), .8);
+  const lip = y => shape([[a[0], y, a[1]], [b[0], y, b[1]], [b[0], y, b[1] + 3], [a[0], y, a[1] + 3]], toneI([0, y > cy ? 1 : -1, 0], M), .7);
+  let lump = '';
+  if (fl.feed && fl.p <= .07){ const u = (fl.p/.07)**2; lump = gtLump([18 + (bx - 18)*u, cy, ZT + 2 - (ZT - DIE)*u], .8, null, matOf(from.col)); }
+  put([[a[0] - 1, y0 - .5, b[1]], [b[0], y1 + .5, a[1] + 3]], (facing([0,1,0]) ? lip(y0) + sl + lump + lip(y1) : lip(y1) + sl + lump + lip(y0)));
+  const sb = byDepth(parts), run = !!st.running, s0 = fl.stamps[0];
+  STC_LABELS = k <= .6 ? '' : xrCallouts([
+    { at: [riserX, 79, 50], text: 'STEAM PIPE', on: st.valve > .5 },
+    { at: [fl.xc - 18, STC.eng.y + STC.eng.r, 98], text: 'PISTON', on: run },
+    { at: [fl.xc, STC.eng.y, 100.5], text: 'CROSSHEAD', on: run },
+    { at: [52, 6, 111], text: 'FLYWHEEL', on: run },
+    { at: [52 + 6, 44.8, 104], text: 'CAMS', on: run },
+    { at: [64, s0.y + 5, 92.86 + s0.lift], text: 'TAPPET', on: s0.lift > .5 },
+    { at: [STC.sx, 54, 70], text: 'STEM', on: run },
+    { at: [STC.sx + 5, 54, STC.rest + fl.stamps[2].lift + 2], text: 'IRON SHOE', on: fl.grind },
+    { at: [68, 26, 24], text: 'MORTAR AND SCREEN', on: fl.grind || fl.out },
+    { at: [28, cy - 5, 62], text: 'FEED CHUTE', on: fl.feed } ], [0, 96, 0, 100, 0, 121]);
+  return sb;
+}
+
+/* ---------- scene ---------- */
+function scene(st, m){
+  const fl = stcFlow(st), k = ease(st.xr || 0), { W, Z0, ZT, D, tray, trayH, sy, spout, BED, eng, stk, riserX } = STC;
+  const fade = svg => k > 0 ? `<g opacity="${f(1 - .7*k)}">${svg}</g>` : svg, [from] = stcMats(st), run = !!st.running;
+  let s = castShadow([...on(PX(0), STC_OUT), ...on(PX(W), STC_OUT), [52, 6, 111], [5, 24, ZT + 11], [31, 58, ZT + 11], [22, eng.y, stk + 12], [riserX, D + 10, 34]])
+    .replace('<path ', `<path opacity="${f(1 - .75*k)}" `);
+  let body = stcCase(st, m, fl);
+  if (k > 0) body = xrGhost(body, '', k, STC_OUT, 0, W, m) + `<g opacity="${f(k)}">${stcMech(st, k, fl)}</g>`;
+  const riser = gtRiser(riserX, D, 34, st.valve);
+  s += byDepth(stcFeet());
+  s += byDepth([
+    { box:[[0, 0, Z0], [W, D, ZT]], svg: body },
+    { box:[[W, 5, 58], [W + 3, 17, 70]], svg: gtGauge(W, 11, 64, 6, st.steam) },
+    { box:[[W, 8.6, 47.6], [W + 2, 13.4, 52.4]], svg: gtLamp(W, 11, 50, st) },
+    { box:[[W, sy[0] - .5, spout[1] - 1], [spout[0], sy[1] + .5, BED + 4]], svg: stcSpout(st, fl) },
+    { box:[[tray[0], tray[1], 0], [tray[2], tray[3], trayH]], svg: stcTray(st, fl) },
+    { box: riser.box, svg: fade(riser.svg) } ]);
+  // what stands on the roof, sorted on its own
+  const rest = [[14, 36, ZT + 2], [22, 36, ZT + 2], [14, 46, ZT + 2], [22, 46, ZT + 2], [18, 41, ZT + 4.5]].slice(0, Math.min(5, st.input | 0))
+    .map(at => ({ at, svg: gtLump(at, .85, null, matOf(from.col)) }));
+  const dropping = fl.feed && fl.p < .07;
+  s += byDepth([
+    { box:[[STC.hopTop[0], STC.hopTop[1], ZT], [STC.hopTop[2], STC.hopTop[3], ZT + STC.hopH]], svg: act('hopper', fade(gtHopper(ZT, STC.hopBot, STC.hopTop, STC.hopH, m, rest, dropping))) },
+    ...stcRoof(st, fl, k, fade) ]);
+  s += gtPuffsSvg(st);
+  if (k > .6) s += STC_LABELS;
+  else s += xrCallouts([
+    { at: [18, STC.hopTop[1], ZT + STC.hopH], text: 'HOPPER', on: dropping },
+    { at: [52, 6, 111], text: 'FLYWHEEL', on: run },
+    { at: [22, eng.y + eng.r, 98], text: 'STEAM ENGINE', on: run },
+    { at: [64, 41, 96 + fl.stamps[1].lift], text: 'CAMS AND TAPPETS', on: run },
+    ...(facing([0,1,0]) ? [{ at: [riserX, D + 18, 26], text: 'STEAM VALVE', on: st.valve > .5 }] : []),
+    ...(facing([1,0,0]) ? [{ at: [STC.sx + 5, 54, STC.rest + fl.stamps[2].lift + 6], text: 'STAMPS', on: fl.grind }, { at: [68, 26, 24], text: 'MORTAR', on: fl.grind },
+      { at: [W + 3, 11, 70], text: 'PRESSURE GAUGE', on: (st.steam || 0) > .05 }] : []),
+    { at: [tray[2], (tray[1] + tray[3])/2, trayH], text: 'OUTPUT TRAY', on: (st.output || 0) > 0 } ], [0, 96, 0, 100, 0, 121]);
+  return s;
+}
+
+gtMachine({
+  fig:'S6', title:'Steam Crusher', size:[96, 100, 121], center:[48, 50], scene,
+  recipes:[{ id:'steam_crush_cobblestone', name:'Gravel' }, { id:'steam_crush_gravel', name:'Sand' }, { id:'steam_crush_sand', name:'Stone Dust' }],
+  demoSeconds: 4, loadLabel:'Load stone', inLabel:'Stone', outLabel:'Made',
+  emitters:[{ id:'vent', at: () => [22, STC.eng.y, STC.stk + 17], when: st => !!st.running }],
+  tile:[[-3, -1, 0], [99, -1, 0], [99, 101, 0], [-3, 101, 0]],
+});
+</script>
+<script src="cf-tail.js"></script>
+</body></html>

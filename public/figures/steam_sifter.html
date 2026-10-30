@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Steam Sifter</title>
+<script src="cf-head.js"></script></head><body>
+<script src="core.js"></script>
+<script src="gt-bridge.js"></script>
+<script src="gt-parts.js"></script>
+<script>
+/* Steam Sifter (gtjs, steam age, after Ex Nihilo): the stone sifter's job, twice as fast, with a small steam engine on
+   the roof to shake the mesh in place of a falling weight.
+
+   How it works (truth first)
+   1. Steam comes up the riser beside the left wall, through the valve, into the case, up a pipe through the roof and
+      into a small horizontal cylinder on a saddle. Spent steam leaves through the stack on the cylinder's valve chest.
+   2. The piston pushes a rod to a crosshead on a slide bar; a connecting rod from the crosshead turns a crank on a
+      shaft across the roof. A flywheel on the far end carries the shaft through the dead points.
+   3. Two eccentrics on the shaft drive two hanger rods down through glands in the roof, into the bay, onto pins either
+      side of the mesh tray. The tray hinges on a pivot bar at its high back end, so its low front end rocks up and down.
+   4. A block drops from the hopper on the roof, through a throat in the bay's ceiling, onto the high end of the mesh.
+      Fines shake through it, land on the bay's floor and go away: down the drain, along a pipe, out of the back.
+   5. What is too big to pass (the finds) walks down the slope, off the tray's open front, down the spout and into the
+      output tray. Each find is its own chance per block, so one block can give several things or nothing.
+   Where the block is: hopper -> throat -> mesh -> fines to the drain, finds -> spout -> tray.
+   Where the steam is: riser -> valve -> inside pipe -> roof -> cylinder -> valve chest -> stack -> air.
+
+   x = depth (front at x = W), y = width (+y = viewer-left: the steam side), z = up. 1 unit = 1 cm.
+
+   Parts
+   CASE     bronze case on four feet . riveted front . the open sifting bay, lined . name plate . pressure gauge . running
+            lamp . service hatch (back) . louvres (right side) . hopper with feed flap . spout . output tray
+   ENGINE   saddle . cylinder with flanges and valve chest . vent stack . piston (see-through) . piston rod . crosshead .
+            slide bar and its stand . connecting rod . crank disc and pin . shaft . two pedestal bearings . flywheel
+   SHAKER   two eccentrics . two hanger rods . two roof glands . tray pins . tray rails . wire mesh . pivot bar
+   WASTE    bay floor . drain . waste pipe . its stub out of the back
+   STEAM    riser with floor flange, valve and handwheel . wall flange . inside pipe up to the roof
+
+   Contact checks (numbers)
+   - bay y 8..62, z 12..60, back wall x 34. Tray x 40..68, y 12..58 on a pivot bar r 1.5 at (x 41, z 34). The bay is
+     shallow on purpose: from the default view a part 1 unit back looks 1 unit further along y, so a deep tray clips.
+   - hanger: eccentric centre (x 62, z 88 + 2 sin), rod 56.25 long down to the pin at x 62, local z 37, so
+     sin a = (37 - (eccentric z - 56.25))/21: a 0.16..0.35 rad, the tray's front z 26..32, far above the floor (z 12).
+   - throat x 42..52, y 30..40 from the roof to the ceiling (z 60); the block (9 cube) lands at local x 47, z 36.6.
+   - shaft z 88 at x 62, past the hopper (x <= 56); pedestals on the roof (z 78) at y 5.5..8.5 and 63..66; flywheel r 9.
+   - crank r 4, connecting rod 16: crosshead x 42..50. Cylinder x 12..38 at (y 71, z 88), r 6: y 65..77, past the hopper
+     (y <= 52). Piston = crosshead - 14: x 28..36, inside the bore.
+   - inside pipe at (x 25, y 71) from the wall flange (z 34) up through the roof to the saddle under the cylinder.
+   - spout from under the tray's lip (x 68, z 28) to (x 84, z 12.5): z 26 at the bay's mouth, above its floor. Tray rim z 7.
+*/
+const TSF_W = 70, TSF_D = 80, TSF_Z0 = 6, TSF_ZT = 78;
+Z_FLOOR = TSF_Z0;
+const TSF_OUT = rrUV(0, TSF_Z0, TSF_D, TSF_ZT, 5);
+const TSF_BAY = [8, 12, 62, 60], TSF_BX = 34, TSF_CY = 35;
+const TSF_PIV = { x: 41, z: 34 }, TSF_SH = { x: 62, z: 88, e: 2, rod: 56.25 }, TSF_ROD_Y = [10, 60];
+const TSF_MESHZ = 36.6, TSF_CYL = { x0: 12, x1: 38, y: 71, z: 88, r: 6 };
+const TSF_SPOUT = { y0: 26, y1: 44, x0: 68, z0: 28, x1: 84, z1: 12.5 };
+const TSF_TRAY = [74, 18, 96, 52], TSF_TRAY_H = 7, TSF_RISER = 25, TSF_TOP = 107;
+const TSF_LINE = { l:'#8d7c6a', m:'#66584b', d:'#3b322a' }, TSF_RAIL = GT.IRON;
+
+/* ---------- a sort that holds with this many parts: only pairs that overlap on screen are ordered, each by a plane
+   that separates them. ext: a part's true extent, when its box is cheating to go under or over something. ---------- */
+function tsfSort(parts){
+  const items = parts.filter(Boolean).map(p => { const b = p.ext || p.box, pts = [];
+    for (const x of [b[0][0], b[1][0]]) for (const y of [b[0][1], b[1][1]]) for (const z of [b[0][2], b[1][2]]) pts.push(P(x, y, z));
+    return { p, h: hull(pts), d: depthOf(boxMid(p.box)), n: 0, after: [], done: false }; });
+  // do two convex outlines overlap on screen? (separating axis)
+  const apart = (A, B) => { for (const [P1, P2] of [[A, B], [B, A]]) for (let i = 0; i < P1.length; i++){ const a = P1[i], c = P1[(i + 1) % P1.length], nx = c[1] - a[1], ny = a[0] - c[0];
+      const pr = H => H.map(q => q[0]*nx + q[1]*ny), ra = pr(P1), rb = pr(P2);
+      if (Math.max(...ra) <= Math.min(...rb) || Math.max(...rb) <= Math.min(...ra)) return true; }
+    return false; };
+  for (let i = 0; i < items.length; i++) for (let j = i + 1; j < items.length; j++){ const a = items[i], b = items[j];
+    if (apart(a.h, b.h)) continue;
+    const o = sepOrder(a.p, b.p); if (o < 0){ a.after.push(b); b.n++; } else if (o > 0){ b.after.push(a); a.n++; } }
+  let out = '';
+  for (let c = 0; c < items.length; c++){ let best = null;
+    for (const it of items) if (!it.done && (!best || it.n < best.n || (it.n === best.n && it.d < best.d))) best = it;
+    best.done = true; out += best.p.svg; for (const b of best.after) b.n--; }
+  return out;
+}
+
+/* ---------- what is on the mesh, and what falls out: by the recipe ---------- */
+const TSF_STAGES = {
+  gravel: { col:'#9a958c', finds:[['#38342f', .3], ['#c98d6b', .3], ['#e5874c', .3], ['#dcdad0', .2]] },      // coal, iron, copper, tin
+  sand: { col:'#e8d58f', finds:[['#c96a4a', .15], ['#d8342c', .15], ['#2f5fc4', .08], ['#7fe8e0', .01]] },    // bauxite, redstone, lapis, diamond
+  stone_dust: { col:'#d9d4c6', finds:[['#d8d6a8', .15], ['#f2c94c', .08], ['#1f7f6e', .01]] },                // nickel, gold, ender pearl
+  dirt: { col:'#7a5532', finds:[['#4f9a3c', .25]] },                                                          // saplings
+};
+const tsfStage = st => TSF_STAGES[((st.recipe && st.recipe.id) || '').match(/gravel|sand|stone_dust|dirt/)?.[0] || 'gravel'];
+const tsfRand = (a, b) => { const s = Math.sin(a*12.9898 + b*78.233)*43758.5453; return s - Math.floor(s); };
+// which finds this block gives: the game rolls the true chances when the block is done, so this is a picture of the
+// rolling, at twice the odds so that a short look at the machine still shows something
+function tsfFinds(st){
+  const s = tsfStage(st), out = [];
+  s.finds.forEach(([col, ch], i) => { if (tsfRand((st.blk || 0) + 1, i + 1) < Math.min(.8, ch*2 + .05)) out.push({ col, i }); });
+  return out;
+}
+function tsfFindPos(i, p){
+  const p0 = .22 + .09*i, u = (p - p0)/.33, y = TSF_CY + [-7, 7, -2, 4][i % 4], S = TSF_SPOUT;
+  if (u < 0) return null;
+  if (u < 1) return { on:'mesh', at:[50 + 18*u, y, TSF_MESHZ + 1.1] };
+  const v = (u - 1)*.33/.1;
+  if (v < 1){ const x = S.x0 + (S.x1 - S.x0)*v; return { on: x < TSF_W ? 'inner' : 'outer', at:[x, TSF_CY + (y - TSF_CY)*.8, S.z0 + (S.z1 - S.z0)*v + 1.2] }; }
+  const w = (v - 1)*.1/.05;
+  if (w < 1) return { on:'tray', at:[S.x1 + 3*w, TSF_CY + (y - TSF_CY)*.8, S.z1 + 1.2 - (S.z1 - .4)*w*w] };
+  return null;
+}
+function tsfFlow(st){
+  const p = st.progress || 0, on = !!st.active, o = { p, on, drop: on && p < .1, sieve: on && p >= .08 && p < .82 && !!st.running };
+  const left = 1 - gtClamp((p - .1)/.7);
+  o.heapH = on && p >= .1 && p < .8 ? .8 + 8.2*left : 0;
+  o.heapR = 5 + 3*(1 - left);
+  o.heapX = 47 + 3*(1 - left);
+  return o;
+}
+const tsfTh = st => (st.t || 0)*7;
+const tsfEcc = st => { const c = TSF_SH, a = tsfTh(st); return [c.x + c.e*Math.cos(a), c.z + c.e*Math.sin(a)]; };
+const tsfAngle = st => Math.asin((37 - (tsfEcc(st)[1] - TSF_SH.rod))/21);
+const tsfTf = a => p => gtTilt(p, TSF_PIV.x, TSF_PIV.z, a);
+function tsfTBox(T, x0, y0, z0, x1, y1, z1, m, w = .8){
+  const c = (x, y, z) => T([x, y, z]), o = T([0, 0, 0]), dir = v => sub(T(v), o);
+  const F = [[[0,1,0], [[x0,y1,z0],[x1,y1,z0],[x1,y1,z1],[x0,y1,z1]]], [[1,0,0], [[x1,y0,z0],[x1,y1,z0],[x1,y1,z1],[x1,y0,z1]]],
+    [[0,-1,0], [[x0,y0,z0],[x1,y0,z0],[x1,y0,z1],[x0,y0,z1]]], [[-1,0,0], [[x0,y0,z0],[x0,y1,z0],[x0,y1,z1],[x0,y0,z1]]],
+    [[0,0,1], [[x0,y0,z1],[x1,y0,z1],[x1,y1,z1],[x0,y1,z1]]], [[0,0,-1], [[x0,y0,z0],[x1,y0,z0],[x1,y1,z0],[x0,y1,z0]]]];
+  return F.map(([n, q]) => { const d = dir(n); return facing(d) ? shape(q.map(p => c(...p)), toneI(d, m), w) : ''; }).join('');
+}
+
+/* ---------- the bay's contents: floor, drain, tray, rods, fines (the bay view and the see-through share them) ---------- */
+function tsfTrayPart(st, flow){
+  const a = tsfAngle(st), T = tsfTf(a), R = TSF_RAIL, stage = tsfStage(st), parts = [], put = (b, svg) => parts.push({ box: b, svg });
+  const tb = (x0, y0, z0, x1, y1, z1, m, w) => put([[x0, y0, z0], [x1, y1, z1]], tsfTBox(T, x0, y0, z0, x1, y1, z1, m, w));
+  tb(40, 12, 35.5, 68, 14, 40, R, 1);
+  tb(40, 56, 35.5, 68, 58, 40, R, 1);
+  tb(40, 14, 35.5, 42, 56, 40, R, 1);
+  const zm = TSF_MESHZ, q = [[42, 14, zm], [68, 14, zm], [68, 56, zm], [42, 56, zm]].map(T);
+  let wires = ''; for (let x = 44; x < 68; x += 3) wires += pd([T([x, 14, zm]), T([x, 56, zm])], false);
+  for (let y = 16; y < 56; y += 3) wires += pd([T([42, y, zm]), T([68, y, zm])], false);
+  put([[42, 14, zm - .1], [68, 56, zm]], fill(pd(q), '#2b2523', 'opacity=".28"') + `<path d="${wires}" fill="none" stroke="#e4dcc7" stroke-width=".55"/>` + ink(pd(q), .9));
+  const mm = matOf(stage.col);
+  if (flow.on && flow.p >= .1 && flow.heapH > 0){ const r = flow.heapR, x = flow.heapX, h = flow.heapH, cy = TSF_CY;
+    const A = on(PZ(zm), ellUV(x, cy, r, r*.85, 12)).map(T), B = on(PZ(zm + h), ellUV(x, cy, r*.45, r*.38, 12)).map(T);
+    let dots = ''; for (let i = 0; i < 7; i++) dots += pd([T([x + (tsfRand(i, 3) - .5)*r*.8, cy + (tsfRand(i, 5) - .5)*r*.7, zm + h + .05]), T([x + (tsfRand(i, 3) - .5)*r*.8 + .3, cy + (tsfRand(i, 5) - .5)*r*.7, zm + h + .05])], false);
+    put([[x - r, cy - r, zm], [x + r, cy + r, zm + h]], loft(A, B, n => toneI(n, mm)) + fill(pd(B), mm.l) + hullInk([...A, ...B], 1.1)
+      + `<path d="${dots}" fill="none" stroke="${mm.d}" stroke-width="1.1" stroke-linecap="round"/>`); }
+  for (const fd of tsfFinds(st)){ const pos = flow.on ? tsfFindPos(fd.i, flow.p) : null;
+    if (pos && pos.on === 'mesh'){ const [x, y, z] = pos.at; put([[x - 2, y - 2, zm], [x + 2, y + 2, zm + 3]], gtLump(T([x, y, z]), .6, null, matOf(fd.col))); } }
+  let s = tsfSort(parts);
+  if (flow.drop){ const u = (flow.p/.1)**2, zs = T([47, TSF_CY, zm])[2], z = 60 + (zs - 60)*u;
+    s = box(42.5, TSF_CY - 4.5, z, 51.5, TSF_CY + 4.5, z + 9, mm, toneI, 1) + s; }
+  return { box:[[40, 12, 19], [68, 58, 56]], svg: s };
+}
+function tsfFines(st, flow){
+  if (!flow.sieve) return null;
+  const col = tsfStage(st).col, t = st.t || 0, T = tsfTf(tsfAngle(st)); let s = '';
+  for (let i = 0; i < 16; i++){ const u = (t*1.6 + i/16) % 1, sx = 54 + (tsfRand(i, 1) - .5)*22, sy = TSF_CY + (tsfRand(i, 2) - .5)*22;
+    const top = T([sx, sy, TSF_MESHZ])[2], z = top + (13 - top)*u*u, [X, Y] = P(sx, sy, z);
+    s += `<circle cx="${f(X)}" cy="${f(Y)}" r="1.2" fill="${col}" stroke="${INK}" stroke-width=".4"/>`; }
+  return { box:[[42, 16, 13], [66, 54, 19]], svg: s };
+}
+function tsfRodPts(st, y){
+  const T = tsfTf(tsfAngle(st)), pin = T([62, y < TSF_CY ? 12 : 58, 37]), [ex, ez] = tsfEcc(st);
+  const u = (TSF_ZT - pin[2])/(ez - pin[2]);
+  return { pin:[pin[0], y, pin[2]], roof:[pin[0] + (ex - pin[0])*u, y, TSF_ZT], ecc:[ex, y, ez] };
+}
+function tsfBayParts(st, flow){
+  const parts = [], put = (b, svg) => parts.push({ box: b, svg }), [y0, z0, y1] = TSF_BAY, col = tsfStage(st).col, cy = TSF_CY;
+  // the bay's floor with its drain, and the fines going down it
+  let fl = fill(pd(on(PZ(z0 + .1), ellUV(52, cy, 8, 7, 18))), mix(TSF_LINE.m, TSF_LINE.d, .4)) + shape(on(PZ(z0 + .15), ellUV(52, cy, 6, 5.2, 18)), GT.RECESS, 1);
+  if (flow.on){ const h = 1 + 2*Math.sin(Math.PI*gtClamp(flow.p)), a = on(PZ(z0 + .2), ellUV(52, cy, 4.6, 4, 14)), b = on(PZ(z0 + .2 + h), ellUV(52, cy, 1.2, 1, 14)), mm = matOf(col);
+    fl += loft(a, b, n => toneI(n, mm)) + fill(pd(b), mm.l); }
+  put([[TSF_BX, y0, z0], [TSF_W, y1, z0 + .3]], fl);
+  // the pivot bar across the bay
+  put([[TSF_PIV.x - 1.5, y0, TSF_PIV.z - 1.5], [TSF_PIV.x + 1.5, y1, TSF_PIV.z + 1.5]], rod([TSF_PIV.x, y0, TSF_PIV.z], [TSF_PIV.x, y1, TSF_PIV.z], 1.5, GT.BRZD, toneI, .9));
+  parts.push(tsfTrayPart(st, flow));
+  const fines = tsfFines(st, flow); if (fines) parts.push(fines);
+  // the hanger rods down to the tray's pins
+  for (const y of TSF_ROD_Y){ const r = tsfRodPts(st, y);
+    put([[Math.min(r.pin[0], r.roof[0]) - 1, y - 1, 19], [Math.max(r.pin[0], r.roof[0]) + 1, y + 1, TSF_ZT]], rod(r.pin, r.roof, .9, GT.IRON, toneI, .8)
+      + rod([r.pin[0], y < cy ? y - 1 : y + 1, r.pin[2]], [r.pin[0], y < cy ? y + 2 : y - 2, r.pin[2]], 1, GT.BRZD, toneI, .7)); }
+  // the inside end of the spout
+  parts.push(tsfSpoutSeg(st, flow, TSF_SPOUT.x0, TSF_W, 'inner'));
+  return parts;
+}
+
+/* ---------- the case, with its open bay ---------- */
+function tsfBay(st, m, flow){
+  const [y0, z0, y1, z1] = TSF_BAY, xb = TSF_BX, W = TSF_W, L = TSF_LINE, open = on(PX(W + .3), rectUV(y0, z0, y1, z1));
+  let s = shape(on(PX(W + .15), rrUV(y0 - 2.5, z0 - 2, y1 + 2.5, z1 + 2, 1.5)), mix(m.d, m.m, .45), 1.2);
+  let inner = fill(pd(open), L.d);
+  inner += shape(on(PX(xb), rectUV(y0, z0, y1, z1)), toneI([1,0,0], L), .8);
+  if (facing([0,1,0])) inner += shape([[xb, y0, z0], [W, y0, z0], [W, y0, z1], [xb, y0, z1]], toneI([0,1,0], L), .8);
+  if (facing([0,-1,0])) inner += shape([[xb, y1, z0], [W, y1, z0], [W, y1, z1], [xb, y1, z1]], toneI([0,-1,0], L), .8);
+  if (facing([0,0,1])) inner += shape([[xb, y0, z0], [W, y0, z0], [W, y1, z0], [xb, y1, z0]], toneI([0,0,1], L), .8);
+  inner += tsfSort(tsfBayParts(st, flow));
+  s += clipTo(open, inner) + ink(pd(open), 1.8);
+  s += gtRivets(PX(W + .35), [[y0 - 1.2, z0 - .8], [y1 + 1.2, z0 - .8], [y0 - 1.2, z1 + .8], [y1 + 1.2, z1 + .8], [y0 - 1.2, (z0 + z1)/2], [y1 + 1.2, (z0 + z1)/2]], mix(m.d, m.m, .2));
+  return s;
+}
+function tsfCase(st, m, flow){
+  const FRONT = facing([1,0,0]), BACK = facing([-1,0,0]), LEFT = facing([0,1,0]), RIGHT = facing([0,-1,0]), W = TSF_W, D = TSF_D, Z0 = TSF_Z0, ZT = TSF_ZT, OUT = TSF_OUT;
+  let s = '';
+  if (FRONT) s += fill(pd(on(PX(W), OUT)), tone([1,0,0], m));
+  if (BACK) s += fill(pd(on(PX(0), OUT)), tone([-1,0,0], m));
+  s += extrude(OUT, 0, W, m);
+  if (FRONT){ const dk = mix(m.d, m.m, .35), rv = [];
+    s += ink(pd(on(PX(W + .25), rrUV(3.5, Z0 + 3.5, D - 3.5, ZT - 3.5, 3))), 1);
+    for (let y = 7; y <= D - 7; y += 7) rv.push([y, Z0 + 1.8], [y, ZT - 1.8]);
+    s += gtRivets(PX(W + .3), rv, dk);
+    s += gtNamePlate(W, 16, 62.5, 54, 74, 'SIFTER', 'STEAM AGE', 5);
+    s += tsfBay(st, m, flow); }
+  if (BACK) s += shape(on(PX(-.25), rrUV(18, 22, 62, 62, 3)), mix(m.d, m.m, .55), 1.4) + gtRivets(PX(-.3), [[21, 25], [59, 25], [21, 59], [59, 59]], m.d);
+  if (LEFT){ const rv = []; for (let x = 7; x <= W - 7; x += 7) rv.push([x, Z0 + 1.8], [x, ZT - 1.8]);
+    s += gtRivets(PY(D + .3), rv, mix(m.d, m.m, .35)) + shape(on(PY(D + .25), ellUV(TSF_RISER, 34, 5.2, 5.2, 18)), mix(m.d, m.m, .2), .9); }
+  if (RIGHT){ let v = ''; for (let z = 30; z <= 60; z += 5) v += pd([[14, -.25, z], [56, -.25, z]], false);
+    s += `<path d="${v}" fill="none" stroke="${INK}" stroke-width="1.5" opacity=".75"/>`; }
+  if (FRONT) s += ink(pd(on(PX(W), OUT)), 2.2);
+  if (BACK) s += ink(pd(on(PX(0), OUT)), 2.2);
+  return s + hullInk([...on(PX(0), OUT), ...on(PX(W), OUT)], 2.8);
+}
+function tsfFeet(){
+  return [[4, 4], [58, 4], [4, 68], [58, 68]].map(([x, y]) => ({ box:[[x, y, 0], [x + 8, y + 8, TSF_Z0]], svg: box(x, y, 0, x + 8, y + 8, TSF_Z0, DARK, toneI, 1) }));
+}
+
+/* ---------- spout and output tray ---------- */
+function tsfSpoutSeg(st, flow, xa, xb, which){
+  const S = TSF_SPOUT, zAt = x => S.z0 + (S.z1 - S.z0)*(x - S.x0)/(S.x1 - S.x0), M = GT.BRZD, nn = norm([S.z0 - S.z1, 0, S.x1 - S.x0]);
+  const plate = shape([[xa, S.y0, zAt(xa)], [xb, S.y0, zAt(xb)], [xb, S.y1, zAt(xb)], [xa, S.y1, zAt(xa)]], tone(nn, M), .9);
+  const lip = y => shape([[xa, y, zAt(xa)], [xb, y, zAt(xb)], [xb, y, zAt(xb) + 3], [xa, y, zAt(xa) + 3]], tone([0, y > TSF_CY ? 1 : -1, 0], M), .9);
+  let lumps = '';
+  if (flow.on) for (const fd of tsfFinds(st)){ const pos = tsfFindPos(fd.i, flow.p); if (pos && pos.on === which) lumps += gtLump(pos.at, .6, null, matOf(fd.col)); }
+  const near = CAM_V[1] >= 0 ? S.y1 : S.y0, far = near === S.y1 ? S.y0 : S.y1;
+  return { box:[[xa, S.y0, zAt(xb)], [xb, S.y1, zAt(xa) + 3]], svg: lip(far) + plate + lumps + lip(near) };
+}
+function tsfTraySvg(st, flow){
+  const [x0, y0, x1, y1] = TSF_TRAY, A = on(PZ(0), rectUV(x0, y0, x1, y1)), B = on(PZ(TSF_TRAY_H), rectUV(x0, y0, x1, y1));
+  let inner = fill(pd(on(PZ(.6), rectUV(x0 + .6, y0 + .6, x1 - .6, y1 - .6))), GT.IRON.d);
+  const fs = tsfStage(st).finds, items = [];
+  for (let i = 0; i < Math.min(10, st.output | 0); i++){ const at = [x0 + 5 + (i % 2)*11, y0 + 5 + Math.floor(i/2)*6, 2 + (i % 3)*.5];
+    items.push({ box:[[at[0] - 2.6, at[1] - 2.6, .6], [at[0] + 2.6, at[1] + 2.6, at[2] + 2]], svg: gtLump(at, .85, null, matOf(fs[i % fs.length][0])) }); }
+  if (flow.on) for (const fd of tsfFinds(st)){ const pos = tsfFindPos(fd.i, flow.p);
+    if (pos && pos.on === 'tray'){ const a = pos.at; items.push({ box:[[a[0] - 2, a[1] - 2, a[2] - 2], [a[0] + 2, a[1] + 2, a[2] + 2]], svg: gtLump(a, .6, null, matOf(fd.col)) }); } }
+  inner += byDepth(items);
+  return openShell(A, B, n => toneI(n, GT.IRON), inner) + ink(pd(B), 1.4) + hullInk([...A, ...B], 1.8);
+}
+
+/* ---------- the engine on the roof ---------- */
+function tsfEngine(st, flow, k, fade){
+  const parts = [], put = (b, svg) => parts.push({ box: b, svg }), M = GT.BRZD, I = GT.IRON, c = TSF_CYL, S = TSF_SH, th = tsfTh(st), ZT = TSF_ZT;
+  const near = facing([0,1,0]);
+  // the cylinder, on its saddle
+  put([[c.x0 + 4, c.y - 5, ZT], [c.x1 - 4, c.y + 5, c.z - 5.5]], fade(box(c.x0 + 4, c.y - 5, ZT, c.x1 - 4, c.y + 5, c.z - 5.5, M, toneI, 1.2)));
+  const cx = S.x + 4*Math.cos(th) - Math.sqrt(16*16 - (4*Math.sin(th))**2), px = cx - 14;
+  let cy = rod([c.x0, c.y, c.z], [c.x0 + 2, c.y, c.z], c.r + 1.4, M, toneI, 1, c.r + 1.4, 22) + rod([c.x0 + 2, c.y, c.z], [c.x1 - 2, c.y, c.z], c.r, GT_BRZ, toneI, 1.3, c.r, 22) + rod([c.x1 - 2, c.y, c.z], [c.x1, c.y, c.z], c.r + 1.4, M, toneI, 1, c.r + 1.4, 22);
+  if (k > 0) cy = `<g opacity="${f(k)}">` + rod([px, c.y, c.z], [px + 2.4, c.y, c.z], c.r - .7, I, toneI, 1, c.r - .7, 22) + rod([px + 2.4, c.y, c.z], [c.x1, c.y, c.z], 1, I, toneI, .7) + `</g><g opacity="${f(1 - .65*k)}">${cy}</g>`;
+  put([[c.x0, c.y - c.r - 1.4, c.z - c.r - 1.4], [c.x1, c.y + c.r + 1.4, c.z + c.r + 1.4]], cy);
+  // valve chest and stack on it
+  put([[c.x0 + 6, c.y - 3.5, c.z + c.r - .5], [c.x1 - 6, c.y + 3.5, c.z + c.r + 1.5]], fade(box(c.x0 + 6, c.y - 3.5, c.z + c.r - .5, c.x1 - 6, c.y + 3.5, c.z + c.r + 1.5, M, toneI, 1)));
+  const stk = gtStack(TSF_RISER, c.y, c.z + c.r + 1.5, 6.5, M); put(stk.box, fade(stk.svg));
+  // piston rod, crosshead, slide bar and its stand, connecting rod
+  put([[c.x1, c.y - 1, c.z - 1], [cx - 2, c.y + 1, c.z + 1]], rod([c.x1, c.y, c.z], [cx - 2, c.y, c.z], 1, I, toneI, .8));
+  put([[40, c.y - 2, ZT], [54, c.y + 2, c.z - 3]], box(45, c.y - 1.5, ZT, 49, c.y + 1.5, c.z - 4, M, toneI, .9) + box(40, c.y - 2, c.z - 4, 54, c.y + 2, c.z - 3, I, toneI, .8));
+  const pin = [S.x + 4*Math.cos(th), c.y, S.z + 4*Math.sin(th)];
+  put([[cx - 2, c.y - 1.5, c.z - 2.5], [cx + 2, c.y + 1.5, c.z + 2.5]], box(cx - 2, c.y - 1.5, c.z - 2.5, cx + 2, c.y + 1.5, c.z + 2.5, GT_BRZ, toneI, .9));
+  put([[Math.min(cx, pin[0]) + 2, c.y - 1, S.z - 5], [Math.max(cx, pin[0]) + 1, c.y + 1, S.z + 5]], rod([cx + 2, c.y, c.z], pin, .9, I, toneI, .8));
+  // the crank disc and its pin
+  put([[S.x - 6, 67, S.z - 6], [S.x + 6, 70, S.z + 6]], rod([S.x, 67, S.z], [S.x, 70, S.z], 6, M, toneI, 1.1, 6, 24) + (near ? shape(on(PY(70.05), ellUV(pin[0], pin[2], 1.4, 1.4, 10)), I.l, .7) : ''));
+  // the shaft in pieces, its bearings, the eccentrics with their hanger rods
+  const seg = (a, b) => put([[S.x - 1.4, a, S.z - 1.4], [S.x + 1.4, b, S.z + 1.4]], rod([S.x, a, S.z], [S.x, b, S.z], 1.4, I, toneI, .8));
+  seg(5, 5.5); seg(11.5, 58.5); seg(61.5, 63); seg(66, 67);
+  for (const [a, b] of [[5.5, 8.5], [63, 66]]) put([[S.x - 4, a, ZT], [S.x + 4, b, S.z + 3.5]], box(S.x - 4, a, ZT, S.x + 4, b, S.z - 1.5, M, toneI, 1) + box(S.x - 3, a, S.z - 1.5, S.x + 3, b, S.z + 3, GT_BRZ, toneI, .9));
+  for (const y of TSF_ROD_Y){ const r = tsfRodPts(st, y);
+    put([[S.x - 6, y - 1.5, ZT], [S.x + 6, y + 1.5, S.z + 6]], cyl(S.x, y, ZT, ZT + 2, 2.6, M, toneI, .9) + rod(r.roof, r.ecc, .9, I, toneI, .8)
+      + rod([r.ecc[0], y - 1.5, r.ecc[2]], [r.ecc[0], y + 1.5, r.ecc[2]], 4.6, GT_BRZ, toneI, 1, 4.6, 20)); }
+  // the flywheel on the far end: a rim, a web and spokes turning
+  { const yn = facing([0,-1,0]) ? 2 : 5; let sp = ''; for (let i = 0; i < 5; i++){ const b = th + i*2*Math.PI/5; sp += pd([[S.x + 2*Math.cos(b), yn, S.z + 2*Math.sin(b)], [S.x + 6.6*Math.cos(b), yn, S.z + 6.6*Math.sin(b)]], false); }
+    put([[S.x - 9, 2, S.z - 9], [S.x + 9, 5, S.z + 9]], rod([S.x, 2, S.z], [S.x, 5, S.z], 9, I, toneI, 1.2, 9, 30) + shape(on(PY(yn), ellUV(S.x, S.z, 7.2, 7.2, 24)), I.d, .8)
+      + `<path d="${sp}" fill="none" stroke="${I.l}" stroke-width="1.8" stroke-linecap="round"/>` + shape(on(PY(yn), ellUV(S.x, S.z, 1.9, 1.9, 10)), I.l, .7)); }
+  return parts;
+}
+
+/* ---------- see-through: what's in the case beyond the bay ---------- */
+function tsfMech(st, flow){
+  const parts = tsfBayParts(st, flow), put = (b, svg) => parts.push({ box: b, svg }), pm = matOf(st.valve > .5 ? '#d9d2c2' : GT.BRZD.m), c = TSF_CYL, X = TSF_RISER, cy = TSF_CY;
+  put([[X - 1.8, c.y, 32], [X + 1.8, TSF_D, 36]], rod([X, TSF_D, 34], [X, c.y, 34], 1.8, pm, toneI, .7));
+  put([[X - 1.8, c.y - 1.8, 34], [X + 1.8, c.y + 1.8, TSF_ZT]], rod([X, c.y, 34], [X, c.y, TSF_ZT], 1.8, pm, toneI, .7));
+  // the throat through the bay's ceiling
+  put([[42, 30, 60], [52, 40, TSF_ZT]], box(42, 30, 60, 52, 40, TSF_ZT, GT.IRON, toneI, .8));
+  // the waste pipe from the drain, under the bay's floor, out of the back
+  put([[50, cy - 1.8, 9], [54, cy + 1.8, 12]], rod([52, cy, 12], [52, cy, 9], 1.8, GT.IRON, toneI, .7));
+  put([[0, cy - 1.8, 7.2], [50, cy + 1.8, 10.8]], rod([52, cy, 9], [0, cy, 9], 1.8, GT.IRON, toneI, .7));
+  return parts;
+}
+
+/* ---------- scene ---------- */
+function scene(st, m){
+  if ((st.progress || 0) < (st.lastP || 0) - .2) st.blk = (st.blk || 0) + 1;
+  st.lastP = st.progress || 0;
+  const flow = tsfFlow(st), k = ease(st.xr || 0), W = TSF_W, D = TSF_D, ZT = TSF_ZT, c = TSF_CYL, S = TSF_SH, cy = TSF_CY, OUT = TSF_OUT;
+  const fade = svg => k > 0 ? `<g opacity="${f(1 - .7*k)}">${svg}</g>` : svg, bounds = [0, 96, 0, 100, 0, TSF_TOP];
+  let s = castShadow([...on(PX(0), OUT), ...on(PX(W), OUT), [34, 18, 88], [56, 52, 88], [c.x0, c.y, 90], [S.x, 2, 90], [TSF_RISER, D + 10, 34]]).replace('<path ', `<path opacity="${f(1 - .75*k)}" `);
+  let body = tsfCase(st, m, flow);
+  if (k > 0) body = xrGhost(body, '', k, OUT, 0, W, m) + `<g opacity="${f(k)}">${tsfSort(tsfMech(st, flow))}</g>`;
+  const lumps = [[43, 27], [50, 27], [43, 43], [50, 43]].slice(0, Math.min(4, st.input | 0)).map(([x, y]) => { const mm = matOf(tsfStage(st).col);
+    return { box:[[x - 3.5, y - 3.5, ZT + .5], [x + 3.5, y + 3.5, ZT + 7.5]], svg: box(x - 3.5, y - 3.5, ZT + .5, x + 3.5, y + 3.5, ZT + 7.5, mm, toneI, .9) }; });
+  const riser = gtRiser(TSF_RISER, D, 34, st.valve);
+  s += byDepth(tsfFeet());
+  s += tsfSort([
+    { box:[[0, 0, TSF_Z0], [W, D, ZT]], svg: body },
+    { box:[[34, 18, ZT], [56, 52, ZT + 10]], svg: act('hopper', fade(gtHopper(ZT, [40, 24, 54, 46], [34, 18, 56, 52], 10, m, lumps, flow.drop))) },
+    ...tsfEngine(st, flow, k, fade),
+    { box:[[W, 65, 54], [W + 3, 77, 66]], svg: fade(gtGauge(W, 71, 60, 6, st.steam)) },
+    { box:[[W, 68.6, 41.6], [W + 2, 73.4, 46.4]], svg: fade(gtLamp(W, 71, 44, st)) },
+    tsfSpoutSeg(st, flow, W, TSF_SPOUT.x1, 'outer'),
+    { box:[[TSF_TRAY[0], TSF_TRAY[1], 0], [TSF_TRAY[2], TSF_TRAY[3], TSF_TRAY_H]], svg: tsfTraySvg(st, flow) },
+    { box:[[-4, cy - 3, 6], [0, cy + 3, 12]], svg: rod([-3, cy, 9], [0, cy, 9], 2.8, GT.BRZD, toneI, .9) },
+    { box: riser.box, svg: fade(riser.svg) } ]);
+  s += gtPuffsSvg(st);
+  const run = !!st.running;
+  if (k > .6) s += xrCallouts([
+    { at: [58, cy + 8, 33], text: 'WIRE MESH', on: run },
+    { at: [TSF_PIV.x, 58, TSF_PIV.z], text: 'PIVOT BAR', on: run },
+    { at: [S.x, 60, 62], text: 'HANGER ROD', on: run },
+    { at: [S.x, 10, S.z + 5], text: 'ECCENTRIC', on: run },
+    { at: [(c.x0 + c.x1)/2, c.y + c.r, c.z], text: 'PISTON', on: run },
+    { at: [S.x, 3, S.z + 9], text: 'FLYWHEEL', on: run },
+    { at: [S.x, 68, S.z + 6], text: 'CRANK', on: run },
+    { at: [52, cy, 12], text: 'WASTE DRAIN', on: flow.sieve },
+    { at: [20, cy, 9], text: 'WASTE PIPE', on: flow.sieve },
+    { at: [47, 35, 68], text: 'THROAT', on: flow.drop },
+    { at: [TSF_RISER, c.y, 58], text: 'STEAM PIPE', on: st.valve > .5 } ], bounds);
+  else s += xrCallouts([
+    { at: [45, 18, ZT + 10], text: 'HOPPER', on: flow.drop },
+    { at: [c.x1 - 8, c.y + c.r, c.z], text: 'STEAM CYLINDER', on: run },
+    { at: [TSF_RISER, c.y, TSF_TOP], text: 'VENT STACK', on: run },
+    { at: [S.x, 3, S.z + 9], text: 'FLYWHEEL', on: run },
+    ...(facing([0,1,0]) ? [{ at: [TSF_RISER, D + 18, 26], text: 'STEAM VALVE', on: st.valve > .5 }] : []),
+    ...(facing([1,0,0]) ? [{ at: [W, 48, 30], text: 'MESH TRAY', on: run }, { at: [W + 3, 71, 66], text: 'PRESSURE GAUGE', on: (st.steam || 0) > .05 }] : []),
+    { at: [TSF_TRAY[2], 35, TSF_TRAY_H], text: 'OUTPUT TRAY', on: (st.output || 0) > 0 } ], bounds);
+  return s;
+}
+
+gtMachine({
+  fig:'S9', title:'Steam Sifter', size:[96, 100, TSF_TOP], center:[48, 50], scene, demoSeconds: 4,
+  recipes:[{ id:'steam_sift_gravel', name:'Sift Gravel' }, { id:'steam_sift_sand', name:'Sift Sand' }, { id:'steam_sift_stone_dust', name:'Sift Dust' }, { id:'steam_sift_dirt', name:'Sift Dirt' }],
+  loadLabel:'Load blocks', inLabel:'Blocks', outLabel:'Found',
+  params: (s, q) => { if (q.has('blk')) s.blk = +q.get('blk'); },
+  emitters:[{ id:'vent', at: () => [TSF_RISER, TSF_CYL.y, TSF_TOP + .5], when: st => !!st.running }],
+  tile:[[-3, -1, 0], [99, -1, 0], [99, 101, 0], [-3, 101, 0]],
+});
+</script>
+<script src="cf-tail.js"></script>
+</body></html>

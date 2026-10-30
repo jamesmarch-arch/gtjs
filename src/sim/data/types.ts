@@ -22,6 +22,8 @@ export interface RecipeDef {
   euPerTick?: number;
   steamPerTick?: number;
   heat?: number; // blast furnace recipes: the coil heat they need, in kelvin
+  name?: string; // what the machine's recipe list calls it, when its first output doesn't say (a sifter's finds)
+  holds?: string; // an item the machine takes from storage and holds while it runs this recipe: never used up, it comes back when the machine is removed
 }
 
 export interface MachineDef {

@@ -30,13 +30,14 @@ describe('browsing storage in the terminal', () => {
 
   it('lets you pick only what can be made: gathered things are shown but not picked', () => {
     const w = emptyWorld();
-    w.storage = { coal: 12, tin_ingot: 1 };
+    w.storage = { cobblestone: 12, tin_ingot: 1 };
     const html = terminalHtml(w, view());
-    expect(html).toMatch(/data-id="coal" aria-pressed="false" disabled/);
+    expect(html).toMatch(/data-id="cobblestone" aria-pressed="false" disabled/);
     expect(html).not.toMatch(/data-id="tin_ingot" aria-pressed="false" disabled/);
     expect(canMake('circuit_lv')).toBe(true);
     expect(canMake('nickel_ingot')).toBe(true); // smelted from nickel dust
-    expect(canMake('coal')).toBe(false);
+    expect(canMake('coal')).toBe(true); // sifted, by chance
+    expect(canMake('cobblestone')).toBe(false);
   });
 
   it('says so when storage is empty', () => {
@@ -50,7 +51,7 @@ describe('browsing storage in the terminal', () => {
     expect(stored).toEqual(['copper_plate']);
     expect(more).toContain('copper_wire');
     expect(more).not.toContain('copper_plate');
-    expect(more).not.toContain('copper_ore'); // gathered, not made
+    expect(more).toContain('copper_ore'); // sifted, by chance
     const html = terminalHtml(w, view({ query: 'circuit' }));
     expect(html).toContain('Can be made <span class="muted">none in storage</span>');
     expect(tiles(html)).toEqual(['coated_board', 'circuit_lv']); // Coated Circuit Board, Electronic Circuit
@@ -70,15 +71,17 @@ describe('a plan in the terminal', () => {
 
   it('plans a circuit from scratch: a tree of steps, what to gather, and a job that needs a crafting CPU', () => {
     const w = emptyWorld();
-    placeMachine(w, 'stone_furnace', 0, 0);
+    for (const [i, def] of ['stone_furnace', 'stone_crusher', 'stone_sifter', 'soaking_barrel', 'tree_farm'].entries()) placeMachine(w, def, i, 0);
     const html = terminalHtml(w, view({ pick: 'circuit_lv' }));
     const tree = steps(html);
     expect(tree[0]).toEqual([0, tree.length]); // the circuit, made last, at the top of the tree
     expect(tree.map(([, n]) => n)).toEqual(tree.map((_, i) => tree.length - i)); // numbered in run order, counting down
     expect(Math.max(...tree.map(([d]) => d))).toBeGreaterThan(2);
     expect(html).toContain('<h3>To gather</h3>');
-    expect(html).toMatch(/30 Copper Ore/);
-    expect(html).toContain('term-status wait">Gather first:');
+    expect(html).toMatch(/\d+ Cobblestone/);
+    expect(html).toContain('Stone Sifter, about');
+    expect(html).toContain('<span class="average">on average</span>');
+    expect(html).toContain('term-status wait">Gather first: about');
     expect(html).toContain('A job can start now and wait for them.');
     expect(html).toContain('Furnace, 6 runs, 1 min'); // the coal furnace smelting copper for the circuit's own wire
     expect(html).toMatch(/<h3>Machine time<\/h3>.*Furnace<b>36 runs, 6 min<\/b>/s); // 30 copper, 4 iron, 2 glass

@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Stone Sifter</title>
+<script src="cf-head.js"></script></head><body>
+<script src="core.js"></script>
+<script src="gt-bridge.js"></script>
+<script src="gt-parts.js"></script>
+<script>
+/* Stone Sifter (gtjs, the first hour, after Ex Nihilo): a block of gravel, sand, dust or dirt is shaken through a mesh
+   and what is too big to pass falls out. No fuel, no steam, no power: a falling weight does the work.
+
+   How it works (truth first)
+   1. A block drops from the hopper, through a wooden neck, onto the high end of a sloping wire mesh tray.
+   2. The tray's low end rests on a pivot bar across the walls. Its high end rests, through a cross bar, on an eccentric
+      cam. As the cam turns it lifts the tray and lets it fall, over and over: the tray rocks.
+   3. A stone weight on a rope turns the cam. The rope comes down off a pulley and unwinds from a drum; the drum's axle
+      carries a big wooden spur gear, which spins a small pinion on the cam shaft, so a slow fall makes a quick shake.
+      The crank on the drum's axle winds the weight back up between blocks.
+   4. Each rock shakes fines through the mesh. They land on the floor of the well and go away down the drain.
+   5. What is too big to pass (the finds) walks down the slope, off the tray's open front, down the spout and into the
+      crate. Each find is its own chance per block, so one block can give several things or nothing.
+   Where the block is: hopper -> neck -> mesh -> fines to the drain, finds -> spout -> crate.
+   Where the power is: weight -> rope -> pulley -> drum -> spur gear -> pinion -> cam shaft -> cam -> cross bar -> tray.
+
+   x = depth (front at x = 70), y = width (+y = viewer-left: the weight's side), z = up. 1 unit = 1 cm.
+
+   Parts
+   MASONRY  back wall . front wall (lower, so the spout clears it) . two side walls . floor of the well . waste drain .
+            wooden name board
+   TRAY     two side rails . back rail . wire mesh . cross bar under the high end . pivot bar across the walls
+   DRIVE    cam shaft . two bearing blocks . eccentric cam . pinion . spur gear . its bearing block . rope drum . crank .
+            rope . pulley and its fork . stone weight with an iron eye
+   FRAME    two bridge beams on four posts . gallows post on the wall . gallows post on the ground . gallows beam
+   FEED     wooden hopper with a flap . neck
+   OUTPUT   wooden spout . catch crate
+
+   Contact checks (numbers)
+   - pivot bar r 1.5 at (x 58, z 44) lies on the side walls (top z 44); tray rails start at local z 45.5, its top.
+   - cam r 6 at x 18 on the shaft (z 46), eccentric 2.5: top z 52 +- 2.5. The cross bar's underside is local z 44.5, so
+     sin a = (cam top - 44.5)/40: a 0.125..0.25 rad, tray rear z about 49..56, rail tops below the neck (z 62).
+   - pinion r 3 at x 18 + spur gear r 12 at x 33: centres 15 apart, both z 46, y 73..76, just outside the wall (y 72).
+   - drum r 5 at (x 33, z 46), y 76..84; rope leaves its top (y 81, z 51) and rises to the pulley (r 5.5 at y 86.5, z 93),
+     whose far side (y 92) lets the rope down to the weight (y 87.5..96.5), clear of the crank (y 84..87).
+   - gallows beam z 100..104 rests on post A (y 65..68, standing on the wall) and post B (y 97..100, on the ground).
+   - spout from under the tray's lip (x 60, z 45) to over the crate (x 84, z 12.5): at the front wall (x 70) it is z 31.5,
+     above the wall's top (z 30). Crate rim z 10.
+*/
+const SSF_W = 70, SSF_WALL = 44, SSF_FRONT = 30, SSF_TOP = 104;
+const SSF_STONE = { l:'#cfc9be', m:'#a39d93', d:'#55504a' }, SSF_WOOD = { l:'#d9a86c', m:'#bf8a4f', d:'#6e4a26' };
+const SSF_DARKW = { l:'#b98a55', m:'#96693b', d:'#583a1d' };
+const SSF_PIV = { x: 58, z: 44 }, SSF_CAM = { x: 18, z: 46, r: 6, e: 2.5, y0: 34, y1: 44 }, SSF_GEAR = { x: 33, z: 46, r: 12 };
+const SSF_CRATE = [74, 22, 96, 56], SSF_CRATE_H = 10, SSF_SPOUT = { y0: 29, y1: 49, z0: 45, x1: 84, z1: 12.5 };
+const SSF_MESHZ = 46.6;
+
+/* ---------- a sort that holds with this many parts: only pairs that overlap on screen are ordered, each by a plane
+   that separates them (Array.sort with byDepth's comparator isn't transitive here). ext: a part's true extent, when its
+   box is cheating to go under or over something. ---------- */
+function ssfSort(parts){
+  const items = parts.filter(Boolean).map(p => { const b = p.ext || p.box, pts = [];
+    for (const x of [b[0][0], b[1][0]]) for (const y of [b[0][1], b[1][1]]) for (const z of [b[0][2], b[1][2]]) pts.push(P(x, y, z));
+    return { p, h: hull(pts), d: depthOf(boxMid(p.box)), n: 0, after: [], done: false }; });
+  // do two convex outlines overlap on screen? (separating axis)
+  const apart = (A, B) => { for (const [P1, P2] of [[A, B], [B, A]]) for (let i = 0; i < P1.length; i++){ const a = P1[i], c = P1[(i + 1) % P1.length], nx = c[1] - a[1], ny = a[0] - c[0];
+      const pr = H => H.map(q => q[0]*nx + q[1]*ny), ra = pr(P1), rb = pr(P2);
+      if (Math.max(...ra) <= Math.min(...rb) || Math.max(...rb) <= Math.min(...ra)) return true; }
+    return false; };
+  for (let i = 0; i < items.length; i++) for (let j = i + 1; j < items.length; j++){ const a = items[i], b = items[j];
+    if (apart(a.h, b.h)) continue;
+    const o = sepOrder(a.p, b.p); if (o < 0){ a.after.push(b); b.n++; } else if (o > 0){ b.after.push(a); a.n++; } }
+  let out = '';
+  for (let c = 0; c < items.length; c++){ let best = null;
+    for (const it of items) if (!it.done && (!best || it.n < best.n || (it.n === best.n && it.d < best.d))) best = it;
+    best.done = true; out += best.p.svg; for (const b of best.after) b.n--; }
+  return out;
+}
+
+/* ---------- what is on the mesh, and what falls out: by the recipe ---------- */
+const SSF_STAGES = {
+  gravel: { col:'#9a958c', finds:[['#38342f', .3], ['#c98d6b', .3], ['#e5874c', .3], ['#dcdad0', .2]] },      // coal, iron, copper, tin
+  sand: { col:'#e8d58f', finds:[['#c96a4a', .15], ['#d8342c', .15], ['#2f5fc4', .08], ['#7fe8e0', .01]] },    // bauxite, redstone, lapis, diamond
+  stone_dust: { col:'#d9d4c6', finds:[['#d8d6a8', .15], ['#f2c94c', .08], ['#1f7f6e', .01]] },                // nickel, gold, ender pearl
+  dirt: { col:'#7a5532', finds:[['#4f9a3c', .25]] },                                                          // saplings
+};
+const ssfStage = st => SSF_STAGES[((st.recipe && st.recipe.id) || '').match(/gravel|sand|stone_dust|dirt/)?.[0] || 'gravel'];
+const ssfRand = (a, b) => { const s = Math.sin(a*12.9898 + b*78.233)*43758.5453; return s - Math.floor(s); };
+// which finds this block gives. The game rolls the true chances when the block is done and doesn't say beforehand, so
+// this is a picture of the rolling, at twice the odds so that a short look at the machine still shows something.
+function ssfFinds(st){
+  const s = ssfStage(st), out = [];
+  s.finds.forEach(([col, ch], i) => { if (ssfRand((st.blk || 0) + 1, i + 1) < Math.min(.8, ch*2 + .05)) out.push({ col, i }); });
+  return out;
+}
+// where a find is, as it goes from the heap down the mesh, the spout and into the crate
+function ssfFindPos(i, p){
+  const p0 = .22 + .09*i, u = (p - p0)/.33, y = 39 + [-7, 7, -2, 4][i % 4];
+  if (u < 0) return null;
+  if (u < 1) return { on:'mesh', at:[34 + 26*u, y, SSF_MESHZ + 1.1] };
+  const v = (u - 1)*.33/.1, S = SSF_SPOUT;
+  if (v < 1){ const x = 60 + (S.x1 - 60)*v; return { on: x < 70 ? 'upper' : 'lower', at:[x, 39 + (y - 39)*.8, S.z0 + (S.z1 - S.z0)*v + 1.2] }; }
+  const w = (v - 1)*.1/.05;
+  if (w < 1) return { on:'crate', at:[S.x1 + 3*w, 39 + (y - 39)*.8, S.z1 + 1.2 - (S.z1 - .4)*w*w] };
+  return null;
+}
+function ssfFlow(st){
+  const p = st.progress || 0, on = !!st.active, o = { p, on, drop: on && p < .1, sieve: on && p >= .08 && p < .82 && !!st.running };
+  const left = 1 - gtClamp((p - .1)/.7);
+  o.heapH = on && p >= .1 && p < .8 ? .8 + 9.2*left : 0;
+  o.heapR = 5 + 6*(1 - left);
+  o.heapX = 24 + 12*(1 - left);
+  return o;
+}
+// the tray's angle from the cam: its top touches the cross bar's underside
+const ssfCamAng = st => (st.t || 0)*9;
+const ssfCamC = st => { const c = SSF_CAM, a = ssfCamAng(st); return [c.x + c.e*Math.cos(a), c.z + c.e*Math.sin(a)]; };
+const ssfAngle = st => Math.asin((ssfCamC(st)[1] + SSF_CAM.r - 44.5)/40);
+const ssfTf = a => p => gtTilt(p, SSF_PIV.x, SSF_PIV.z, a);
+// a box in the tray's frame, tilted with it
+function ssfTBox(T, x0, y0, z0, x1, y1, z1, m, w = .8){
+  const c = (x, y, z) => T([x, y, z]), o = T([0, 0, 0]), dir = v => sub(T(v), o);
+  const F = [[[0,1,0], [[x0,y1,z0],[x1,y1,z0],[x1,y1,z1],[x0,y1,z1]]], [[1,0,0], [[x1,y0,z0],[x1,y1,z0],[x1,y1,z1],[x1,y0,z1]]],
+    [[0,-1,0], [[x0,y0,z0],[x1,y0,z0],[x1,y0,z1],[x0,y0,z1]]], [[-1,0,0], [[x0,y0,z0],[x0,y1,z0],[x0,y1,z1],[x0,y0,z1]]],
+    [[0,0,1], [[x0,y0,z1],[x1,y0,z1],[x1,y1,z1],[x0,y1,z1]]], [[0,0,-1], [[x0,y0,z0],[x1,y0,z0],[x1,y1,z0],[x0,y1,z0]]]];
+  return F.map(([n, q]) => { const d = dir(n); return facing(d) ? shape(q.map(p => c(...p)), toneI(d, m), w) : ''; }).join('');
+}
+
+/* ---------- cobblestone: rows of irregular stones on a face, the same every time ---------- */
+function ssfStones(plane, u0, u1, v0, v1, base, seed){
+  let fills = '', lines = '';
+  for (let v = v0, row = 0; v < v1 - .5; v += 13, row++){
+    const vt = Math.min(v1, v + 13);
+    for (let u = u0 - (row % 2 ? 8 : 0), k = 0; u < u1 - .5; u += 15 + 6*ssfRand(row + seed, k), k++){
+      const a = Math.max(u0, u), b = Math.min(u1, u + 15 + 6*ssfRand(row + seed, k));
+      if (b - a < 3 || vt - v < 2.5) continue;
+      const pts = on(plane, rrUV(a + 1, v + .9, b - 1, vt - .9, 2.2, 2)), shade = ssfRand(seed + k, row + 3);
+      fills += fill(pd(pts), shade < .33 ? base.l : shade < .66 ? mix(base.l, base.m, .5) : base.m);
+      lines += pd(pts);
+    }
+  }
+  return fills + `<path d="${lines}" fill="none" stroke="${INK}" stroke-width=".8" opacity=".55"/>`;
+}
+function ssfWall(x0, y0, x1, y1, z1, seed){
+  const m = SSF_STONE; let s = box(x0, y0, 0, x1, y1, z1, m, tone, 1.5);
+  if (facing([1,0,0])) s += ssfStones(PX(x1 + .15), y0, y1, 0, z1, m, seed);
+  if (facing([-1,0,0])) s += ssfStones(PX(x0 - .15), y0, y1, 0, z1, m, seed + 1);
+  if (facing([0,1,0])) s += ssfStones(PY(y1 + .15), x0, x1, 0, z1, m, seed + 2);
+  if (facing([0,-1,0])) s += ssfStones(PY(y0 - .15), x0, x1, 0, z1, m, seed + 3);
+  if (facing([0,0,1])) s += ssfStones(PZ(z1 + .15), x0, x1, y0, y1, m, seed + 4);
+  return s;
+}
+
+/* ---------- the masonry: everything see-through fades ---------- */
+function ssfShell(st){
+  const W = SSF_W, Z = SSF_WALL, F = SSF_FRONT, parts = [];
+  parts.push({ box:[[2, 14, 0], [9, 64, Z]], svg: ssfWall(2, 14, 9, 64, Z, 11) });
+  let fr = ssfWall(62, 14, W, 64, F, 21);
+  parts.push({ box:[[62, 14, 0], [W, 64, F]], svg: fr });
+  parts.push({ box:[[2, 6, 0], [W, 14, Z]], svg: ssfWall(2, 6, W, 14, Z, 31) });
+  let sd = ssfWall(2, 64, W, 72, Z, 41);
+  if (facing([0,1,0])) sd += shape(on(PY(72.3), rrUV(48, 8, 67, 19, 1.5)), SSF_WOOD.l, 1.1) + txY(57.5, 72.4, 11.6, 'SIFTER', 4.2, INK, 800);
+  parts.push({ box:[[2, 64, 0], [W, 72, Z]], svg: sd });
+  return parts;
+}
+// the well's floor, its drain and the little heap of fines going down it
+function ssfFloor(st, flow){
+  const col = ssfStage(st).col, A = on(PZ(4.5), ellUV(30, 39, 7, 7, 18));
+  let s = box(9, 14, 0, 62, 64, 4, matOf('#918b80'), toneI, .9) + fill(pd(on(PZ(4.05), ellUV(30, 39, 6.2, 6.2, 18))), GT.RECESS) + ink(pd(on(PZ(4.05), ellUV(30, 39, 6.2, 6.2, 18))), 1);
+  if (flow.on){ const h = 1 + 2.5*Math.sin(Math.PI*gtClamp(flow.p));
+    const a = on(PZ(4.1), ellUV(30, 39, 5, 5, 14)), b = on(PZ(4.1 + h), ellUV(30, 39, 1.2, 1.2, 14)), mm = matOf(col);
+    s += loft(a, b, n => toneI(n, mm)) + fill(pd(b), mm.l); }
+  return { box:[[9, 14, 0], [62, 64, 4.2]], svg: s };
+}
+
+/* ---------- the tray, rocking; its contents sorted in its own frame ---------- */
+function ssfTray(st, flow){
+  const a = ssfAngle(st), T = ssfTf(a), W = SSF_WOOD, stage = ssfStage(st), parts = [], put = (b, svg) => parts.push({ box: b, svg });
+  const tb = (x0, y0, z0, x1, y1, z1, m, w) => put([[x0, y0, z0], [x1, y1, z1]], ssfTBox(T, x0, y0, z0, x1, y1, z1, m, w));
+  tb(12, 17, 45.5, 60, 19, 50, W, 1);
+  tb(12, 59, 45.5, 60, 61, 50, W, 1);
+  tb(12, 19, 45.5, 14, 59, 50, W, 1);
+  // the mesh: wires across a faint dark floor, so the cam shows through it
+  const zm = SSF_MESHZ, q = [[14, 19, zm], [60, 19, zm], [60, 59, zm], [14, 59, zm]].map(T);
+  let wires = ''; for (let x = 16; x < 60; x += 3) wires += pd([T([x, 19, zm]), T([x, 59, zm])], false);
+  for (let y = 21; y < 59; y += 3) wires += pd([T([14, y, zm]), T([60, y, zm])], false);
+  put([[14, 19, zm - .1], [60, 59, zm]], fill(pd(q), '#2b2523', 'opacity=".32"') + `<path d="${wires}" fill="none" stroke="#d6d1c4" stroke-width=".55"/>` + ink(pd(q), .9));
+  // the block landing, or the heap it has become
+  const mm = matOf(stage.col);
+  if (flow.on && flow.p >= .1 && flow.heapH > 0){ const r = flow.heapR, x = flow.heapX, h = flow.heapH;
+    const A = on(PZ(zm), ellUV(x, 39, r, r*.85, 12)).map(T), B = on(PZ(zm + h), ellUV(x, 39, r*.45, r*.38, 12)).map(T);
+    let dots = ''; for (let i = 0; i < 7; i++) dots += pd([T([x + (ssfRand(i, 3) - .5)*r*.8, 39 + (ssfRand(i, 5) - .5)*r*.7, zm + h + .05]), T([x + (ssfRand(i, 3) - .5)*r*.8 + .3, 39 + (ssfRand(i, 5) - .5)*r*.7, zm + h + .05])], false);
+    put([[x - r, 39 - r, zm], [x + r, 39 + r, zm + h]], loft(A, B, n => toneI(n, mm)) + fill(pd(B), mm.l) + hullInk([...A, ...B], 1.1)
+      + `<path d="${dots}" fill="none" stroke="${mm.d}" stroke-width="1.1" stroke-linecap="round"/>`); }
+  // finds, walking down the mesh
+  for (const fd of ssfFinds(st)){ const pos = flow.on ? ssfFindPos(fd.i, flow.p) : null;
+    if (pos && pos.on === 'mesh'){ const [x, y, z] = pos.at; put([[x - 2, y - 2, zm], [x + 2, y + 2, zm + 3]], gtLump(T([x, y, z]), .6, null, matOf(fd.col))); } }
+  let s = ssfSort(parts);
+  if (flow.drop){ const u = (flow.p/.1)**2, zs = T([24, 39, zm])[2], z = 67 + (zs - 67)*u;   // the falling block is under the neck, so it goes first
+    s = box(19, 34, z, 29, 44, z + 10, mm, toneI, 1) + s; }
+  return { box:[[12, 17, 54.5], [60, 61, 61.8]], ext:[[12, 17, 45], [60, 61, 61.8]], svg: s };
+}
+function ssfFines(st, flow){
+  if (!flow.sieve) return null;
+  const col = ssfStage(st).col, t = st.t || 0, T = ssfTf(ssfAngle(st)); let s = '';
+  for (let i = 0; i < 16; i++){ const u = (t*1.3 + i/16) % 1, sx = flow.heapX + (ssfRand(i, 1) - .5)*22, sy = 39 + (ssfRand(i, 2) - .5)*22;
+    const top = T([sx, sy, SSF_MESHZ])[2], z = top + (5 - top)*u*u, [X, Y] = P(sx, sy, z);
+    s += `<circle cx="${f(X)}" cy="${f(Y)}" r="1.2" fill="${col}" stroke="${INK}" stroke-width=".4"/>`; }
+  return { box:[[14, 19, 4.3], [58, 59, 42]], svg: s };
+}
+
+/* ---------- the drive: cam shaft, cam, gears, drum, crank, rope, pulley, weight ---------- */
+function ssfGearPts(cx, cz, r, n, ang, tooth){
+  const pts = [];
+  for (let i = 0; i < n*2; i++){ const a0 = ang + i*Math.PI/n, rr = i % 2 ? r - tooth/2 : r + tooth/2, w = .34*Math.PI/n;
+    pts.push([cx + rr*Math.cos(a0 - w), cz + rr*Math.sin(a0 - w)], [cx + rr*Math.cos(a0 + w), cz + rr*Math.sin(a0 + w)]); }
+  return pts;
+}
+function ssfGear(cx, cz, y0, y1, r, n, ang, m, spokes){
+  const nearY = facing([0,1,0]) ? y1 : y0, farY = nearY === y1 ? y0 : y1, uv = ssfGearPts(cx, cz, r, n, ang, 1.8);
+  const near = on(PY(nearY), uv), far = on(PY(farY), uv);
+  let s = loft(far, near, nn => toneI(nn, m)) + shape(near, toneI([0, nearY === y1 ? 1 : -1, 0], m), 1);
+  if (spokes){ let d = ''; for (let i = 0; i < spokes; i++){ const b = ang + i*2*Math.PI/spokes; d += pd([[cx + 2*Math.cos(b), nearY, cz + 2*Math.sin(b)], [cx + (r - 2.5)*Math.cos(b), nearY, cz + (r - 2.5)*Math.sin(b)]], false); }
+    s += `<path d="${d}" fill="none" stroke="${INK}" stroke-width="1"/>`; }
+  return s;
+}
+const ssfRope = (pts) => { const d = pd(pts, false);
+  return `<path d="${d}" fill="none" stroke="${INK}" stroke-width="2" stroke-linecap="round"/><path d="${d}" fill="none" stroke="#d2b98a" stroke-width="1" stroke-linecap="round"/>`; };
+const ssfWeightZ = st => st.active ? 66 - 58*gtClamp(st.progress || 0) : 66;
+function ssfDrive(st, flow){
+  const parts = [], put = (b, svg) => parts.push({ box: b, svg }), W = SSF_WOOD, I = GT.IRON, D = SSF_DARKW;
+  const c = SSF_CAM, g = SSF_GEAR, th = ssfCamAng(st), gth = -th/4, [cx, cz] = ssfCamC(st);
+  // pivot bar across the walls
+  put([[SSF_PIV.x - 1.5, 6, SSF_PIV.z - 1.5], [SSF_PIV.x + 1.5, 72, SSF_PIV.z + 1.5]], rod([SSF_PIV.x, 6, SSF_PIV.z], [SSF_PIV.x, 72, SSF_PIV.z], 1.5, D, toneI, .9));
+  // cam shaft, in pieces either side of the cam
+  put([[c.x - 1.2, 7, c.z - 1.2], [c.x + 1.2, c.y0, c.z + 1.2]], rod([c.x, 7, c.z], [c.x, c.y0, c.z], 1.2, I, toneI, .8));
+  put([[c.x - 1.2, c.y1, c.z - 1.2], [c.x + 1.2, 73, c.z + 1.2]], rod([c.x, c.y1, c.z], [c.x, 73, c.z], 1.2, I, toneI, .8));
+  { const ny = facing([0,1,0]) ? c.y1 : c.y0;
+    put([[c.x - 8.5, c.y0, c.z - 8.5], [c.x + 8.5, c.y1, c.z + 8.5]], rod([cx, c.y0, cz], [cx, c.y1, cz], c.r, D, toneI, 1.1, c.r, 26) + shape(on(PY(ny), ellUV(c.x, c.z, 1.4, 1.4, 10)), I.m, .7)); }
+  // its bearing blocks on the wall tops
+  for (const [y0, y1] of [[7, 12], [66, 71]]) put([[c.x - 2.5, y0, 44], [c.x + 2.5, y1, 49]], box(c.x - 2.5, y0, 44, c.x + 2.5, y1, 49, D, toneI, 1));
+  // the pinion and the big spur gear, just outside the wall
+  put([[c.x - 4.4, 73, c.z - 4.4], [c.x + 4.4, 76, c.z + 4.4]], ssfGear(c.x, c.z, 73, 76, 3.3, 7, th, GT.IRON));
+  put([[g.x - 13, 73, g.z - 13], [g.x + 13, 76, g.z + 13]], ssfGear(g.x, g.z, 73, 76, g.r, 28, gth, W, 4));
+  // its axle: a bearing block on the wall, then the drum and the crank on the end
+  put([[g.x - 2.5, 68, 44], [g.x + 2.5, 72, 49]], box(g.x - 2.5, 68, 44, g.x + 2.5, 72, 49, D, toneI, 1));
+  put([[g.x - 1.2, 72, g.z - 1.2], [g.x + 1.2, 73, g.z + 1.2]], rod([g.x, 72, g.z], [g.x, 73, g.z], 1.2, I, toneI, .7));
+  const ny = facing([0,1,0]) ? 84 : 76;
+  const flanges = [[76, 77], [83, 84]].map(([a, b]) => rod([g.x, a, g.z], [g.x, b, g.z], 6.6, W, toneI, .8, 6.6, 22));
+  const coil = rod([g.x, 77, g.z], [g.x, 83, g.z], 5, { l:'#e4cfa2', m:'#d2b98a', d:'#8f7a52' }, toneI, .9, 5, 22);
+  put([[g.x - 6.6, 76, g.z - 6.6], [g.x + 6.6, 84, g.z + 6.6]], facing([0,1,0]) ? flanges[0] + coil + flanges[1] : flanges[1] + coil + flanges[0]);
+  // the crank: an arm off the axle with a grip on its end
+  const ca = gth, hx = g.x + 8*Math.cos(ca), hz = g.z + 8*Math.sin(ca);
+  put([[g.x - 9, 84, g.z - 9], [g.x + 9, 87, g.z + 9]], act('valve', byDepth([
+    { box:[[Math.min(g.x, hx) - 1, 84, Math.min(g.z, hz) - 1], [Math.max(g.x, hx) + 1, 85.2, Math.max(g.z, hz) + 1]], svg: rod([g.x, 84.6, g.z], [hx, 84.6, hz], .9, I, toneI, .8) },
+    { box:[[hx - 1.1, 85.2, hz - 1.1], [hx + 1.1, 87, hz + 1.1]], svg: rod([hx, 85.2, hz], [hx, 87, hz], 1.1, W, toneI, .8) } ])));
+  // the rope: drum up to the pulley, pulley down to the weight
+  const zw = ssfWeightZ(st), PZ0 = 93, PY0 = 86.5, PR = 5.5, wTop = zw + 11;
+  put([[g.x - .6, 80.5, g.z + 5], [g.x + .6, 81.5, PZ0]], ssfRope([[g.x, 81, g.z + 5], [g.x, 81, PZ0]]));
+  put([[g.x - .6, 92, wTop], [g.x + .6, 92.8, PZ0]], ssfRope([[g.x, 92, wTop], [g.x, 92, PZ0]]));
+  // the pulley in its fork, hanging from the gallows beam
+  { const pa = gth*2, nearX = facing([1,0,0]) ? g.x + 1.2 : g.x - 1.2; let sp = '';
+    for (let i = 0; i < 3; i++){ const b = pa + i*2*Math.PI/3; sp += pd([[nearX, PY0 + 1*Math.cos(b), PZ0 + 1*Math.sin(b)], [nearX, PY0 + 4*Math.cos(b), PZ0 + 4*Math.sin(b)]], false); }
+    put([[g.x - 2.2, PY0 - PR, PZ0 - PR], [g.x + 2.2, PY0 + PR, 100]], box(g.x - 2.2, PY0 - .7, PZ0, g.x - 1.4, PY0 + .7, 100, I, toneI, .6)
+      + cylX(g.x - 1.2, g.x + 1.2, PY0, PZ0, PR, W, toneI, 1, 22) + `<path d="${sp}" fill="none" stroke="${INK}" stroke-width=".9"/>`
+      + ssfRope(arcUV(PY0, PZ0, PR, 0, 180, 10).map(([u, v]) => [g.x, u, v]))
+      + box(g.x + 1.4, PY0 - .7, PZ0, g.x + 2.2, PY0 + .7, 100, I, toneI, .6)); }
+  // the weight: a dressed stone with an iron eye
+  { const x0 = g.x - 5, x1 = g.x + 5, y0 = 87.5, y1 = 96.5, z0 = zw, z1 = zw + 10;
+    let s = box(x0, y0, z0, x1, y1, z1, SSF_STONE, tone, 1.5);
+    if (facing([0,1,0])) s += ssfStones(PY(y1 + .1), x0, x1, z0, z1, SSF_STONE, 61);
+    if (facing([1,0,0])) s += ssfStones(PX(x1 + .1), y0, y1, z0, z1, SSF_STONE, 62);
+    s += rod([g.x, 92, z1], [g.x, 92, z1 + 1], 1.1, I, toneI, .7);
+    put([[x0, y0, z0], [x1, y1, z1 + 1]], s); }
+  // the frame that holds the hopper and the pulley
+  for (const [x0, y0, x1, y1] of [[11, 8, 15, 11], [11, 65, 15, 68], [31, 8, 35, 11]]) put([[x0, y0, 44], [x1, y1, 64]], box(x0, y0, 44, x1, y1, 64, W, tone, 1.1));
+  put([[11, 8, 64], [15, 68, 68]], box(11, 8, 64, 15, 68, 68, W, tone, 1.1));
+  put([[31, 8, 64], [35, 65, 68]], box(31, 8, 64, 35, 65, 68, W, tone, 1.1));
+  put([[31, 65, 44], [35, 68, 100]], box(31, 65, 44, 35, 68, 100, W, tone, 1.2));
+  put([[31, 97, 0], [35, 100, 100]], box(31, 97, 0, 35, 100, 100, W, tone, 1.2));
+  put([[31, 65, 100], [35, 100, SSF_TOP]], box(31, 65, 100, 35, 100, SSF_TOP, W, tone, 1.3));
+  return parts;
+}
+
+/* ---------- hopper and neck ---------- */
+function ssfHopper(st, flow){
+  const zt = 68, h = 16, bot = [13, 28, 33, 50], top = [6, 22, 40, 56], W = SSF_WOOD, mm = matOf(ssfStage(st).col);
+  const A = on(PZ(zt), rectUV(...bot)), B = on(PZ(zt + h), rectUV(...top));
+  let inner = fill(pd(on(PZ(zt + .2), rectUV(...bot))), GT.RECESS);
+  if (!flow.drop) inner += shape(on(PZ(zt + .4), rectUV(14, 29, 32, 49)), SSF_DARKW.m, .9) + ink(pd([[14, 39, zt + .45], [32, 39, zt + .45]], false), .6);
+  const blocks = [[18, 34], [28, 34], [18, 44], [28, 44]].slice(0, Math.min(4, st.input | 0)).map(([x, y]) => ({ box:[[x - 4, y - 4, zt + .5], [x + 4, y + 4, zt + 8.5]], svg: box(x - 4, y - 4, zt + .5, x + 4, y + 4, zt + 8.5, mm, toneI, .9) }));
+  inner += byDepth(blocks);
+  return openShell(A, B, n => toneI(n, W), inner) + ink(pd(B), 1.6) + hullInk([...A, ...B], 2.2);
+}
+
+/* ---------- spout and crate ---------- */
+function ssfSpout(st, flow){
+  const S = SSF_SPOUT, zAt = x => S.z0 + (S.z1 - S.z0)*(x - 60)/(S.x1 - 60), M = SSF_WOOD, nn = norm([S.z0 - S.z1, 0, S.x1 - 60]);
+  const seg = (xa, xb, which) => {
+    const plate = shape([[xa, S.y0, zAt(xa)], [xb, S.y0, zAt(xb)], [xb, S.y1, zAt(xb)], [xa, S.y1, zAt(xa)]], tone(nn, M), .9)
+      + `<path d="${pd([[xa, 35.7, zAt(xa)], [xb, 35.7, zAt(xb)]], false)}${pd([[xa, 42.3, zAt(xa)], [xb, 42.3, zAt(xb)]], false)}" fill="none" stroke="${INK}" stroke-width=".7" opacity=".55"/>`;
+    const lip = y => shape([[xa, y, zAt(xa)], [xb, y, zAt(xb)], [xb, y, zAt(xb) + 3], [xa, y, zAt(xa) + 3]], tone([0, y > 39 ? 1 : -1, 0], M), .9);
+    let lumps = '';
+    if (flow.on) for (const fd of ssfFinds(st)){ const pos = ssfFindPos(fd.i, flow.p); if (pos && pos.on === which) lumps += gtLump(pos.at, .6, null, matOf(fd.col)); }
+    const near = CAM_V[1] >= 0 ? S.y1 : S.y0, far = near === S.y1 ? S.y0 : S.y1;
+    return { box:[[xa, S.y0, zAt(xb)], [xb, S.y1, zAt(xa) + 3]], svg: lip(far) + plate + lumps + lip(near) };
+  };
+  return [seg(60, 70, 'upper'), seg(70, S.x1, 'lower')];
+}
+function ssfCrate(st, flow){
+  const [x0, y0, x1, y1] = SSF_CRATE, h = SSF_CRATE_H, A = on(PZ(0), rectUV(x0, y0, x1, y1)), B = on(PZ(h), rectUV(x0, y0, x1, y1)), W = SSF_WOOD;
+  let inner = fill(pd(on(PZ(.6), rectUV(x0 + .6, y0 + .6, x1 - .6, y1 - .6))), W.d);
+  const fs = ssfStage(st).finds, items = [];
+  for (let i = 0; i < Math.min(10, st.output | 0); i++){ const at = [x0 + 5 + (i % 2)*11, y0 + 5 + Math.floor(i/2)*6, 2 + (i % 3)*.5];
+    items.push({ box:[[at[0] - 2.6, at[1] - 2.6, .6], [at[0] + 2.6, at[1] + 2.6, at[2] + 2]], svg: gtLump(at, .85, null, matOf(fs[i % fs.length][0])) }); }
+  if (flow.on) for (const fd of ssfFinds(st)){ const pos = ssfFindPos(fd.i, flow.p);
+    if (pos && pos.on === 'crate'){ const a = pos.at; items.push({ box:[[a[0] - 2, a[1] - 2, a[2] - 2], [a[0] + 2, a[1] + 2, a[2] + 2]], svg: gtLump(a, .6, null, matOf(fd.col)) }); } }
+  inner += byDepth(items);
+  let planks = '';
+  for (const z of [3.5, 7]){ if (facing([0,1,0])) planks += pd([[x0, y1 + .05, z], [x1, y1 + .05, z]], false); if (facing([1,0,0])) planks += pd([[x1 + .05, y0, z], [x1 + .05, y1, z]], false);
+    if (facing([0,-1,0])) planks += pd([[x0, y0 - .05, z], [x1, y0 - .05, z]], false); if (facing([-1,0,0])) planks += pd([[x0 - .05, y0, z], [x0 - .05, y1, z]], false); }
+  return openShell(A, B, n => toneI(n, W), inner) + `<path d="${planks}" fill="none" stroke="${INK}" stroke-width=".7" opacity=".6"/>` + ink(pd(B), 1.3) + hullInk([...A, ...B], 1.8);
+}
+
+/* ---------- scene ---------- */
+function scene(st, m){
+  // a new block whenever progress starts again: it picks which finds this one gives
+  if ((st.progress || 0) < (st.lastP || 0) - .2) st.blk = (st.blk || 0) + 1;
+  st.lastP = st.progress || 0;
+  const k = ease(st.xr || 0), fade = svg => k > 0 ? `<g opacity="${f(1 - .75*k)}">${svg}</g>` : svg, flow = ssfFlow(st), bounds = [0, 99, 0, 100, 0, SSF_TOP];
+  let s = castShadow([[2, 6, 0], [70, 6, 0], [70, 72, 0], [2, 72, 0], [2, 6, SSF_WALL], [70, 6, SSF_WALL], [70, 72, SSF_WALL], [2, 72, SSF_WALL],
+    [6, 22, 70], [40, 56, 70], [33, 100, 0], [35, 100, 30], [96, 56, 0], [96, 22, 0]]).replace('<path ', `<path opacity="${f(1 - .75*k)}" `);
+  const shell = ssfShell(st);
+  const parts = [ssfFloor(st, flow), ssfTray(st, flow), ssfFines(st, flow), ...ssfDrive(st, flow),
+    { box:[[18, 33, 62], [30, 45, 68]], svg: box(18, 33, 62, 30, 45, 68, SSF_DARKW, tone, 1.1) },
+    { box:[[6, 22, 68], [40, 56, 84]], svg: act('hopper', fade(ssfHopper(st, flow))) },
+    ...ssfSpout(st, flow), { box:[[SSF_CRATE[0], SSF_CRATE[1], 0], [SSF_CRATE[2], SSF_CRATE[3], SSF_CRATE_H]], svg: ssfCrate(st, flow) }];
+  if (k > 0) s += `<g opacity="${f(1 - .78*k)}">${ssfSort(shell)}</g>` + ssfSort(parts);
+  else s += ssfSort([...shell, ...parts]);
+  const run = !!st.running, c = SSF_CAM, g = SSF_GEAR;
+  if (k > .6) s += xrCallouts([
+    { at: [40, 39, 50], text: 'WIRE MESH', on: run },
+    { at: [c.x, c.y0, c.z + c.r], text: 'CAM', on: run },
+    { at: [c.x, 22, c.z], text: 'CAM SHAFT', on: run },
+    { at: [SSF_PIV.x, 66, SSF_PIV.z + 1], text: 'PIVOT BAR', on: run },
+    { at: [30, 39, 4], text: 'WASTE DRAIN', on: flow.sieve },
+    { at: [c.x, 76, c.z + 4], text: 'PINION', on: run },
+    { at: [g.x + 9, 76, g.z - 9], text: 'SPUR GEAR', on: run },
+    { at: [g.x, 80, g.z + 6], text: 'ROPE DRUM', on: run },
+    { at: [g.x, 90, 96], text: 'PULLEY', on: run },
+    { at: [g.x + 5, 92, ssfWeightZ(st) + 8], text: 'WEIGHT', on: run },
+    { at: [78, 39, 28], text: 'FINDS SPOUT', on: flow.on },
+    { at: [23, 39, 80], text: 'HOPPER', on: flow.drop } ], bounds);
+  else s += xrCallouts([
+    { at: [23, 22, 84], text: 'HOPPER', on: flow.drop },
+    { at: [44, 39, 52], text: 'MESH TRAY', on: run },
+    ...(facing([0,1,0]) ? [{ at: [g.x, 87, g.z + 3], text: 'CRANK', on: false }, { at: [g.x + 5, 96, ssfWeightZ(st) + 8], text: 'WEIGHT', on: run }] : []),
+    { at: [33, 82, SSF_TOP], text: 'GALLOWS', on: false },
+    { at: [SSF_CRATE[2], 40, SSF_CRATE_H], text: 'CATCH CRATE', on: (st.output || 0) > 0 } ], bounds);
+  return s;
+}
+
+gtMachine({
+  fig:'C2', title:'Stone Sifter', size:[99, 101, SSF_TOP], center:[50, 50], scene, demoSeconds: 7,
+  recipes:[{ id:'sift_gravel', name:'Sift Gravel' }, { id:'sift_sand', name:'Sift Sand' }, { id:'sift_stone_dust', name:'Sift Dust' }, { id:'sift_dirt', name:'Sift Dirt' }],
+  toggleLabel:'Release weight', loadLabel:'Load blocks', inLabel:'Blocks', outLabel:'Found',
+  params: (s, q) => { if (q.has('blk')) s.blk = +q.get('blk'); },
+  tile:[[-3, -1, 0], [99, -1, 0], [99, 101, 0], [-3, 101, 0]],
+});
+</script>
+<script src="cf-tail.js"></script>
+</body></html>

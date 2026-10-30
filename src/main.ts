@@ -1,4 +1,4 @@
-// gtjs: gather, craft at the workbench, build on the floor, power it with steam and EU, follow the quest book to MV.
+// gtjs: gather cobblestone, crush and sift it, craft at the workbench, build on the floor, power it with steam and EU, follow the quest book to MV.
 import { CONDUITS, FINAL_QUEST, GATHERABLE, MACHINES, itemName } from './sim/data';
 import { craft } from './sim/craft';
 import { craftNow } from './sim/autocraft';

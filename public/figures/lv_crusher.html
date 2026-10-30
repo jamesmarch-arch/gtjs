@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LV Crusher</title>
+<script src="cf-head.js"></script></head><body>
+<script src="core.js"></script>
+<script src="gt-bridge.js"></script>
+<script src="gt-parts.js"></script>
+<script src="gt-lv.js"></script>
+<script>
+/* LV Crusher (gtjs, LV): a small jaw crusher on electricity. One stage per run, one for one:
+   cobblestone -> gravel -> sand -> stone dust. (The macerator next to it has rollers; this one chews.)
+
+   How it works (truth first)
+   1. Stone drops from the hopper on the roof down a throat into the V between two toothed jaws. The fixed jaw is bolted
+      to the frame. The swing jaw hangs from an eccentric shaft at its top and rests on a toggle plate at its foot.
+   2. An electric motor at the back drives a V-belt to a pulley on the eccentric shaft. A heavy flywheel on the shaft's
+      other end carries it through each bite. Every turn the eccentric rocks the swing jaw toward the fixed jaw and away.
+      A spring on a tie rod keeps the jaw's foot pressed against the toggle.
+   3. Each bite breaks the stone. It drops lower in the V, where the gap is narrower, and is bitten again, until it is small
+      enough to fall out of the gap at the bottom.
+   4. It lands on a chute that runs forward under the jaws to the output slot, and slides out into the tray.
+   Where the stone is: hopper -> throat -> jaws (top to bottom of the V) -> gap -> chute -> slot -> tray.
+   Where the power is: cable -> socket -> control board -> motor -> belt -> eccentric shaft -> swing jaw.
+
+   Parts
+   OUTSIDE  the LV case (see gt-lv.js) . window on the face, with the jaws seen end-on, the toggle, the spring and the
+            red flywheel turning in front . hopper on the roof
+   INSIDE   motor with its base and pulley . V-belt . rear pulley . eccentric shaft . two bearing pedestals . flywheel .
+            swing jaw . fixed jaw and its backing block . toggle plate . toggle seat . frame cheeks . throat . chute
+
+   Contact checks (numbers; everything below is in y, z unless it says x)
+   - shaft at E (24, 46), eccentric throw 1.5, x 22..72. Flywheel r 9 at x 69..72: y 15..33, z 37..55 inside the window
+     (y 12..68, z 18..58). Rear pulley r 8 at x 24..28.
+   - swing jaw: (pin -4, +6), (pin +10, +12) on top; foot (b, 24) to (b - 6, 24), b = 34 +- 1.2. x 34..66.
+   - fixed jaw: (52, 60), (62, 60), (62, 24), (45, 24). So the mouth is 18 wide at the top and the gap 7 to 9.5 at the foot.
+   - toggle z 24 from the seat (y 17) to the swing jaw's foot (b - 6). Seat y 12..17, z 12..30, on the cheek.
+   - cheeks y 8..30 and y 50..72, z 6..12, x 30..68; the chute runs between them, y 32..46.
+   - pedestals y 20..28, z 12..43.5 hold the shaft (bottom z 43.5) at x 30..33 and x 66..68.
+   - chute from under the gap (x 40, z 22) to the slot (x 74, z 10.5); the slot is z 8.5..12.5.
+   - hopper bottom x 40..58, y 34..52 at z 84 over the throat (x 42..58, y 38..50), down to the jaws' top (z 60).
+   - motor r 7 at y 58, z 18, x 8..22 with its pulley x 22..28; the belt runs in the plane x 26 to the rear pulley.
+*/
+const LCR = { E: [24, 46], ex: 1.5, fly: 9, footZ: 24, b0: 34, bAmp: 1.2, fixed: [[52, 60], [62, 60], [62, 24], [45, 24]], win: [12, 18, 68, 58],
+  hop: { bot: [40, 34, 58, 52], top: [34, 28, 64, 58], h: 12 }, speed: 7 };
+const LCR_JAW = { l:'#8c959b', m:'#667077', d:'#343a3f' };
+const LCR_TOOTH = '#b5bcc1';
+const LCR_MAT = { cobblestone:{ col:'#8f8b84', s:1 }, gravel:{ col:'#a2968a', s:.65 }, sand:{ col:'#e8d59c', s:.3 }, stone_dust:{ col:'#e6e2d8', s:.15 } };
+const LCR_NEXT = { cobblestone:'gravel', gravel:'sand', sand:'stone_dust' };
+const lcrFrom = st => ((st.recipe && st.recipe.id) || '').match(/cobblestone|gravel|sand/)?.[0] || 'cobblestone';
+const lcrMats = st => { const a = lcrFrom(st); return [LCR_MAT[a], LCR_MAT[LCR_NEXT[a]]]; };
+const lcrProduct = st => { const n = LCR_NEXT[lcrFrom(st)]; return { kind: n === 'gravel' ? 'crushed' : 'dust', col: LCR_MAT[n].col }; };
+
+/* ---------- the jaws, from the clock ---------- */
+function lcrPose(st){
+  const A = (st.t || 0)*LCR.speed + .6, [ey, ez] = LCR.E, py = ey + LCR.ex*Math.cos(A), pz = ez + LCR.ex*Math.sin(A), b = LCR.b0 + LCR.bAmp*Math.cos(A);
+  return { A, py, pz, b, swing: [[py - 4, pz + 6], [py + 10, pz + 12], [b, LCR.footZ], [b - 6, LCR.footZ]] };
+}
+// the V: where the two inner faces are at height z
+const lcrInner = (pose, z) => { const [ , a, b] = pose.swing, u = (z - b[1])/(a[1] - b[1]), [fa, , , fb] = [LCR.fixed[0], 0, 0, LCR.fixed[3]], v = (z - fb[1])/(fa[1] - fb[1]);
+  return [b[0] + (a[0] - b[0])*u, fb[0] + (fa[0] - fb[0])*v]; };
+// the stone in the jaws: y, z, size, colour for each piece
+function lcrStones(st, pose){
+  if (!st.active) return [];
+  const p = st.progress || 0, [from, to] = lcrMats(st), o = [], N = 5;
+  if (p > .86) return o;
+  const feed = gtClamp(p/.14), drain = gtClamp((.86 - p)/.12);
+  for (let i = 0; i < N; i++){
+    const u = (p*5 + i/N) % 1;                                 // 0 at the mouth, 1 at the gap
+    if (i/N > feed || (1 - u) > drain + .2 && drain < 1) continue;
+    const z = 57 - 30*u, [a, c] = lcrInner(pose, z), room = c - a, y = (a + c)/2 + (i % 2 ? .6 : -.6);
+    const size = Math.min(room*.42, (from.s + (to.s - from.s)*u)*(5 - 2.4*u));
+    o.push({ y, z, r: Math.max(.7, size), col: mix(from.col, to.col, u) });
+  }
+  return o;
+}
+
+/* ---------- the face: what you see through the window ---------- */
+function lcrTeeth(a, b, n, side){  // a sawtooth down a jaw's inner face, as a closed shape
+  const pts = [], dy = b[0] - a[0], dz = b[1] - a[1], len = Math.hypot(dy, dz), nx = side*(-dz)/len, nz = side*dy/len;
+  for (let i = 0; i <= n; i++){ const u = i/n, x = a[0] + dy*u, z = a[1] + dz*u; pts.push([x, z]); if (i < n){ const m = (i + .5)/n; pts.push([a[0] + dy*m + nx*1.5, a[1] + dz*m + nz*1.5]); } }
+  return pts;
+}
+function lcrFlywheelFace(A, lift){
+  const [ey, ez] = LCR.E, R = LCR.fly, at = (r, a) => [ey + r*Math.cos(a), ez + r*Math.sin(a)];
+  let s = shape(lvOn(ellUV(ey, ez, R, R, 30), lift), GT.REDW.m, 1.3) + fill(pd(lvOn(ellUV(ey, ez, R - 2, R - 2, 26), lift + .02)), GT.REDW.d);
+  for (let i = 0; i < 5; i++){ const a = A + i*2*Math.PI/5, w = .13;
+    s += shape(lvOn([at(2.4, a - w*2.4), at(R - 1.6, a - w), at(R - 1.6, a + w), at(2.4, a + w*2.4)], lift + .04), GT.REDW.l, .5); }
+  s += shape(lvOn(ellUV(ey, ez, 3, 3, 14), lift + .06), GT.IRON.l, .8);
+  // the eccentric pin: off centre, so you can see the throw
+  const pin = [ey + LCR.ex*Math.cos(A), ez + LCR.ex*Math.sin(A)];
+  return s + fill(pd(lvOn(ellUV(pin[0], pin[1], 1.1, 1.1, 8), lift + .08)), INK);
+}
+function lcrFace(st){
+  const pose = lcrPose(st), [y0, z0, y1, z1] = LCR.win, [from, to] = lcrMats(st), win = lvOn(rrUV(y0, z0, y1, z1, 3)), t = st.t || 0;
+  let inner = fill(pd(win), '#2e3236');
+  // the frame behind: two faint ribs
+  inner += `<path d="${pd(lvOn([[y0 + 2, 21], [y1 - 2, 21]], .45), false)}" stroke="#454b50" stroke-width="1.4" fill="none"/>`;
+  // the fixed jaw and its teeth
+  const [fa, fb, fc, fd] = LCR.fixed;
+  inner += shape(lvOn(LCR.fixed, .46), LCR_JAW.m, 1.3) + shape(lvOn(lcrTeeth(fa, fd, 7, -1), .47), LCR_TOOTH, .7);
+  inner += gtRivets(PX(LV.W + .5), [[58, 52], [58, 42], [57, 32]], LCR_JAW.d);
+  // the toggle seat, the toggle plate, the spring
+  inner += shape(lvOn(rectUV(y0, z0 + 1, 17, 30), .46), LCR_JAW.d, 1);
+  inner += shape(lvOn([[17, 22.8], [pose.b - 6, 22.8], [pose.b - 6, 25.2], [17, 25.2]], .47), GT.IRON.l, .9);
+  { const pts = []; const n = 9, ya = pose.b - 5, yb = 17.5; for (let i = 0; i <= n; i++) pts.push(lvAt(yb + (ya - yb)*i/n, 20.2 + (i % 2 ? .9 : -.9), .5));
+    inner += `<path d="${pd(pts, false)}" fill="none" stroke="${GT.IRON.l}" stroke-width=".8"/>`; }
+  // the stone in the V
+  for (const c of lcrStones(st, pose)) inner += shape(lvOn(rrUV(c.y - c.r, c.z - c.r*.85, c.y + c.r, c.z + c.r*.85, c.r*.45, 2), .49), c.col, .7);
+  // falling out of the gap
+  if (st.running && (st.progress || 0) > .1) for (let i = 0; i < 4; i++){ const u = (t*2 + i/4) % 1, y = pose.b + 2 + (i*2.1) % 6, z = 24 - 6*u;
+    inner += shape(lvOn(ellUV(y, z, .8, .8, 6), .49), to.col, .4); }
+  // the swing jaw and its teeth
+  const [sa, sb, sc, sd] = pose.swing;
+  inner += shape(lvOn(pose.swing, .5), LCR_JAW.l, 1.3) + shape(lvOn(lcrTeeth(sb, sc, 7, 1), .51), LCR_TOOTH, .7);
+  inner += gtRivets(PX(LV.W + .53), [[pose.b - 2, 30], [(pose.py + pose.b)/2 - 1, 38]], LCR_JAW.d);
+  // the flywheel on the shaft, in front of everything
+  inner += lcrFlywheelFace(pose.A, .56);
+  let s = shape(win, '#2e3236', 1.6) + clipTo(win, inner);
+  // glass: two streaks of light
+  s += fill(pd(lvOn([[y1 - 12, z1 - 2], [y1 - 5, z1 - 2], [y1 - 2, z1 - 6], [y1 - 2, z1 - 12]], .65)), '#ffffff', 'opacity=".22"');
+  return s + ink(pd(lvOn(rrUV(y0, z0, y1, z1, 3), .7)), 1.6);
+}
+
+/* ---------- on the roof ---------- */
+function lcrParts(st, k, fade){
+  const [from] = lcrMats(st), H = LCR.hop, ZT = LV.ZT, col = matOf(from.col);
+  const dropping = !!st.active && (st.progress || 0) < .14;
+  const lumps = [[44, 40, ZT + 2.5], [54, 46, ZT + 2.5], [45, 47, ZT + 3.5], [53, 39, ZT + 3.5]].slice(0, Math.min(4, st.input | 0)).map(at => ({ at, svg: gtLump(at, .85, null, col) }));
+  return [{ box:[[H.top[0], H.top[1], ZT], [H.top[2], H.top[3], ZT + H.h]], svg: act('hopper', fade(gtHopper(ZT, H.bot, H.top, H.h, GT_STEEL, lumps, dropping))) }];
+}
+
+/* ---------- see-through: the crusher in 3D ---------- */
+function lcrSlab(poly, x0, x1, m, w = 1){   // a convex profile in (y, z) swept along x, with both caps it can show
+  const A = on(PX(x0), poly), B = on(PX(x1), poly);
+  return loft(A, B, n => toneI(n, m)) + (facing([1,0,0]) ? shape(B, toneI([1,0,0], m), w*.8) : '') + (facing([-1,0,0]) ? shape(A, toneI([-1,0,0], m), w*.8) : '') + hullInk([...A, ...B], w);
+}
+function lcrInside(st, k){
+  const out = [], put = (b, svg) => out.push({ box: b, svg }), run = !!st.running, pose = lcrPose(st), [ey, ez] = LCR.E, Z0 = LV.Z0, [, to] = lcrMats(st);
+  const bx = (x0, y0, z0, x1, y1, z1, m, w = 1) => put([[x0, y0, z0], [x1, y1, z1]], box(x0, y0, z0, x1, y1, z1, m, toneI, w));
+  // the frame
+  bx(30, 8, Z0, 68, 30, 12, GT_TRIM); bx(30, 50, Z0, 68, 72, 12, GT_TRIM);
+  // the fixed jaw on its backing block
+  bx(34, 46, 12, 66, 62, 24, LCR_JAW);
+  put([[34, 45, 24], [66, 62, 60]], lcrSlab(LCR.fixed, 34, 66, LCR_JAW, 1.2));
+  // the swing jaw, the toggle and its seat
+  const ys = pose.swing.map(p => p[0]), zs = pose.swing.map(p => p[1]);
+  put([[34, Math.min(...ys), Math.min(...zs)], [66, Math.max(...ys), Math.max(...zs)]], lcrSlab(pose.swing, 34, 66, { l:'#a7aeb2', m:'#7d858b', d:'#4a5157' }, 1.2));
+  bx(36, 12, 12, 64, 17, 30, GT_TRIM);
+  bx(40, 17, 22.8, 60, pose.b - 6, 25.2, GT.IRON, .9);
+  // the eccentric shaft, in lengths either side of the swing jaw; pedestals; flywheel and rear pulley
+  bx(30, 20, 12, 33, 28, ez - 2.5, GT.IRON); bx(66, 20, 12, 68, 28, ez - 2.5, GT.IRON);
+  const sft = (a, b) => put([[a, ey - 2.5, ez - 2.5], [b, ey + 2.5, ez + 2.5]], cylX(a, b, ey, ez, 2.5, GT.IRON, toneI, .9, 14));
+  sft(22, 24); sft(28, 34); sft(66, 69);
+  put([[24, ey - 8, ez - 8], [28, ey + 8, ez + 8]], cylX(24, 28, ey, ez, 8, GT_TRIM, toneI, 1.1, 24));
+  { let fw = cylX(69, 72, ey, ez, LCR.fly, GT.REDW, toneI, 1.2, 28);
+    if (facing([1,0,0])){ const pl = PX(72.05), at = (r, a) => [ey + r*Math.cos(a), ez + r*Math.sin(a)];
+      fw += fill(pd(on(pl, ellUV(ey, ez, LCR.fly - 2, LCR.fly - 2, 24))), GT.REDW.d);
+      for (let i = 0; i < 5; i++){ const a = pose.A + i*2*Math.PI/5; fw += shape(on(pl, [at(2.4, a - .3), at(LCR.fly - 1.6, a - .13), at(LCR.fly - 1.6, a + .13), at(2.4, a + .3)]), GT.REDW.l, .5); }
+      fw += shape(on(pl, ellUV(ey, ez, 3, 3, 12)), GT.IRON.l, .7); }
+    put([[69, ey - LCR.fly, ez - LCR.fly], [72, ey + LCR.fly, ez + LCR.fly]], fw); }
+  // the motor, its pulley, the belt, its supply
+  put([[8, 51, 11], [22, 65, 25]], rod([8, 58, 18], [22, 58, 18], 7, GT.IRON, toneI, 1, 7, 24));
+  bx(9, 52, Z0, 21, 64, 11, GT_TRIM, .8);
+  put([[22, 54, 14], [28, 62, 22]], cylX(22, 28, 58, 18, 4, GT_TRIM, toneI, .8, 16));
+  out.push(gtWire([[26, 58, 22], [26, ey, ez + 8], [26, ey, ez - 8], [26, 58, 14]], run ? '#4a4f55' : '#5a5f65', 1));
+  out.push(gtWire([[4.5, 52, 46], [8, 52, 30], [10, 56, 24]], run ? '#f6b98a' : GT.COPPER.m, .6));
+  // the throat from the hopper, the chute to the slot
+  bx(42, 38, 60, 58, 50, LV.ZT, matOf('#a7aeb2'), .8);
+  let ch = shape([[40, 32, 22], [LV.W, 32, 10.5], [LV.W, 46, 10.5], [40, 46, 22]], toneI(norm([11.5, 0, 34]), GT.IRON), .9);
+  if (run && (st.progress || 0) > .1) for (let i = 0; i < 4; i++){ const u = ((st.t || 0)*.9 + i/4) % 1, x = 42 + 30*u, y = 34 + (i*3.4) % 10;
+    ch += st.recipe && /sand|gravel/.test(st.recipe.id) ? fill(pd(on(PZ(21.5 - 11*u*.98 + .4), ellUV(x, y, 1, 1, 8))), to.col) : gtLump([x, y, 22 - 11.5*(x - 40)/34 + 1.2], .5, null, matOf(to.col)); }
+  put([[40, 32, 9], [LV.W, 46, 22.5]], ch);
+  // the stone in the V, real lumps along the jaws' length
+  for (const c of lcrStones(st, pose)) for (const x of [42, 50, 58]) put([[x - c.r, c.y - c.r, c.z - c.r], [x + c.r, c.y + c.r, c.z + c.r]], box(x - c.r, c.y - c.r, c.z - c.r*.85, x + c.r, c.y + c.r, c.z + c.r*.85, matOf(c.col), toneI, .6));
+  return out;
+}
+
+gtLv({
+  fig:'LV8', title:'LV Crusher', name:'CRUSHER', face: lcrFace, parts: lcrParts, inside: lcrInside, product: lcrProduct,
+  shadowPts: [[LCR.hop.top[0], LCR.hop.top[1], LV.ZT + LCR.hop.h], [LCR.hop.top[2], LCR.hop.top[3], LV.ZT + LCR.hop.h]],
+  recipes:[{ id:'lv_crush_cobblestone', name:'Gravel' }, { id:'lv_crush_gravel', name:'Sand' }, { id:'lv_crush_sand', name:'Stone Dust' }],
+  loadLabel:'Load stone', outLabel:'Made', height: 100,
+  callouts: st => [{ at: [50, 43, LV.ZT + LCR.hop.h], text: 'HOPPER', on: !!st.active && (st.progress || 0) < .14 },
+    ...(facing([1,0,0]) ? [{ at: [LV.W, 24, 55], text: 'FLYWHEEL', on: !!st.running }, { at: [LV.W, 57, 58], text: 'JAW CRUSHER', on: !!st.running }] : [])],
+  insideCallouts: st => { const pose = lcrPose(st); return [
+    { at: [15, 58, 25], text: 'MOTOR', on: !!st.running }, { at: [26, 40, 34], text: 'V-BELT', on: !!st.running },
+    { at: [70, LCR.E[0] - 9, LCR.E[1]], text: 'FLYWHEEL', on: !!st.running }, { at: [30, LCR.E[0], LCR.E[1] + 2.5], text: 'ECCENTRIC SHAFT', on: !!st.running },
+    { at: [50, pose.py + 4, pose.pz + 9], text: 'SWING JAW', on: !!st.running }, { at: [50, 57, 60], text: 'FIXED JAW', on: !!st.active },
+    { at: [50, 22, 25], text: 'TOGGLE PLATE', on: !!st.running }, { at: [50, 44, 66], text: 'THROAT', on: !!st.active }, { at: [60, 46, 14], text: 'CHUTE', on: !!st.running } ]; },
+});
+</script>
+<script src="cf-tail.js"></script>
+</body></html>

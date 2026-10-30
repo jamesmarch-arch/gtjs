@@ -18,6 +18,6 @@ const s = (item: string, count = 1): Stack => ({ item, count });
 // placeholder costs until the content task: LV hulls with circuits for their brains (and glass for the terminal's
 // screen), so they come once circuits do
 export const crafts: CraftDef[] = [
-  { id: 'me_terminal', group: 'machines', tier: 'lv', inputs: [s('lv_hull'), s('circuit_lv', 2), s('glass', 4), s('copper_wire', 4)], output: s('me_terminal') },
-  { id: 'crafting_cpu', group: 'machines', tier: 'lv', inputs: [s('lv_hull'), s('circuit_lv', 4), s('copper_wire', 8)], output: s('crafting_cpu') },
+  { id: 'me_terminal', group: 'machines', tier: 'lv', inputs: [s('lv_hull'), s('circuit_lv', 2), s('glass', 4), s('copper_wire', 4), s('lapis', 4)], output: s('me_terminal') },
+  { id: 'crafting_cpu', group: 'machines', tier: 'lv', inputs: [s('lv_hull'), s('circuit_lv', 4), s('copper_wire', 8), s('lapis', 2)], output: s('crafting_cpu') },
 ];

@@ -102,7 +102,7 @@ export const recipes: RecipeDef[] = [
   eu('assemble_vacuum_tube', 'assembler', 120, 8, [s('glass_tube'), s('copper_wire', 2)], [s('vacuum_tube')]),
   eu('assemble_resistor', 'assembler', 160, 8, [s('coal'), s('copper_wire', 2)], [s('resistor', 2)]),
   eu('assemble_coated_board', 'assembler', 200, 8, [s('wood_planks'), s('rubber_sheet')], [s('coated_board')]),
-  eu('assemble_circuit_lv', 'assembler', 200, 16, [s('coated_board'), s('resistor', 2), s('vacuum_tube', 2), s('copper_wire', 2)], [s('circuit_lv')]),
+  eu('assemble_circuit_lv', 'assembler', 200, 16, [s('coated_board'), s('resistor', 2), s('vacuum_tube', 2), s('copper_wire', 2), s('redstone')], [s('circuit_lv')]),
   eu('assemble_lv_motor', 'assembler', 200, 16, [s('iron_plate', 2), s('copper_wire', 4), s('tin_cable', 2)], [s('lv_motor')]),
 ];
 
@@ -115,7 +115,7 @@ export const crafts: CraftDef[] = [
   { id: 'vacuum_tube', group: 'parts', inputs: [s('glass_tube'), s('copper_wire', 2), s('iron_plate')], output: s('vacuum_tube') },
   { id: 'resistor', group: 'parts', inputs: [s('coal'), s('copper_wire', 4), s('sticky_resin')], output: s('resistor') },
   { id: 'coated_board', group: 'parts', inputs: [s('wood_planks'), s('sticky_resin', 2)], output: s('coated_board') },
-  { id: 'circuit_lv', group: 'parts', inputs: [s('coated_board'), s('resistor', 2), s('vacuum_tube', 2), s('copper_wire', 3)], output: s('circuit_lv') },
+  { id: 'circuit_lv', group: 'parts', inputs: [s('coated_board'), s('resistor', 2), s('vacuum_tube', 2), s('copper_wire', 3), s('redstone')], output: s('circuit_lv') },
   { id: 'lv_motor', group: 'parts', inputs: [s('iron_plate', 2), s('copper_wire', 4), s('tin_cable', 2)], output: s('lv_motor') },
   { id: 'lv_casing', group: 'parts', inputs: [s('iron_plate', 8)], output: s('lv_casing'), note: 'wrench (GTNH uses steel)' },
   { id: 'lv_hull', group: 'parts', inputs: [s('lv_casing'), s('tin_cable', 2)], output: s('lv_hull') },
@@ -123,7 +123,7 @@ export const crafts: CraftDef[] = [
   { id: 'hp_boiler', group: 'machines', inputs: [s('iron_plate', 6), s('brick', 4), s('bronze_pipe', 1)], output: s('hp_boiler') },
   { id: 'lv_steam_turbine', group: 'machines', inputs: [s('lv_hull'), s('lv_motor', 2), s('bronze_pipe', 2), s('circuit_lv')], output: s('lv_steam_turbine') },
   { id: 'lv_semifluid_generator', group: 'machines', inputs: [s('lv_hull'), s('lv_motor', 2), s('bronze_pipe', 2), s('circuit_lv'), s('iron_plate', 2)], output: s('lv_semifluid_generator') },
-  { id: 'lv_battery_buffer', group: 'machines', inputs: [s('lv_hull'), s('tin_cable', 4), s('tin_plate', 4), s('circuit_lv')], output: s('lv_battery_buffer') },
+  { id: 'lv_battery_buffer', group: 'machines', inputs: [s('lv_hull'), s('tin_cable', 4), s('tin_plate', 4), s('circuit_lv'), s('redstone', 4)], output: s('lv_battery_buffer') },
   { id: 'lv_transformer', group: 'machines', inputs: [s('lv_hull'), s('tin_cable', 4), s('copper_cable')], output: s('lv_transformer') },
   { id: 'lv_electric_furnace', group: 'machines', inputs: [s('lv_hull'), s('circuit_lv', 2), s('copper_wire', 4)], output: s('lv_electric_furnace') },
   { id: 'lv_macerator', group: 'machines', inputs: [...HULL, s('iron_plate', 2)], output: s('lv_macerator') },

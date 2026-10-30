@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { deserialize, loadFrom, SaveError, saveTo, serialize, type KeyValueStore } from './save';
+import { QUESTS } from './data';
+import { questState } from './quests';
+import { deserialize, loadFrom, SAVE_VERSION, SaveError, saveTo, serialize, type KeyValueStore } from './save';
 import { startJob } from './jobs';
-import { placeCable, placeMachine, setRecipe, tick, type World } from './world';
+import { count, emptyWorld, placeCable, placeMachine, setRecipe, tick, type World } from './world';
 import { workshop } from './fixtures';
 
 const run = (w: World, n: number) => { for (let i = 0; i < n; i++) tick(w); };
@@ -23,6 +25,64 @@ const edit = (w: World, change: (save: { version: number; world: Record<string, 
   change(save);
   return JSON.stringify(save);
 };
+
+describe('saves from before everything came from cobblestone', () => {
+  // a format 6 save, as the game wrote it when ore, clay, sand, resin and planks were gathered by hand
+  const old = () => JSON.stringify({
+    version: 6,
+    world: {
+      tick: 5000, seed: 7, nextUid: 4, nextJob: 1, jobs: [], floor: { w: 32, h: 32 }, pipes: [], cables: [], floors: {},
+      storage: { cobblestone: 3, coal: 12, iron_ore: 40, copper_ore: 9, tin_ore: 2, clay: 5, sand: 6, sticky_resin: 7, wood_planks: 8, bauxite_ore: 4, bronze_ingot: 2, stone_hammer: 1 },
+      machines: [
+        { uid: 'm1', def: 'stone_furnace', x: 0, y: 0, recipe: 'fire_smelt_clay', enabled: true, active: 'fire_smelt_clay', progress: 50, stalled: false, steam: 0, burn: 100, burnMax: 1600, eu: 0, rate: 0, mode: 'down', autocraft: true },
+        { uid: 'm2', def: 'bronze_boiler', x: 2, y: 0, recipe: null, enabled: true, active: null, progress: 0, stalled: false, steam: 400, burn: 10, burnMax: 1600, eu: 0, rate: 0, mode: 'down', autocraft: false },
+      ],
+      stats: { made: { iron_ingot: 4, bronze_ingot: 8 }, burned: 3, eu: 0 },
+      quests: { furnace: 'claimed', crush: 'claimed', stoke: 'complete', boiler: 'claimed', no_such_quest: 'claimed' },
+    },
+  });
+
+  it('load, and keep everything they hold', () => {
+    const w = deserialize(old());
+    expect(w.storage).toEqual({ cobblestone: 3, coal: 12, iron_ore: 40, copper_ore: 9, tin_ore: 2, clay: 5, sand: 6, sticky_resin: 7, wood_planks: 8, bauxite_ore: 4, bronze_ingot: 2, stone_hammer: 1 });
+    expect(w.machines.map((m) => [m.def, m.x, m.y, m.recipe])).toEqual([['stone_furnace', 0, 0, 'fire_smelt_clay'], ['bronze_boiler', 2, 0, null]]);
+    expect(w.machines[0]).toMatchObject({ active: 'fire_smelt_clay', progress: 50, autocraft: true });
+    expect(w.machines[0].holding).toBeUndefined();
+    expect(w.quests).toEqual({ furnace: 'claimed', crush: 'claimed', stoke: 'complete', boiler: 'claimed' });
+    expect(w.stats.made).toEqual({ iron_ingot: 4, bronze_ingot: 8 });
+  });
+
+  it('carry on: quests already done stay done, and the new opening is there to catch up on', () => {
+    const w = deserialize(old());
+    expect(questState(w, QUESTS.get('furnace')!)).toBe('claimed');
+    expect(questState(w, QUESTS.get('cobblestone')!)).toBe('active');
+    expect(questState(w, QUESTS.get('soak')!)).toBe('active'); // the boiler quest it follows is done
+    run(w, 10);
+    expect(count(w, 'brick')).toBe(0); // the furnace is still working on its clay
+    run(w, 200);
+    expect(count(w, 'brick')).toBe(1);
+  });
+
+  it('save again in the new format, and load the same', () => {
+    const w = deserialize(old()), text = serialize(w);
+    expect(JSON.parse(text).version).toBe(SAVE_VERSION);
+    expect(serialize(deserialize(text))).toBe(text);
+  });
+
+  it('keep a sapling held by a tree farm in the new format', () => {
+    const w = emptyWorld();
+    w.storage = { sapling: 1 };
+    const f = setRecipe(placeMachine(w, 'tree_farm', 0, 0), 'grow_tree');
+    f.enabled = true;
+    run(w, 5);
+    const back = deserialize(serialize(w));
+    expect(back.machines[0].holding).toBe('sapling');
+    expect(back.storage).toEqual({});
+    run(back, 600);
+    expect(back.storage.wood_planks).toBe(2);
+    expect(back.machines[0].holding).toBe('sapling');
+  });
+});
 
 describe('saves', () => {
   it('round-trip a running game exactly', () => {

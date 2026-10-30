@@ -86,6 +86,12 @@ const lump = (t: Tones, holes = false) => poly([5, 19, 9, 10, 17, 7, 25, 11, 28,
 // a drop of something liquid
 const drop = (t: Tones) => `<path d="M16 4 C21 12 25 16 25 21 A9 9 0 0 1 7 21 C7 16 11 12 16 4 Z" fill="${t.m}" stroke="${INK}" stroke-width="1.3"/>`
   + `<path d="M11 19 A5 5 0 0 0 14 25" fill="none" stroke="${t.l}" stroke-width="1.8" stroke-linecap="round"/>`;
+// a cut gem: its crown, its pavilion
+const gem = (t: Tones) => poly([9, 8, 23, 8, 28, 14, 4, 14], t.l) + poly([4, 14, 28, 14, 16, 28], t.m) + poly([16, 14, 28, 14, 16, 28], t.d)
+  + line([13, 8, 10, 14, 16, 28], INK, 0.8) + line([19, 8, 22, 14, 16, 28], INK, 0.8) + line([24, 3, 24, 6], '#ffffff', 1.2) + line([22.5, 4.5, 25.5, 4.5], '#ffffff', 1.2);
+// a heap of pebbles
+const pebbles = (t: Tones) => [[9, 22, 5], [22, 23, 5], [16, 24, 5], [12, 16, 4.5], [20, 16, 4.5], [16, 10, 4]].map(([x, y, r], i) =>
+  ellipse(x, y, r, r * 0.8, i % 2 ? t.m : t.l, 1.1) + line([x - r / 2, y + r / 3, x + r / 3, y + r / 2], t.d, 0.8)).join('');
 // a single brick, a sheet of rubber: a low block
 const brick = (t: Tones) => poly([5, 14, 17, 9, 27, 13, 15, 18], t.l) + poly([5, 14, 15, 18, 15, 24, 5, 20], t.m) + poly([15, 18, 27, 13, 27, 19, 15, 24], t.d);
 
@@ -113,6 +119,10 @@ const PARTS: Record<string, () => string> = {
     return `<path d="M6 13 L24 6 A3 5 0 0 1 26 16 L8 23 Z" fill="${t.m}" stroke="${INK}" stroke-width="1.3"/>` + line([7, 15, 24, 8.5], t.l, 1.6)
       + `<ellipse cx="7" cy="18" rx="3.2" ry="5.6" transform="rotate(-20 7 18)" fill="${t.d}" stroke="${INK}" stroke-width="1.2"/>`
       + `<ellipse cx="7" cy="18" rx="1.6" ry="3" transform="rotate(-20 7 18)" fill="#2b2523"/>`; },
+  sapling: () => line([16, 27, 16, 12], INK, 3.4) + line([16, 27, 16, 12], WOOD.m, 1.8)
+    + `<path d="M16 15 Q6 15 5 6 Q15 5 16 15 Z" fill="${tones('#6aa84f').m}" stroke="${INK}" stroke-width="1.2"/><path d="M16 12 Q26 12 27 3 Q17 3 16 12 Z" fill="${tones('#6aa84f').l}" stroke="${INK}" stroke-width="1.2"/>`
+    + ellipse(16, 27, 8, 2.6, tones('#8a6a42').m),
+  ender_pearl: () => circle(16, 16, 11, '#1f6f68', 1.3) + `<path d="M10 12 A8 8 0 0 1 22 10 A10 10 0 0 0 10 12 Z" fill="#9fe3d3"/>` + circle(16, 17, 4.2, '#0d3b38', 1) + circle(14.8, 15.6, 1.1, '#9fe3d3', 0),
   steam: () => circle(11, 19, 6, '#fbfaf3') + circle(19, 15, 7, '#fbfaf3') + circle(22, 22, 5, '#fbfaf3') + `<path d="M7 22 H26" stroke="#fbfaf3" stroke-width="4"/>`,
 };
 
@@ -132,6 +142,8 @@ function drawing(id: string): string | null {
   if (id.endsWith('_dust') || id === 'sand') return dust(id === 'sand' ? tones(MATERIAL.sand) : t);
   if (id.startsWith('compact_floor_')) return compact(Number(id.slice('compact_floor_'.length)));
   const own: Record<string, () => string> = {
+    gravel: () => pebbles(tones('#8f8a80')), dirt: () => block(tones('#8a6a42'), 'stone'), redstone: () => dust(tones('#d0342c'), '#ff9a8a'),
+    lapis: () => gem(tones('#2f5fbf')), diamond: () => gem(tones('#8fe6e6')),
     cobblestone: () => block(STONE, 'stone'), brick: () => brick(tones('#b5654a')), coke_oven_brick: () => block(tones('#c9a072'), 'brick'),
     glass: () => block(tones(GLASS), 'glass'), wood_planks: () => block(WOOD, 'planks'), cupronickel_coil: () => block(tones('#e7a578'), 'coil'),
     lv_casing: () => block(STEELT, 'panel'), lv_hull: () => block(STEELT, 'panel') + circle(22, 19, 2.2, '#d07a45', 1),

@@ -86,20 +86,124 @@ describe('crafting jobs', () => {
   });
 
   it('pause when an input is missing, and go on when it is there', () => {
-    const { w, mac, furnace } = shop();
-    mac.autocraft = furnace.autocraft = true;
-    w.storage.iron_ore = 1;
-    expect(planFor(w, 'iron_ingot', 3).missing).toEqual([{ item: 'iron_ore', count: 2 }]);
-    expect(whyNotJob(w, planFor(w, 'iron_ingot', 3))).toBeNull(); // a job may start with things to gather
-    const job = startJob(w, 'iron_ingot', 3);
-    run(w, 450);
-    expect(job.paused).toMatch(/needs 1 more Iron Ore \(gather it\)/);
-    expect(mac.job).toBeDefined(); // lent for all three runs: it has done one and waits for ore
-    w.storage.iron_ore = 2;
+    const { w } = shop();
+    const crusher = placeMachine(w, 'stone_crusher', 10, 12);
+    crusher.autocraft = true;
+    w.storage.cobblestone = 1;
+    expect(planFor(w, 'gravel', 3).missing).toEqual([{ item: 'cobblestone', count: 2 }]);
+    expect(whyNotJob(w, planFor(w, 'gravel', 3))).toBeNull(); // a job may start with things to gather
+    const job = startJob(w, 'gravel', 3);
+    run(w, 100);
+    expect(job.paused).toMatch(/needs 1 more Cobblestone \(gather it\)/);
+    expect(crusher.job).toBeDefined(); // lent for all three runs: it has done one and waits for stone
+    w.storage.cobblestone = 2;
     tick(w);
     expect(job.paused).toBeNull();
     expect(until(w, () => !w.jobs.length)).toBe(true);
-    expect(count(w, 'iron_ingot')).toBe(3);
+    expect(count(w, 'gravel')).toBe(3);
+  });
+
+  describe('on steps that rest on chance', () => {
+    function sifting(seed: number, storage: Record<string, number>) {
+      const w = emptyWorld();
+      w.seed = seed;
+      w.storage = storage;
+      placeMachine(w, 'crafting_cpu', 0, 0);
+      const sifter = placeMachine(w, 'stone_sifter', 2, 0), crusher = placeMachine(w, 'stone_crusher', 4, 0);
+      sifter.autocraft = crusher.autocraft = true;
+      return { w, sifter, crusher };
+    }
+
+    it('keep running until they really have enough, however the dice fall, then hand the machine back', () => {
+      for (let seed = 1; seed <= 20; seed++) {
+        const { w, sifter } = sifting(seed, { gravel: 200 });
+        const job = startJob(w, 'iron_ore', 3);
+        expect(job.steps[0]).toMatchObject({ runs: 10, until: [{ item: 'iron_ore', count: 3, got: 0 }] });
+        expect(until(w, () => !w.jobs.length)).toBe(true);
+        expect(count(w, 'iron_ore')).toBeGreaterThanOrEqual(3);
+        expect(sifter.job).toBeUndefined();
+        expect(sifter.recipe).toBeNull();
+        expect(sifter.active).toBeNull();
+        expect(job.steps[0].until![0].got).toBeGreaterThanOrEqual(3);
+        expect(job.steps[0].done).toBe(200 - count(w, 'gravel')); // it stopped when it had them: nothing was thrown away
+      }
+    });
+
+    it('make more of what they ran out of, when the plan\'s average falls short', () => {
+      let more = 0;
+      for (let seed = 1; seed <= 20; seed++) {
+        const { w } = sifting(seed, { cobblestone: 500 });
+        const job = startJob(w, 'diamond', 1);
+        expect(job.steps.map((s) => [s.recipe, s.runs])).toEqual([['crush_cobblestone', 100], ['crush_gravel', 100], ['sift_sand', 100]]);
+        expect(until(w, () => !w.jobs.length, 4_000_000)).toBe(true);
+        expect(count(w, 'diamond')).toBe(1);
+        if (job.steps[0].runs > 100) more++;
+      }
+      expect(more).toBeGreaterThan(0); // some of twenty tries took more than the average
+    });
+
+    it('wait for cobblestone when luck uses it up, and say so', () => {
+      const { w } = sifting(1, { cobblestone: 1 });
+      const job = startJob(w, 'nickel_dust', 4); // 27 blocks, on average
+      run(w, 1000);
+      expect(job.paused).toMatch(/more Cobblestone \(gather it\)/);
+      w.storage.cobblestone = 500;
+      expect(until(w, () => !w.jobs.length, 400_000)).toBe(true);
+      expect(count(w, 'nickel_dust')).toBeGreaterThanOrEqual(4);
+    });
+
+    it('take several finds from one step', () => {
+      const { w } = sifting(3, { gravel: 200, stone_hammer: 1, stone_mortar: 1 });
+      const job = startJob(w, 'bronze_dust', 8);
+      expect(until(w, () => !w.jobs.length)).toBe(true);
+      expect(count(w, 'bronze_dust')).toBe(8);
+      expect(job.steps[0].until!.map((u) => u.item)).toEqual(['copper_ore', 'tin_ore']);
+    });
+
+    it('count towards the job\'s progress as finds come in', () => {
+      const { w } = sifting(1, { gravel: 200 });
+      const job = startJob(w, 'iron_ore', 2);
+      expect(jobProgress(job)).toBe(0);
+      expect(until(w, () => job.steps[0].until![0].got === 1)).toBe(true);
+      expect(jobProgress(job)).toBe(0.5);
+    });
+
+    it('give a tree farm a sapling to hold, and leave it holding it', () => {
+      const w = emptyWorld();
+      w.storage = { sapling: 1 };
+      placeMachine(w, 'crafting_cpu', 0, 0);
+      const farm = placeMachine(w, 'tree_farm', 2, 0);
+      farm.autocraft = true;
+      startJob(w, 'wood_planks', 4);
+      expect(until(w, () => !w.jobs.length)).toBe(true);
+      expect(count(w, 'wood_planks')).toBe(4);
+      expect(farm.holding).toBe('sapling');
+      expect(count(w, 'sapling')).toBe(0);
+      expect(planFor(w, 'wood_planks', 2).tools).toEqual([]); // the next plan knows it has one
+    });
+
+    it('say so when a tree farm has no sapling to hold', () => {
+      const w = emptyWorld();
+      placeMachine(w, 'crafting_cpu', 0, 0);
+      const farm = placeMachine(w, 'tree_farm', 2, 0), sifter = placeMachine(w, 'stone_sifter', 4, 0);
+      farm.autocraft = sifter.autocraft = true;
+      w.storage = { dirt: 40 };
+      const job = startJob(w, 'wood_planks', 2);
+      expect(until(w, () => !w.jobs.length, 100_000)).toBe(true);
+      expect(farm.holding).toBe('sapling');
+      expect(job.steps.map((s) => s.recipe)).toEqual(['sift_dirt', 'grow_tree']);
+    });
+
+    it('carry on after a save and load, with what they have found so far', () => {
+      const { w } = sifting(5, { gravel: 200 });
+      startJob(w, 'iron_ore', 3);
+      expect(until(w, () => w.jobs[0].steps[0].until![0].got >= 1)).toBe(true);
+      const text = serialize(w), back = deserialize(text);
+      expect(serialize(back)).toBe(text);
+      expect(back.jobs[0].steps[0].until![0].got).toBe(w.jobs[0].steps[0].until![0].got);
+      expect(until(back, () => !back.jobs.length)).toBe(true);
+      expect(count(back, 'iron_ore')).toBeGreaterThanOrEqual(3);
+    });
   });
 
   it('give a step to a machine on a floor inside a compact block', () => {

@@ -8,6 +8,10 @@ import { count, emptyWorld, placeMachine } from './world';
 const on = (storage: Record<string, number>, ...machines: string[]) => ({ storage, machines: machines.map((def) => ({ def })) });
 const asRecord = (stacks: Stack[]) => Object.fromEntries(stacks.map((s) => [s.item, s.count]));
 const recipes = (p: CraftPlan) => p.steps.map((s) => `${s.recipe} x${s.runs}`);
+// the unpowered machines, and a tree farm with its sapling: everything before steam
+const early = (storage: Record<string, number> = {}) => ({
+  storage, machines: [...['stone_crusher', 'stone_sifter', 'stone_furnace', 'soaking_barrel'].map((def) => ({ def })), { def: 'tree_farm', holding: 'sapling' }],
+});
 
 describe('the autocrafting planner', () => {
   it('hammers a plate by hand from ingots in storage', () => {
@@ -34,22 +38,24 @@ describe('the autocrafting planner', () => {
   });
 
   it('makes a circuit from scratch: everything by hand but the glass, and lists the raw materials', () => {
-    const p = planCraft('circuit_lv', 1, on({}, 'stone_furnace'));
+    const p = planCraft('circuit_lv', 1, early());
     expect(p.blocked).toEqual([]);
     expect(p.ok).toBe(false); // there is gathering to do first
-    // 15 copper wire (8 for two resistors, 4 for two vacuum tubes, 3 for the circuit) -> 15 plates -> 30 ingots
-    expect(asRecord(p.missing)).toEqual({ copper_ore: 30, iron_ore: 4, sand: 2, sticky_resin: 4, coal: 2, wood_planks: 3, cobblestone: 3 });
+    // 15 copper wire (8 for two resistors, 4 for two vacuum tubes, 3 for the circuit) -> 15 plates -> 30 ingots -> 30 ore,
+    // 100 gravel on average, which has the iron and coal in it; sand for two glass and a redstone; the hammer's five
+    expect(p.missing).toEqual([{ item: 'cobblestone', count: 100 + 2 + 7 + 5 }]);
     expect(p.tools).toEqual(['stone_hammer']); // made once, for every plate and every crushed ore
     expect(p.totals.byRecipe.stone_hammer.runs).toBe(1);
     expect(p.totals.byRecipe.fire_smelt_crushed_copper.runs).toBe(30);
     expect(p.totals.byRecipe.copper_wire.runs).toBe(15);
-    expect(p.totals.byMachine).toEqual({ stone_furnace: { runs: 36, ticks: 36 * 200 } }); // 30 copper, 4 iron, 2 glass
+    expect(p.totals.byRecipe.sift_gravel.runs).toBe(100);
+    expect(p.totals.byMachine.stone_furnace).toEqual({ runs: 36, ticks: 36 * 200 }); // 30 copper, 4 iron, 2 glass
     const last = p.steps.at(-1)!;
     expect(last).toMatchObject({ recipe: 'circuit_lv', runs: 1, depth: 0 });
   });
 
   it('orders steps so every input is in storage or made before it is used', () => {
-    for (const p of [planCraft('circuit_lv', 4, on({}, 'stone_furnace')), planCraft('ebf', 1, on({ nickel_ingot: 16 }, ...MACHINES.keys()))]) {
+    for (const p of [planCraft('circuit_lv', 4, early()), planCraft('ebf', 1, on({ nickel_ingot: 16 }, ...MACHINES.keys()))]) {
       // gathered raw materials, and things that can't be made, are there from the start
       const have = new Map<string, number>([...p.missing, ...p.blocked.filter((b) => !b.recipe)].map((s) => [s.item, s.count]));
       for (const s of p.steps) {
@@ -61,6 +67,8 @@ describe('the autocrafting planner', () => {
           have.set(i.item, Math.max(0, left));
         }
         have.set(s.output.item, (have.get(s.output.item) ?? 0) + s.output.count);
+        // a step that rests on chance: what else it finds, on average, is counted on too
+        if (s.average) for (const o of [...s.byproducts, ...s.chanced]) have.set(o.item, (have.get(o.item) ?? 0) + o.count + 1e-6);
       }
     }
   });
@@ -90,10 +98,10 @@ describe('the autocrafting planner', () => {
   });
 
   it('blocks a step deep in the chain, and still plans the rest', () => {
-    const p = planCraft('steel_plate', 1, on({}, 'stone_furnace'));
+    const p = planCraft('steel_plate', 1, on({ iron_ore: 2, cobblestone: 5 }, 'stone_furnace', 'stone_crusher', 'stone_sifter'));
     expect(p.blocked.map((b) => b.recipe)).toEqual(['ebf_steel']);
-    expect(recipes(p)).toEqual(['stone_hammer x1', 'crush_iron_ore x2', 'fire_smelt_crushed_iron x2', 'ebf_steel x2', 'steel_plate x1']);
-    expect(asRecord(p.missing)).toMatchObject({ coal: 2 });
+    expect(recipes(p)).toEqual(['stone_hammer x1', 'crush_iron_ore x2', 'fire_smelt_crushed_iron x2', 'crush_cobblestone x7', 'sift_gravel x7', 'ebf_steel x2', 'steel_plate x1']);
+    expect(asRecord(p.missing)).toMatchObject({ cobblestone: 7 }); // gravel to sift for the two coal
     expect(p.steps.at(-1)!.recipe).toBe('steel_plate');
   });
 
@@ -134,7 +142,7 @@ describe('the autocrafting planner', () => {
   });
 
   it('makes a hand tool once, when the plan needs it and storage has none, and never uses it up', () => {
-    const p = planCraft('bronze_pipe', 4, on({ bronze_ingot: 12, cobblestone: 3, wood_planks: 2 }));
+    const p = planCraft('bronze_pipe', 4, on({ bronze_ingot: 12, cobblestone: 5 }));
     expect(p.ok).toBe(true);
     expect(recipes(p)).toEqual(['stone_hammer x1', 'bronze_plate x6', 'bronze_pipe x2']);
     expect(p.tools).toEqual(['stone_hammer']);
@@ -177,17 +185,18 @@ describe('the autocrafting planner', () => {
     expect(planCraft('circuit_lv', 3, from)).toEqual(planCraft('circuit_lv', 3, from));
   });
 
-  it('plans only on guaranteed outputs: byproducts are a bonus and chanced outputs never count', () => {
+  it('never counts on a bonus when there is a sure way: byproducts and chances beside a main output are extras', () => {
     const p = planCraft('impure_iron_dust', 10, on({ crushed_iron: 10 }, 'lv_macerator'));
     expect(p.chanced).toEqual([{ item: 'nickel_dust', count: 1 }]);
+    expect(p.average).toBe(false);
     const coke = planCraft('coke', 2, on({ coal: 2 }, 'coke_oven'));
     expect(coke.byproducts).toEqual([{ item: 'creosote', count: 1000 }]);
     expect(coke.leftovers).toEqual([]);
-    // nickel dust only ever comes as a chance, creosote only besides coke: neither is a way to make them
-    expect(planCraft('nickel_dust', 1, on({ crushed_iron: 100 }, 'lv_macerator')).blocked)
-      .toEqual([{ item: 'nickel_dust', count: 1, why: expect.stringMatching(/^only comes by chance or as a byproduct/) }]);
-    expect(planCraft('unobtainium', 1, on({})).blocked).toEqual([{ item: 'unobtainium', count: 1, why: 'nothing makes it and it cannot be gathered' }]);
+    // the stone dust a macerator sometimes drops doesn't stand in for a crusher
+    expect(recipes(planCraft('stone_dust', 1, on({ sand: 1 }, 'stone_crusher', 'lv_macerator')))).toEqual(['crush_sand x1']);
+    // creosote only ever comes besides coke, with no chance about it: that is no way to make it
     expect(planCraft('creosote', 500, on({ coal: 9 }, 'coke_oven')).ok).toBe(false);
+    expect(planCraft('unobtainium', 1, on({})).blocked).toEqual([{ item: 'unobtainium', count: 1, why: 'nothing makes it and it cannot be gathered' }]);
   });
 
   it('never loops on a recipe cycle', () => {
@@ -223,8 +232,8 @@ describe('the autocrafting planner', () => {
   });
 
   it('reports raw materials as missing, even as the target', () => {
-    expect(planCraft('copper_ore', 3, on({})).missing).toEqual([{ item: 'copper_ore', count: 3 }]);
-    expect(() => planCraft('copper_ore', 0, on({}))).toThrow();
+    expect(planCraft('cobblestone', 3, on({})).missing).toEqual([{ item: 'cobblestone', count: 3 }]);
+    expect(() => planCraft('cobblestone', 0, on({}))).toThrow();
   });
 
   it('plans the electric blast furnace with every machine built, quickly', () => {
@@ -235,9 +244,11 @@ describe('the autocrafting planner', () => {
     expect(p.fromStorage).toEqual([{ item: 'nickel_ingot', count: 16 }]); // 16 coils, 64 wire, 32 cupronickel
     expect(p.steps.at(-1)!.recipe).toBe('ebf');
     expect(p.totals.machineRuns).toBeGreaterThan(0);
-    // without nickel it says where nickel comes from: only by chance, from the ore line
+    // from nothing it plans the lot, nickel too, down to cobblestone (and a sapling for the tree farm)
     const none = planCraft('ebf', 1, on({}, ...MACHINES.keys()));
-    expect(none.blocked).toEqual([{ item: 'nickel_dust', count: 16, why: expect.stringMatching(/^only comes by chance or as a byproduct, from .*lv_macerate_crushed_iron/) }]);
+    expect(none.blocked).toEqual([]);
+    expect(none.missing.map((m) => m.item)).toEqual(['cobblestone']);
+    expect(none.average).toBe(true);
   });
 
   it('reads machines and their recipes the way the game does', () => {
@@ -246,12 +257,79 @@ describe('the autocrafting planner', () => {
       const runs = recipesForMachine(def);
       for (const r of RECIPES.values()) {
         if (r.outputs[0].chance !== undefined) continue;
-        const p = planCraft(r.outputs[0].item, r.outputs[0].count, on(Object.fromEntries(r.inputs.map((i) => [i.item, i.count])), def.id), {
+        const p = planCraft(r.outputs[0].item, r.outputs[0].count, on(Object.fromEntries([...r.inputs.map((i): [string, number] => [i.item, i.count]), ...(r.holds ? [[r.holds, 1] as [string, number]] : [])]), def.id), {
           crafts: [], recipes: [r],
         });
         expect(p.ok, `${def.id} ${runs.includes(r) ? 'runs' : 'does not run'} ${r.id}`).toBe(runs.includes(r));
       }
     }
+  });
+});
+
+describe('planning on chance', () => {
+  it('plans what only comes by chance on its average yield, and says so', () => {
+    const p = planCraft('iron_ore', 3, on({ gravel: 20 }, 'stone_sifter'));
+    expect(p.blocked).toEqual([]);
+    expect(p.ok).toBe(true);
+    expect(p.average).toBe(true);
+    expect(p.steps).toEqual([expect.objectContaining({ recipe: 'sift_gravel', runs: 10, average: true, output: { item: 'iron_ore', count: 3 }, until: [{ item: 'iron_ore', count: 3 }] })]);
+    expect(asRecord(p.chanced)).toEqual({ coal: 3, copper_ore: 3, tin_ore: 2 }); // what else ten blocks give, on average
+  });
+
+  it('rounds runs up on what it needs, and shows what it expects over', () => {
+    const p = planCraft('tin_ore', 1, on({ gravel: 20 }, 'stone_sifter'));
+    expect(recipes(p)).toEqual(['sift_gravel x5']);
+    const q = planCraft('iron_ore', 1, on({ gravel: 20 }, 'stone_sifter'));
+    expect(recipes(q)).toEqual(['sift_gravel x4']);
+    expect(asRecord(q.chanced)).toMatchObject({ iron_ore: 0.2 });
+    expect(q.leftovers).toEqual([]); // not sure to be there, so not a leftover
+  });
+
+  it('counts everything one step finds: two finds of a sifter share its runs', () => {
+    // 6 copper at 30% is 20 blocks, which hold 4 tin on average: no more sifting for the 2 tin bronze wants
+    const p = planCraft('bronze_dust', 8, on({ gravel: 100, stone_mortar: 1, stone_hammer: 1 }, 'stone_sifter'));
+    expect(p.totals.byRecipe.sift_gravel.runs).toBe(20);
+    const sift = p.steps.find((s) => s.recipe === 'sift_gravel')!;
+    expect(asRecord(sift.until!)).toEqual({ copper_ore: 6, tin_ore: 2 }); // and a job runs it until it has both
+  });
+
+  it('plans byproducts that used to be blocked, nickel and gold among them', () => {
+    expect(recipes(planCraft('nickel_dust', 3, on({ stone_dust: 100 }, 'stone_sifter')))).toEqual(['sift_stone_dust x20']);
+    expect(recipes(planCraft('gold_ingot', 1, on({ stone_dust: 100 }, 'stone_sifter', 'steam_furnace')))).toEqual(['sift_stone_dust x13', 'smelt_gold_dust x1']);
+    // the ore line is as good a way to nickel as sifting, if that is what is on the floor
+    const line = planCraft('nickel_dust', 3, on({ crushed_iron: 100 }, 'lv_ore_washer'));
+    expect(line.blocked).toEqual([]);
+    expect(recipes(line)).toEqual(['wash_crushed_iron x10']);
+    expect(line.steps[0]).toMatchObject({ average: true, until: [{ item: 'nickel_dust', count: 3 }] });
+  });
+
+  it('walks a find back to cobblestone', () => {
+    const p = planCraft('diamond', 1, on({}, 'stone_crusher', 'stone_sifter'));
+    expect(recipes(p)).toEqual(['crush_cobblestone x100', 'crush_gravel x100', 'sift_sand x100']);
+    expect(p.missing).toEqual([{ item: 'cobblestone', count: 100 }]);
+  });
+
+  it('counts the tiers of a machine as one way, on the fastest built, and blocks with all of them named', () => {
+    expect(planCraft('gravel', 1, on({ cobblestone: 1 }, 'stone_crusher')).steps[0]).toMatchObject({ recipe: 'crush_cobblestone', machine: 'stone_crusher', ticks: 80 });
+    expect(planCraft('gravel', 1, on({ cobblestone: 1 }, 'stone_crusher', 'steam_crusher')).steps[0]).toMatchObject({ recipe: 'steam_crush_cobblestone', ticks: 40 });
+    expect(planCraft('gravel', 1, on({ cobblestone: 1 }, 'stone_crusher', 'steam_crusher', 'lv_crusher')).steps[0]).toMatchObject({ recipe: 'lv_crush_cobblestone', ticks: 20 });
+    expect(planCraft('gravel', 1, on({ cobblestone: 1 })).blocked).toEqual([expect.objectContaining({ why: 'needs a Stone Crusher or a Steam Crusher or an LV Crusher, and none is built' })]);
+  });
+
+  it('asks for a sapling once for a tree farm that holds none, and none for one that does', () => {
+    const empty = planCraft('wood_planks', 4, on({ dirt: 8 }, 'tree_farm', 'stone_sifter'));
+    expect(recipes(empty)).toEqual(['sift_dirt x4', 'grow_tree x2']);
+    expect(empty.tools).toEqual(['sapling']);
+    expect(empty.steps[0].until).toEqual([{ item: 'sapling', count: 1 }]);
+    const held = planCraft('wood_planks', 4, early());
+    expect(recipes(held)).toEqual(['grow_tree x2']);
+    expect(held.tools).toEqual([]);
+  });
+
+  it('plans resin, which only comes by chance, on the tree farm', () => {
+    const p = planCraft('sticky_resin', 2, early());
+    expect(recipes(p)).toEqual(['grow_tree x4']);
+    expect(p.steps[0].until).toEqual([{ item: 'sticky_resin', count: 2 }]);
   });
 });
 
@@ -271,7 +349,7 @@ describe('crafting a plan now, by hand', () => {
 
   it('runs every step in order: the tool first, then the ingredients, then the target', () => {
     const w = emptyWorld();
-    w.storage = { copper_ingot: 8, cobblestone: 3, wood_planks: 2 };
+    w.storage = { copper_ingot: 8, cobblestone: 5 };
     const p = craftNow(w, 'copper_wire', 4);
     expect(recipes(p)).toEqual(['stone_hammer x1', 'copper_plate x4', 'copper_wire x4']);
     expect(w.storage).toEqual({ copper_wire: 4, stone_hammer: 1 });
@@ -281,9 +359,10 @@ describe('crafting a plan now, by hand', () => {
     const w = emptyWorld();
     w.storage = { sand: 1 };
     placeMachine(w, 'stone_furnace', 0, 0);
+    placeMachine(w, 'stone_crusher', 1, 0);
     expect(() => craftNow(w, 'glass_tube', 1)).toThrow('It needs machine runs: start it as a crafting job');
     expect(() => craftNow(w, 'glass_tube', 2)).toThrow('Gather what is missing first');
-    expect(() => craftNow(w, 'steel_ingot', 1)).toThrow("One thing in it can't be made now");
+    expect(() => craftNow(w, 'steel_ingot', 1)).toThrow(/things in it can't be made now/);
     expect(w.storage).toEqual({ sand: 1 });
     expect(w.stats.made).toEqual({});
   });

@@ -36,6 +36,7 @@ export interface MachineState {
   inner?: string; // compact floor blocks: the id of the floor inside it, in w.floors
   autocraft: boolean; // available for autocrafting: crafting jobs may borrow it when it is idle
   job?: Lease; // lent to a crafting job: set to the job's recipe for `runs` runs, then handed back as it `was`
+  holding?: string; // what it holds for a recipe that `holds` something (a tree farm's sapling): given back when it is removed
 }
 
 /** A machine lent to a crafting job for one of its steps (see src/sim/jobs.ts). */
@@ -179,8 +180,9 @@ export function noteMade(w: World, item: string, n: number): void {
   w.stats.made[item] = (w.stats.made[item] ?? 0) + n;
 }
 
-/** A new game: an empty floor and empty storage. Everything starts from what you gather by hand: cobblestone for a
- *  furnace, coal to fire it, ore to hammer and smelt, until there is bronze for a boiler (the quest book walks it). */
+/** A new game: an empty floor and empty storage. Everything starts from the one thing you gather by hand: cobblestone
+ *  for a crusher and a sifter, whose gravel gives coal and ore to smelt, until there is bronze for a boiler (the quest
+ *  book walks it). */
 export function createWorld(): World {
   return emptyWorld();
 }
@@ -310,6 +312,7 @@ export function removeAt(w: World, x: number, y: number, on: Level = w): Occupan
   if (!o) return undefined;
   if (o.kind === 'machine') {
     if (o.m.active) for (const s of RECIPES.get(o.m.active)!.inputs) add(w, s.item, s.count);
+    if (o.m.holding) add(w, o.m.holding, 1);
     if (o.m.inner) clearFloor(w, o.m.inner);
     on.machines.splice(on.machines.indexOf(o.m), 1);
   } else if (o.kind === 'pipe') on.pipes.splice(on.pipes.indexOf(o.p), 1);
@@ -429,7 +432,12 @@ export function tickMachine(w: World, m: MachineState, tank: Tank | null, volts 
   if (!m.active) {
     if (m.job && m.job.started >= m.job.runs) return; // every run it was lent for is under way: it waits to be handed back
     const r = m.recipe ? RECIPES.get(m.recipe) : undefined;
-    if (!r || !hasAll(w, r.inputs)) { m.stalled = true; return; }
+    if (!r || !hasAll(w, r.inputs) || (r.holds && m.holding !== r.holds && count(w, r.holds) < 1)) { m.stalled = true; return; }
+    if (r.holds && m.holding !== r.holds) {
+      if (m.holding) add(w, m.holding, 1);
+      add(w, r.holds, -1);
+      m.holding = r.holds;
+    }
     for (const s of r.inputs) add(w, s.item, -s.count);
     m.active = r.id;
     m.progress = 0;
@@ -455,11 +463,16 @@ export function tickMachine(w: World, m: MachineState, tank: Tank | null, volts 
     m.burn--;
   }
   if (++m.progress < ticks) return;
-  for (const s of r.outputs) if (s.chance === undefined || nextRandom(w) < s.chance) { add(w, s.item, s.count); noteMade(w, s.item, s.count); }
   // a run for a crafting job counts towards its step as it finishes, so a machine removed later keeps what it did
-  if (m.job && m.job.started > m.job.done) {
-    m.job.done++;
-    const step = w.jobs.find((j) => j.id === m.job!.job)?.steps[m.job.step];
+  const lease = m.job && m.job.started > m.job.done ? m.job : undefined, step = lease && w.jobs.find((j) => j.id === lease.job)?.steps[lease.step];
+  for (const s of r.outputs) if (s.chance === undefined || nextRandom(w) < s.chance) {
+    add(w, s.item, s.count);
+    noteMade(w, s.item, s.count);
+    const goal = step?.until?.find((u) => u.item === s.item);
+    if (goal) goal.got += s.count;
+  }
+  if (lease) {
+    lease.done++;
     if (step) step.done++;
   }
   m.active = null;

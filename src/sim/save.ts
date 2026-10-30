@@ -10,7 +10,9 @@ import { allMachines, emptyWorld, FLOOR, isInner, levels, placeCable, placeMachi
 // 6: crafting jobs: `jobs` (each with its steps and how far they are) and `nextJob`; a machine carries `autocraft` (it
 // is available for autocrafting) and, while lent to a job, `job` (the lease). A save before 6 has no jobs and no
 // machine opted in.
-export const SAVE_VERSION = 6;
+// 7: everything from cobblestone: a step of a job that rests on chance carries `until`, and a machine `holding` what it
+// holds (a tree farm's sapling). A save before 7 has none, and keeps what it holds: gathered things are just items.
+export const SAVE_VERSION = 7;
 export const SAVE_KEY = 'gtjs.save';
 
 export class SaveError extends Error {}
@@ -40,7 +42,7 @@ export function deserialize(text: string): World {
   try { data = JSON.parse(text); } catch { throw new SaveError('The save is not valid JSON'); }
   const top = obj(data, 'The save');
   const version = top.version;
-  if (version !== 1 && version !== 2 && version !== 3 && version !== 4 && version !== 5 && version !== SAVE_VERSION) throw new SaveError(`Unknown save version ${String(version)}`);
+  if (version !== 1 && version !== 2 && version !== 3 && version !== 4 && version !== 5 && version !== 6 && version !== SAVE_VERSION) throw new SaveError(`Unknown save version ${String(version)}`);
   const s = obj(top.world, 'world');
 
   const w = emptyWorld();
@@ -72,9 +74,15 @@ export function deserialize(text: string): World {
         if (!known || !ITEMS.has(String(out.item)) || stacks.some((x) => !ITEMS.has(x.item))) return null;
         const after = arr(st.after, 'step after').map((n) => num(n, 'step after'));
         if (after.some((n) => !Number.isInteger(n) || n >= i)) throw new SaveError(`A step of job ${j.id} waits for a later one`);
+        const until = st.until === undefined ? undefined : arr(st.until, 'step until').map((x) => {
+          const o = obj(x, 'a step goal');
+          return { item: String(o.item), count: num(o.count, 'goal count'), got: num(o.got, 'goal got') };
+        });
+        if (until?.some((x) => !ITEMS.has(x.item))) return null;
         return {
           kind, recipe: st.recipe as string, runs, output: { item: String(out.item), count: num(out.count, 'output count') }, inputs: stacks,
-          depth: num(st.depth ?? 0, 'step depth'), after, done: Math.min(runs, num(st.done, 'step done')), wait: typeof st.wait === 'string' ? st.wait : null,
+          depth: num(st.depth ?? 0, 'step depth'), after, done: until ? num(st.done, 'step done') : Math.min(runs, num(st.done, 'step done')),
+          wait: typeof st.wait === 'string' ? st.wait : null, ...(until ? { until } : {}),
         };
       });
       if (!ITEMS.has(j.target) || steps.some((x) => !x)) continue;
@@ -111,6 +119,7 @@ export function deserialize(text: string): World {
       placed.rate = num(m.rate ?? 0, 'rate');
       placed.mode = m.mode === 'up' ? 'up' : 'down';
       placed.autocraft = m.autocraft === true;
+      if (typeof m.holding === 'string' && ITEMS.has(m.holding)) placed.holding = m.holding;
       if (version >= 6 && m.job !== undefined) {
         // lent to a job: keep the lease if its job and step are still there, else hand the machine back as it was
         const l = obj(m.job, 'a lease'), was = obj(l.was, 'a lease'), job = typeof l.job === 'string' ? jobs.get(l.job) : undefined;

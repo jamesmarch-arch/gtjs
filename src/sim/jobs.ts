@@ -6,6 +6,10 @@
 // A step waits for the earlier steps that make what it uses, so independent branches of a plan run side by side. A
 // job pauses, saying why, when nothing in it can go on (something is missing, no machine can take a step, its CPU is
 // gone), and goes on by itself when it can. Items stay in the one storage: a job reserves nothing.
+//
+// A step that rests on chance (a sifter's finds) isn't done after so many runs: it runs, one run at a time on each
+// machine, until it has found what the plan needs out of it (`until`), however the dice fall. If that takes more than
+// the plan's average, it uses up what was made for it, and the steps before it make more.
 import { CRAFTS, GATHERABLE, MACHINES, RECIPES, itemName, recipePower } from './data';
 import type { MachineDef, RecipeDef, Stack } from './data/types';
 import { planFor, type CraftPlan } from './autocraft';
@@ -23,6 +27,7 @@ export interface JobStep {
   depth: number; // in the plan's tree, for indenting
   after: number[]; // earlier steps that make something it uses: it starts when they are done
   done: number; // runs finished
+  until?: { item: string; count: number; got: number }[]; // a step that rests on chance: it is done when it has made this much, whatever `runs` says
   wait: string | null; // why its runs that are not under way can't go out now (null: they can, or it waits for `after`)
 }
 
@@ -57,10 +62,22 @@ export function jobOf(w: World, m: MachineState): { job: Job; step: JobStep } | 
   return job ? { job, step: job.steps[m.job!.step] } : undefined;
 }
 
+/** A step is done when its runs are, or if it rests on chance, when it has found all it was asked for. */
+export function stepDone(s: JobStep): boolean {
+  return s.until ? s.until.every((u) => u.got >= u.count) : s.done >= s.runs;
+}
+
+// how far along a step is, in runs: the runs a step resting on chance was planned to take, as far as its finds have come
+function runsDone(s: JobStep): number {
+  if (!s.until) return Math.min(s.done, s.runs);
+  const all = s.until.reduce((n, u) => n + u.count, 0);
+  return all ? (s.runs * s.until.reduce((n, u) => n + Math.min(u.got, u.count), 0)) / all : s.runs;
+}
+
 /** How far along a job is: runs finished of all its runs, 0..1. */
 export function jobProgress(job: Job): number {
   const all = job.steps.reduce((n, s) => n + s.runs, 0);
-  return all ? job.steps.reduce((n, s) => n + s.done, 0) / all : 1;
+  return all ? job.steps.reduce((n, s) => n + runsDone(s), 0) / all : 1;
 }
 
 /** The machines lent to a job (for one step, when given). */
@@ -83,8 +100,11 @@ export function startJob(w: World, target: string, count: number): Job {
   if (why) throw new Error(why);
   const steps = plan.steps.map((s, i): JobStep => {
     const uses = new Set([...s.inputs.map((x) => x.item), ...s.tools]);
-    const after = plan.steps.slice(0, i).flatMap((e, j) => (uses.has(e.output.item) ? [j] : []));
-    return { kind: s.kind, recipe: s.recipe, runs: s.runs, output: s.output, inputs: s.inputs, depth: s.depth, after, done: 0, wait: null };
+    const after = plan.steps.slice(0, i).flatMap((e, j) => ((e.until ? e.until.some((u) => uses.has(u.item)) : uses.has(e.output.item)) ? [j] : []));
+    return {
+      kind: s.kind, recipe: s.recipe, runs: s.runs, output: s.output, inputs: s.inputs, depth: s.depth, after, done: 0, wait: null,
+      ...(s.until ? { until: s.until.map((u) => ({ ...u, got: 0 })) } : {}),
+    };
   });
   const job: Job = { id: `j${w.nextJob++}`, target, count, cpu: freeCpus(w)[0].uid, steps, paused: null, started: w.tick };
   w.jobs.push(job);
@@ -150,6 +170,41 @@ function lend(m: MachineState, job: Job, step: number, runs: number): void {
   m.enabled = true;
 }
 
+// how many runs a step has left, on average when it rests on chance
+function runsLeft(s: JobStep, r: RecipeDef): number {
+  if (!s.until) return Math.max(1, s.runs - s.done);
+  return Math.max(1, ...s.until.map((u) => {
+    const o = r.outputs.find((x) => x.item === u.item);
+    return o ? Math.ceil((u.count - u.got) / (o.count * (o.chance ?? 1))) : 1;
+  }));
+}
+
+// Luck ran short, or something else took what a step needs: ask the earlier steps it waits for to make more. True when
+// it asked (the step then waits for them again); false when nothing in the job can make it.
+function makeMore(job: Job, i: number, needs: Stack[], w: World): boolean {
+  const s = job.steps[i];
+  let asked = false;
+  for (const x of needs) {
+    const lack = x.count - count(w, x.item);
+    if (lack <= 0) continue;
+    const j = [...s.after].reverse().find((j) => {
+      const e = job.steps[j];
+      return e.until ? e.until.some((u) => u.item === x.item) : e.output.item === x.item;
+    });
+    if (j === undefined) continue;
+    const e = job.steps[j], goal = e.until?.find((u) => u.item === x.item);
+    if (goal) goal.count = goal.got + lack;
+    else {
+      const per = e.output.count / e.runs, more = Math.ceil(lack / per);
+      e.inputs = e.inputs.map((y) => ({ ...y, count: y.count + (y.count / e.runs) * more }));
+      e.output = { ...e.output, count: e.output.count + per * more };
+      e.runs += more;
+    }
+    asked = true;
+  }
+  return asked;
+}
+
 /** One tick of every crafting job, after the machines have ticked. */
 export function tickJobs(w: World): void {
   const machines = allMachines(w);
@@ -158,7 +213,7 @@ export function tickJobs(w: World): void {
   for (const m of machines) {
     if (!m.job) continue;
     const of = jobOf(w, m);
-    if (!of || m.job.done >= m.job.runs) handBack(w, m);
+    if (!of || m.job.done >= m.job.runs || stepDone(of.step)) handBack(w, m);
     else if (m.recipe !== of.step.recipe || !m.enabled) delete m.job;
   }
   for (const m of machines) if (isCpu(m)) m.rate = 0;
@@ -173,37 +228,46 @@ export function tickJobs(w: World): void {
     let going = false; // something in it worked this tick
     job.steps.forEach((s, i) => {
       s.wait = null;
-      if (s.done >= s.runs || s.after.some((j) => job.steps[j].done < job.steps[j].runs)) return;
+      if (stepDone(s) || s.after.some((j) => !stepDone(job.steps[j]))) return;
       if (s.kind === 'craft') {
         const n = Math.min(s.runs - s.done, maxCrafts(w, s.recipe));
         if (n > 0) { craft(w, s.recipe, n); s.done += n; going = true; }
-        if (s.done < s.runs) s.wait = (canCraft(w, s.recipe, s.runs - s.done) ?? '').replace(/^Needs/, 'needs');
+        if (s.done < s.runs && !makeMore(job, i, CRAFTS.get(s.recipe)!.inputs.map((x) => ({ ...x, count: x.count * (s.runs - s.done) })), w))
+          s.wait = (canCraft(w, s.recipe, s.runs - s.done) ?? '').replace(/^Needs/, 'needs');
         return;
       }
       const r = RECIPES.get(s.recipe)!, lent = machines.filter((m) => m.job?.job === job.id && m.job.step === i);
       if (lent.some((m) => m.active && !m.stalled)) going = true;
-      const out = lent.reduce((n, m) => n + m.job!.runs - m.job!.done, 0), left = s.runs - s.done - out;
+      else if (lent.every((m) => !m.active) && r.inputs.some((x) => count(w, x.item) < x.count)
+        && makeMore(job, i, r.inputs.map((x) => ({ ...x, count: x.count * runsLeft(s, r) })), w)) return;
+      // a step that rests on chance is lent to every machine that can take it, a run at a time, until it has enough
+      const out = lent.reduce((n, m) => n + m.job!.runs - m.job!.done, 0), left = s.until ? Infinity : s.runs - s.done - out;
       if (left <= 0) {
         if (lent.length && !lent.some((m) => m.active && !m.stalled)) s.wait = stuck(w, lent[0], r);
         return;
       }
       const able = machines.filter((m) => m.autocraft && canRun(MACHINES.get(m.def)!, r));
       const idle = able.filter((m) => !m.job && !m.active);
-      const ready = idle.filter((m) => !unpowered(w, m, r));
+      let spare = r.holds ? count(w, r.holds) : 0; // a recipe that holds something: each machine needs its own
+      const fit = idle.filter((m) => !unpowered(w, m, r));
+      const ready = fit.filter((m) => !r.holds || m.holding === r.holds || spare-- > 0);
       const can = Math.min(...r.inputs.map((x) => Math.floor(count(w, x.item) / x.count)));
       const kinds = [...MACHINES.values()].filter((d) => canRun(d, r));
       if (!able.length) s.wait = `no ${machineNames(kinds).replace(/^an? /, '')} is available for autocrafting: open one and switch it on`;
       else if (!idle.length) s.wait = lent.length ? null : `waiting for ${machineNames(able.map((m) => MACHINES.get(m.def)!))} to free up`;
-      else if (!ready.length) s.wait = `the ${MACHINES.get(idle[0].def)!.name} at (${idle[0].x}, ${idle[0].y}) has ${unpowered(w, idle[0], r)}`;
+      else if (!ready.length) s.wait = fit.length ? `needs ${an(itemName(r.holds!))} for the ${MACHINES.get(fit[0].def)!.name} to hold` : `the ${MACHINES.get(idle[0].def)!.name} at (${idle[0].x}, ${idle[0].y}) has ${unpowered(w, idle[0], r)}`;
       else if (can < 1) s.wait = lent.length ? null : `needs ${short(w, r.inputs, 1)}`;
       if (s.wait !== null || !ready.length || can < 1) return;
       // split what is left across the ready machines, as evenly as runs allow
-      const k = Math.min(ready.length, left);
-      for (let n = 0; n < k; n++) lend(ready[n], job, i, Math.floor(left / k) + (n < left % k ? 1 : 0));
+      if (s.until) for (const m of ready.slice(0, can)) lend(m, job, i, 1);
+      else {
+        const k = Math.min(ready.length, left);
+        for (let n = 0; n < k; n++) lend(ready[n], job, i, Math.floor(left / k) + (n < left % k ? 1 : 0));
+      }
       going = true;
     });
 
-    if (job.steps.every((s) => s.done >= s.runs)) {
+    if (job.steps.every(stepDone)) {
       for (const m of lentTo(w, job)) handBack(w, m);
       w.jobs.splice(w.jobs.indexOf(job), 1);
       w.jobsDone.push(job);
@@ -216,5 +280,5 @@ export function tickJobs(w: World): void {
 
 /** The recipe a step runs, by name: its main output. */
 export function stepName(s: JobStep): string {
-  return itemName(s.kind === 'craft' ? CRAFTS.get(s.recipe)!.output.item : RECIPES.get(s.recipe)!.outputs[0].item);
+  return itemName(s.output.item);
 }

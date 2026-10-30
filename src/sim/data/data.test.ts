@@ -1,13 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { CONDUITS, CRAFTS, GATHERABLE, ITEMS, MACHINES, QUESTS, RECIPES } from '.';
+import * as cobble from './cobble';
 import * as compact from './compact';
 import * as lv from './lv';
 import * as me from './me';
 import * as mv from './mv';
 import * as steam from './steam';
 
-const items = [...steam.items, ...lv.items, ...mv.items, ...compact.items, ...me.items], machines = [...steam.machines, ...lv.machines, ...mv.machines, ...compact.machines, ...me.machines];
-const recipes = [...steam.recipes, ...lv.recipes, ...mv.recipes], conduits = [...steam.conduits, ...lv.conduits];
+const items = [...steam.items, ...lv.items, ...mv.items, ...cobble.items, ...compact.items, ...me.items], machines = [...steam.machines, ...lv.machines, ...mv.machines, ...cobble.machines, ...compact.machines, ...me.machines];
+const recipes = [...steam.recipes, ...lv.recipes, ...mv.recipes, ...cobble.recipes], conduits = [...steam.conduits, ...lv.conduits];
 
 describe('game data', () => {
   const kinds = new Set(machines.map((m) => m.kind));
@@ -48,6 +49,10 @@ describe('game data', () => {
     }
     const unreachable = items.filter((i) => !have.has(i.id) && !['water', 'steam'].includes(i.id)).map((i) => i.id);
     expect(unreachable).toEqual([]);
+  });
+
+  it('gathers nothing by hand but cobblestone', () => {
+    expect(GATHERABLE).toEqual(['cobblestone']);
   });
 
   it('has quests that point at real things and real earlier quests', () => {

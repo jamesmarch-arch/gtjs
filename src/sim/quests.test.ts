@@ -7,40 +7,49 @@ import { count, emptyWorld, placeMachine, placePipe, placePort, setRecipe, tick,
 const q = (id: string) => QUESTS.get(id)!;
 
 describe('the quest book', () => {
-  it('opens with the furnace and keeps the rest locked', () => {
+  it('opens with cobblestone and keeps the rest locked', () => {
     const w = emptyWorld();
-    expect(questState(w, q('furnace'))).toBe('active');
-    expect(questState(w, q('crush'))).toBe('locked');
+    expect(questState(w, q('cobblestone'))).toBe('active');
+    expect(questState(w, q('crusher'))).toBe('locked');
+    expect([...QUESTS.values()].filter((x) => !x.after.length).map((x) => x.id)).toEqual(['cobblestone']);
   });
 
   it('completes a quest when its goal is met, then opens the next', () => {
     const w = emptyWorld();
-    placeMachine(w, 'stone_furnace', 0, 0);
-    expect(checkQuests(w).map((x) => x.id)).toEqual(['furnace']);
-    expect(questState(w, q('crush'))).toBe('active');
+    w.storage.cobblestone = 8;
+    expect(checkQuests(w).map((x) => x.id)).toEqual(['cobblestone']);
+    expect(questState(w, q('crusher'))).toBe('active');
     expect(checkQuests(w)).toEqual([]);
   });
 
   it('completes a chain at once when the goals are already met', () => {
     const w = emptyWorld();
+    w.quests = { cobblestone: 'claimed', crusher: 'claimed', sifter: 'claimed' };
     placeMachine(w, 'stone_furnace', 0, 0);
     w.stats.burned = 1;
     w.stats.made = { crushed_iron: 4, iron_ingot: 4 };
     expect(checkQuests(w).map((x) => x.id)).toEqual(['furnace', 'crush', 'stoke', 'ingots']);
   });
 
+  it('walks the opening the way it is played: nothing asks for what has no source yet', () => {
+    // every item an open quest's goal or a craft on the way asks for is made by what the quests before it have built
+    const order = ['cobblestone', 'crusher', 'sifter', 'furnace', 'crush', 'stoke', 'ingots', 'copper_tin', 'bronze', 'plates', 'boiler', 'soak', 'bricks', 'sapling', 'tree_farm'];
+    order.forEach((id, i) => { for (const a of q(id).after) expect(order.slice(0, i), `${id} after ${a}`).toContain(a); });
+  });
+
   it('needs every goal and every earlier quest', () => {
     const w = emptyWorld();
-    w.quests = { furnace: 'claimed', crush: 'claimed', stoke: 'claimed', ingots: 'claimed' };
+    w.quests = { cobblestone: 'claimed', crusher: 'claimed', sifter: 'claimed', furnace: 'claimed', crush: 'claimed', stoke: 'claimed', ingots: 'claimed' };
     w.stats.made = { copper_dust: 6 };
     expect(checkQuests(w)).toEqual([]);
     w.stats.made.tin_dust = 2;
     expect(checkQuests(w).map((x) => x.id)).toEqual(['copper_tin']);
-    expect(questState(w, q('boiler'))).toBe('locked'); // after plates and bricks
+    expect(questState(w, q('boiler'))).toBe('locked'); // after plates
   });
 
   it('pays the reward once, on claiming', () => {
     const w = emptyWorld();
+    w.quests = { cobblestone: 'claimed', crusher: 'claimed', sifter: 'claimed' };
     placeMachine(w, 'stone_furnace', 0, 0);
     checkQuests(w);
     expect(() => claimQuest(w, 'crush')).toThrow(/not ready/);

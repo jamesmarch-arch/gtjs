@@ -222,6 +222,7 @@ button.danger { background: #e2483d; color: #fff; }
 .term .stack { white-space: nowrap; margin-right: 6px; }
 .term .tool { padding: 0 6px; border: 1px solid currentColor; border-radius: 9px; font-size: 12px; white-space: nowrap; }
 .term .why { color: #b8372d; font-size: 12px; }
+.term .average { color: #8a5a12; font-style: italic; }
 .term .short { color: #b8372d; }
 .term .blocked-list { list-style: none; margin: 0; padding: 0; }
 .term .blocked-list li { padding: 3px 0; }

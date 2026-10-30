@@ -1,0 +1,360 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Stone Crusher</title>
+<script src="cf-head.js"></script></head><body>
+<script src="core.js"></script>
+<script src="gt-bridge.js"></script>
+<script src="gt-parts.js"></script>
+<script>
+/* Stone Crusher (gtjs, the first hour): an edge-runner mill worked by a falling weight. No fuel, no steam, no power.
+   Breaks a block down one stage per run, one for one: cobblestone -> gravel -> sand -> stone dust.
+
+   How it works (truth first)
+   1. A heavy stone hangs on a rope. The rope runs over a pulley on the jib, along under the beam and round a wooden
+      drum on the upright main shaft. The rope brake on the post holds it. Let the brake off and the falling stone
+      unwinds the rope, and the rope turns the shaft (it leaves the drum at a tangent, past the post).
+   2. Two stone wheels (runners) stand on edge in a round stone pan, on an arm through the shaft. As the shaft turns
+      they roll round the pan and their weight crushes what lies under them. A wooden sweep behind each runner ploughs
+      the bed back into their track.
+   3. Stone comes from the hopper behind the pan, down a trough, over the rim, when its gate opens.
+   4. When it is fine enough it is swept to a slot in the pan floor. It falls down a chute inside the plinth, out of
+      the spout and into the tub.
+   5. At the end of a run the weight is at the floor. The winding bar on the shaft is walked round the other way, which
+      winds the rope back on the drum and lifts the stone for the next run.
+   Where the stone is: hopper -> trough -> pan -> under the runners -> floor slot -> chute -> spout -> tub.
+   Where the work is: raised weight -> rope -> drum -> shaft -> arm -> runners.
+
+   x = depth (front at x = 84), y = width (+y = viewer-left: the weight's side), z = up. 1 unit = 1 cm.
+
+   Parts
+   MASONRY  cobblestone plinth . round stone pan with its rim . floor slot . spout mouth . step stone
+   FRAME    two oak posts . beam and jib . two knee braces . pulley cheeks
+   DRIVE    counterweight (a strapped block of masonry) with its ring . rope . pulley . rope drum with flanges . main
+            shaft . winding bar . rope brake (block, clamp, lever)
+   MILL     arm . two runner stones . two sweeps . step bearing . bed of stone
+   FEED     hopper on four legs . gate . trough
+   OUTPUT   discharge chute . spout . wooden tub with its heap
+
+   Contact checks (numbers)
+   - plinth x 12..84, y 4..76, z 0..22. Pan centre (48, 40), outer r 29, inner r 26, wall z 22..31, floor z 27.
+   - runners r 10, centre z 37 (bottom on the floor at z 27), 16.5 from the shaft, 7 thick: track r 13..20.
+   - posts x 44..52 at y 4..10 and y 70..76 stand outside the pan (y 11..69), z 22..104, under the beam (z 104..110).
+   - main shaft r 2.6 at (48, 40), z 8 (step stone) to z 110 (through the beam). Bar r 24 at z 84 clears both posts (y 16..64).
+   - drum r 5, z 92..102. The rope leaves it at x = 53 going +y, 1 clear of the post's face (x 52), and reaches the pulley's
+     top (r 4 at y 83, z 96) at z 100; it drops from the far side (y 87) to the weight (y 80..94, x 46..60).
+   - the weight drops 72 (z 74 to z 2, top z 88 to z 16): 72 / (2 pi 5) = 2.3 turns of the drum and the runners.
+   - trough from the hopper (x 12, z 36) to the rim's edge (x 19.5, z 33): above the rim (z 31).
+   - floor slot x 64..72, y 36..44; chute under it from (66, z 26) to the front (84, z 13); spout to (90, z 10), over the tub (top z 9).
+*/
+const SCR = { XF: 84, Y0: 4, Y1: 76, ZP: 22, cx: 48, cy: 40, R: 29, Ri: 26, ZF: 27, ZR: 31,
+  rw: 10, rt: 3.5, rr: 16.5, zw: 37, shaft: 2.6, zb0: 104, zb1: 110, drum: 5, zd0: 92, zd1: 102, zbar: 84, xr: 53,
+  pul: { y: 83, z: 96, r: 4 }, wt: { x: 53, y: 87, hw: 7, h: 14, z1: 74, z0: 2 },
+  hop: { bot: [2, 34, 10, 46], top: [0, 28, 12, 52], z: 34, h: 12 }, tub: [86, 28, 99, 52], tubH: 9 };
+const SCR_OUT = rectUV(SCR.Y0, 0, SCR.Y1, SCR.ZP);
+const SCR_STONE = { l:'#cfc9be', m:'#a39d93', d:'#55504a' };
+const SCR_RUN = { l:'#c4beb3', m:'#958f85', d:'#514c45' };
+const SCR_OAK = { l:'#c99a62', m:'#a87a45', d:'#5c3e1f' };
+const SCR_PINE = { l:'#e0b57c', m:'#c49358', d:'#6e4a26' };
+const SCR_ROPE = '#dcc9a0';
+// what each stage looks like: colour, and how big its lumps are (0: too fine to have lumps)
+const SCR_MAT = { cobblestone:{ col:'#8f8b84', s:.95 }, gravel:{ col:'#a2968a', s:.5 }, sand:{ col:'#e8d59c', s:0 }, stone_dust:{ col:'#e6e2d8', s:0 } };
+const SCR_NEXT = { cobblestone:'gravel', gravel:'sand', sand:'stone_dust' };
+const scrFrom = st => ((st.recipe && st.recipe.id) || '').match(/cobblestone|gravel|sand/)?.[0] || 'cobblestone';
+const scrMats = st => { const a = scrFrom(st); return [SCR_MAT[a], SCR_MAT[SCR_NEXT[a]]]; };
+
+/* ---------- where everything is, from progress ---------- */
+function scrFlow(st){
+  const p = st.active ? (st.progress || 0) : 0;
+  const fall = !st.active ? 0 : p < .9 ? p/.9 : 1 - (p - .9)/.1;     // the weight falls for the run; the last tenth winds it back
+  const drop = SCR.wt.z1 - SCR.wt.z0, ang = .6 + fall*drop/SCR.drum;  // rope paid out / drum radius
+  return { p, fall, ang, roll: ang*SCR.rr/SCR.rw, wz: SCR.wt.z1 - drop*fall, feed: st.active && p < .1, grind: st.active && p >= .08 && p < .86, out: st.active && p >= .86 };
+}
+
+/* ---------- small builders ---------- */
+const scrRand = (a, b) => { const s = Math.sin(a*12.9898 + b*78.233)*43758.5453; return s - Math.floor(s); };
+// rows of irregular cobbles on a face, the same every time
+function scrStones(plane, u0, u1, v0, v1, base, seed, rowH = 11, uLen = 15){
+  let fills = '', lines = '';
+  for (let v = v0, row = 0; v < v1 - .5; v += rowH, row++){
+    const vt = Math.min(v1, v + rowH);
+    if (vt - v < 3) continue;
+    for (let u = u0 - (row % 2 ? uLen/2 : 0), k = 0; u < u1 - .5; k++){
+      const len = uLen + .4*uLen*scrRand(row + seed, k), a = Math.max(u0, u), b = Math.min(u1, u + len);
+      u += len;
+      if (b - a < 3) continue;
+      const pts = on(plane, rrUV(a + .8, v + .8, b - .8, vt - .8, 2.2, 2)), shade = scrRand(seed + k, row + 3);
+      fills += fill(pd(pts), shade < .33 ? base.l : shade < .66 ? mix(base.l, base.m, .5) : base.m);
+      lines += pd(pts);
+    }
+  }
+  return fills + `<path d="${lines}" fill="none" stroke="${INK}" stroke-width=".8" opacity=".55"/>`;
+}
+// a square timber between two points on the level (a rod would be round)
+function scrBeam(a, b, hw, hh, m, w = 1){
+  const d = norm(sub(b, a)), u = [-d[1]*hw, d[0]*hw, 0];
+  const ring = p => [[p[0] - u[0], p[1] - u[1], p[2] - hh], [p[0] + u[0], p[1] + u[1], p[2] - hh], [p[0] + u[0], p[1] + u[1], p[2] + hh], [p[0] - u[0], p[1] - u[1], p[2] + hh]];
+  const A = ring(a), B = ring(b), capB = vis(d), cap = capB ? B : A, cn = capB ? d : d.map(v => -v);
+  return loft(A, B, n => toneI(n, m)) + (vis(cn) ? shape(cap, toneI(cn, m), w*.8) : '') + (facing([0,0,1]) ? shape(A.slice(2).concat(B.slice(2).reverse()), toneI([0,0,1], m), 0) : '') + hullInk([...A, ...B], w);
+}
+const scrCord = (pts, w = 1.1) => { const d = pd(pts, false);
+  return `<path d="${d}" fill="none" stroke="${INK}" stroke-width="${f(w + 1)}" stroke-linecap="round" stroke-linejoin="round"/><path d="${d}" fill="none" stroke="${SCR_ROPE}" stroke-width="${f(w)}" stroke-linecap="round" stroke-linejoin="round"/>`; };
+const scrSpeck = ([x, y, z], r, col) => { const [X, Y] = P(x, y, z); return `<circle cx="${f(X)}" cy="${f(Y)}" r="${f(r)}" fill="${col}" stroke="${INK}" stroke-width=".4"/>`; };
+
+/* ---------- the plinth ---------- */
+function scrPlinth(){
+  const { XF, Y0, Y1, ZP } = SCR, m = SCR_STONE, FRONT = facing([1,0,0]), BACK = facing([-1,0,0]);
+  let s = extrude(SCR_OUT, 12, XF, m);
+  if (FRONT) s += fill(pd(on(PX(XF), SCR_OUT)), tone([1,0,0], m)) + scrStones(PX(XF + .2), Y0, Y1, 0, ZP, m, 1);
+  if (BACK) s += fill(pd(on(PX(12), SCR_OUT)), tone([-1,0,0], m)) + scrStones(PX(11.8), Y0, Y1, 0, ZP, m, 2);
+  if (facing([0,1,0])) s += scrStones(PY(Y1 + .2), 12, XF, 0, ZP, m, 3);
+  if (facing([0,-1,0])) s += scrStones(PY(Y0 - .2), 12, XF, 0, ZP, m, 4);
+  if (facing([0,0,1])) s += scrStones(PZ(ZP + .1), 12, XF, Y0, Y1, m, 5, 12, 14);
+  if (FRONT){
+    // the spout's mouth, and a board with the machine's name
+    const mouth = on(PX(XF + .3), [...arcUV(40, 13, 6, 0, 180, 8), [34, 8], [46, 8]]);
+    s += shape(mouth, GT.RECESS, 1.5);
+    s += shape(on(PX(XF + .35), rrUV(50, 7, 72, 15.5, 1)), SCR_PINE.m, 1.1) + tx(XF + .4, 61, 9.8, 'CRUSHER', 3.6, INK, 800);
+  }
+  if (FRONT) s += ink(pd(on(PX(XF), SCR_OUT)), 2.2);
+  if (BACK) s += ink(pd(on(PX(12), SCR_OUT)), 2.2);
+  return s + hullInk([...on(PX(12), SCR_OUT), ...on(PX(XF), SCR_OUT)], 2.8);
+}
+
+/* ---------- the pan and the bed of stone in it ---------- */
+function scrPan(st, fl){
+  const { cx, cy, R, Ri, ZP, ZF, ZR } = SCR, [from, to] = scrMats(st), p = fl.p;
+  const ring = (z, r, n = 40) => on(PZ(z), ellUV(cx, cy, r, r, n));
+  const A = ring(ZP, R), B = ring(ZR, R), open = ring(ZR, Ri);
+  let s = loft(A, B, n => tone(n, SCR_STONE)) + fill(pd(B), tone([0,0,1], SCR_STONE));
+  // courses of the wall
+  let joints = pd(on(PZ((ZP + ZR)/2), arcUV(cx, cy, R + .02, YAW - 90, YAW + 90, 20)), false);
+  for (let i = 0; i < 28; i++){ const a = i*Math.PI/14, n = [Math.cos(a), Math.sin(a), 0];
+    if (facing(n)){ const z = i % 2 ? [ZP, (ZP + ZR)/2] : [(ZP + ZR)/2, ZR]; joints += pd([[cx + R*n[0], cy + R*n[1], z[0]], [cx + R*n[0], cy + R*n[1], z[1]]], false); } }
+  s += `<path d="${joints}" fill="none" stroke="${INK}" stroke-width=".8" opacity=".55"/>`;
+  // inside: the far wall in shadow, then the floor, clipped to the opening
+  let inner = fill(pd(open), SCR_STONE.d) + fill(pd(ring(ZF, Ri)), mix(SCR_STONE.m, SCR_STONE.d, .25));
+  inner += shape(on(PZ(ZF + .05), rectUV(64, 36, 72, 44)), GT.RECESS, .8);
+  // the bed: it arrives, breaks up under the runners and goes out through the slot
+  const amt = st.active ? (p < .1 ? p/.1 : p < .86 ? 1 : Math.max(0, 1 - (p - .86)/.14)) : 0;
+  if (amt > .01){
+    const col = mix(from.col, to.col, gtClamp((p - .1)/.76));
+    const ro = 14 + 8*amt, ri = 14 - 3*amt, band = pd(ring(ZF + .1, ro, 32)) + pd(ring(ZF + .1, ri, 32));
+    inner += `<path d="${band}" fill="${col}" fill-rule="evenodd" stroke="${INK}" stroke-width=".5"/>`;
+    const size = from.s + (to.s - from.s)*gtClamp((p - .1)/.76), lumps = [];
+    if (size > .12) for (let i = 0; i < 14; i++){ const a = i*2*Math.PI/14 + .2*Math.sin(i*3), r = 12.5 + 8.5*scrRand(i, 2), at = [cx + r*Math.cos(a), cy + r*Math.sin(a), ZF + 1.2*size];
+      if (i/14 < amt) lumps.push({ at, svg: gtLump(at, size*(.75 + .4*scrRand(i, 5)), null, matOf(col)) }); }
+    inner += byDepth(lumps);
+    // down the slot at the end
+    if (fl.out) for (let i = 0; i < 3; i++) inner += scrSpeck([66 + 2*i, 38 + 2*i, ZF + .2], .8, col);
+  }
+  // the charge coming over the rim
+  if (fl.feed){ const u = p/.1, x = 19 + 13*u, z = ZR + 2 - (ZR + 2 - ZF)*u*u; if (x > 19.5) inner += gtLump([x, cy, z], .8, null, matOf(from.col)); }
+  s += clipTo(open, inner) + ink(pd(open), 1.5) + ink(pd(B), 1.2) + hullInk([...A, ...B], 2);
+  return s;
+}
+
+/* ---------- the runners, the arm and the shaft: one chain along the arm, so the order can't go wrong ---------- */
+function scrRunner(sign, fl){
+  const { cx, cy, rr, rt, rw, zw } = SCR, a = fl.ang, d = [sign*Math.cos(a), sign*Math.sin(a), 0], u = [-d[1], d[0], 0];
+  const c = r => [cx + d[0]*r, cy + d[1]*r, zw], A = c(rr - rt), B = c(rr + rt), pt = (o, r, ph) => [o[0] + u[0]*r*Math.cos(ph), o[1] + u[1]*r*Math.cos(ph), zw + r*Math.sin(ph)];
+  let s = rod(A, B, rw, SCR_RUN, toneI, 1.4, rw, 28);
+  // tooling across the tread, turning with the wheel
+  let tread = ''; for (let i = 0; i < 10; i++){ const ph = fl.roll*sign + i*Math.PI/5, n = [u[0]*Math.cos(ph), u[1]*Math.cos(ph), Math.sin(ph)];
+    if (facing(n)) tread += pd([pt(A, rw + .05, ph), pt(B, rw + .05, ph)], false); }
+  s += `<path d="${tread}" fill="none" stroke="${INK}" stroke-width=".8" opacity=".6"/>`;
+  // the end that faces us: chisel marks and the iron hub
+  const end = facing(d) ? B : facing(d.map(v => -v)) ? A : null;
+  if (end){ let marks = ''; for (let i = 0; i < 6; i++){ const ph = fl.roll*sign + i*Math.PI/3; marks += pd([pt(end, 5, ph), pt(end, 8, ph)], false); }
+    s += `<path d="${marks}" fill="none" stroke="${INK}" stroke-width=".9" opacity=".65"/>`
+      + shape(Array.from({ length:14 }, (_, i) => pt(end, 2.8, i*Math.PI/7)), GT.IRON.m, .9); }
+  return s;
+}
+function scrMill(st, fl){
+  const { cx, cy, rr, rt, zw, ZF, shaft } = SCR, a = fl.ang, dA = [Math.cos(a), Math.sin(a)];
+  const pt = (s, r, z = zw) => [cx + s*dA[0]*r, cy + s*dA[1]*r, z];
+  const side = s => {
+    // the sweep: an arm low down, trailing the runner, with a blade on the floor
+    const ta = a - .75 + (s < 0 ? Math.PI : 0), sw = r => [cx + r*Math.cos(ta), cy + r*Math.sin(ta), ZF + 3.6];
+    const n = [Math.cos(ta), Math.sin(ta)], t = [-n[1], n[0]], q = (r, dz) => [cx + r*n[0] + t[0]*.6, cy + r*n[1] + t[1]*.6, ZF + dz];
+    const blade = [q(11, .2), q(22, .2), q(22, 4.4), q(11, 4.4)];
+    const sweep = scrBeam(sw(2), sw(22), .7, .7, SCR_OAK, .7) + shape(blade, toneI([t[0], t[1], 0], SCR_PINE), .7);
+    return [ sweep,
+      scrBeam(pt(s, 2), pt(s, rr - rt), 1.3, 1.3, SCR_OAK, .9),
+      scrRunner(s, fl),
+      rod(pt(s, rr + rt), pt(s, rr + rt + 1.4), 1.3, GT.IRON, toneI, .8) ];
+  };
+  const hub = cyl(cx, cy, ZF, ZF + 1.6, 4.5, GT.IRON, toneI, .9) + cyl(cx, cy, ZF + 1.6, 47, shaft, SCR_OAK, toneI, 1) + cyl(cx, cy, zw - 2.2, zw + 2.2, 3.6, GT.IRON, toneI, .9);
+  const nearA = depthOf([dA[0], dA[1], 0]) > 0;
+  const far = side(nearA ? -1 : 1), near = side(nearA ? 1 : -1);
+  return far.slice().reverse().join('') + hub + near.join('');
+}
+
+/* ---------- drive: drum, rope, pulley, weight, brake ---------- */
+function scrDrum(fl){
+  const { cx, cy, drum, zd0, zd1 } = SCR;
+  let s = cyl(cx, cy, zd0, zd0 + 1, drum + 1.5, SCR_OAK, toneI, 1) + cyl(cx, cy, zd0 + 1, zd1 - 1, drum, SCR_PINE, toneI, 1.1);
+  // the turns of rope left on the drum, near side only
+  const turns = Math.max(1, Math.round((1 - fl.fall)*5)); let d = '';
+  for (let i = 0; i < turns; i++) d += pd(on(PZ(zd0 + 2 + i*1.4), arcUV(cx, cy, drum + .1, YAW - 88, YAW + 88, 14)), false);
+  s += `<path d="${d}" fill="none" stroke="${INK}" stroke-width="1.5"/><path d="${d}" fill="none" stroke="${SCR_ROPE}" stroke-width=".7"/>`;
+  return s + cyl(cx, cy, zd1 - 1, zd1, drum + 1.5, SCR_OAK, toneI, 1);
+}
+function scrWeight(fl){
+  const { x, y, hw, h } = SCR.wt, z = fl.wz, m = SCR_STONE, z1 = z + h, Y0 = y - hw, Y1 = y + hw, X0 = x - hw, X1 = x + hw;
+  let s = box(X0, Y0, z, X1, Y1, z1, m, tone, 1.4);
+  if (facing([1,0,0])) s += scrStones(PX(X1 + .1), Y0, Y1, z, z1, m, 11, 7, 8);
+  if (facing([-1,0,0])) s += scrStones(PX(X0 - .1), Y0, Y1, z, z1, m, 12, 7, 8);
+  if (facing([0,1,0])) s += scrStones(PY(Y1 + .1), X0, X1, z, z1, m, 13, 7, 8);
+  if (facing([0,-1,0])) s += scrStones(PY(Y0 - .1), X0, X1, z, z1, m, 14, 7, 8);
+  // two iron straps over the top, and the ring the rope is tied to
+  const band = (p0, p1) => `<path d="${pd([p0, p1], false)}" fill="none" stroke="${GT.IRON.d}" stroke-width="2.2"/>`;
+  if (facing([0,0,1])) s += scrStones(PZ(z1 + .1), X0, X1, Y0, Y1, m, 15, 7, 8) + band([x, Y0, z1 + .15], [x, Y1, z1 + .15]) + band([X0, y, z1 + .15], [X1, y, z1 + .15]);
+  if (facing([1,0,0])) s += band([X1 + .15, y, z], [X1 + .15, y, z1]);
+  if (facing([-1,0,0])) s += band([X0 - .15, y, z], [X0 - .15, y, z1]);
+  if (facing([0,1,0])) s += band([x, Y1 + .15, z], [x, Y1 + .15, z1]);
+  if (facing([0,-1,0])) s += band([x, Y0 - .15, z], [x, Y0 - .15, z1]);
+  return s + rod([x, y, z1], [x, y, z1 + 1.6], 1.2, GT.IRON, toneI, .8);
+}
+function scrPulley(){
+  const { y, z, r } = SCR.pul, x = SCR.xr;
+  let s = cylX(x - 1.5, x + 1.5, y, z, r, SCR_OAK, toneI, 1.1, 20);
+  if (facing([1,0,0]) || facing([-1,0,0])){ const fx = facing([1,0,0]) ? x + 1.55 : x - 1.55; s += fill(pd(on(PX(fx), ellUV(y, z, 1.1, 1.1, 8))), GT.IRON.d); }
+  const arc = []; for (let i = 0; i <= 8; i++){ const a = i/8*Math.PI/2; arc.push([x, y + (r + .3)*Math.sin(a), z + (r + .3)*Math.cos(a)]); }
+  return s + scrCord([[x, y - 4, z + r + .2], ...arc]);
+}
+function scrBrake(st){
+  const x = SCR.xr, y = 73, v = gtClamp(st.valve || 0), open = v*1.2;
+  const lever = rod([54.5, y, 101.6 + open], [61 - 3*v, y, 76 + 6*v], .9, SCR_OAK, toneI, .8);
+  return box(52, y - 2.5, 96, 55.5, y + 2.5, 99.2, SCR_PINE, toneI, .9) + scrCord([[x, y - 2.5, 99.5], [x, y + 2.5, 99.8]])
+    + box(52, y - 2.5, 100.5 + open, 55.5, y + 2.5, 102 + open, GT.IRON, toneI, .8) + lever;
+}
+
+/* ---------- feed and output ---------- */
+function scrHopper(st, fl){
+  const H = SCR.hop, [from] = scrMats(st), mm = matOf(from.col), legs = [[2, 34.5], [10, 34.5], [2, 45.5], [10, 45.5]];
+  const rest = [[4, 37, H.z + 2], [8, 43, H.z + 2], [5, 43, H.z + 4], [8, 37, H.z + 4]].slice(0, Math.min(4, st.input | 0)).map(at => ({ at, svg: gtLump(at, .8, null, mm) }));
+  return byDepth(legs.map(([x, y]) => ({ box: [[x - 1, y - 1, 0], [x + 1, y + 1, H.z]], svg: box(x - 1, y - 1, 0, x + 1, y + 1, H.z, SCR_OAK, toneI, .8) })))
+    + gtHopper(H.z, H.bot, H.top, H.h, SCR_PINE, rest, fl.feed);
+}
+function scrTrough(st, fl){
+  const [from] = scrMats(st), y0 = 36, y1 = 44, a = [11, 36], b = [19.5, 33], M = SCR_PINE;
+  const lip = y => shape([[a[0], y, a[1]], [b[0], y, b[1]], [b[0], y, b[1] + 2], [a[0], y, a[1] + 2]], toneI([0, y > 40 ? 1 : -1, 0], M), .8);
+  let s = shape([[a[0], y0, a[1]], [b[0], y0, b[1]], [b[0], y1, b[1]], [a[0], y1, a[1]]], toneI(norm([3, 0, 8.5]), M), .9);
+  if (fl.feed){ const x = 19 - 8*(1 - fl.p/.1); if (x < 19) s += gtLump([x, 40, a[1] + (b[1] - a[1])*(x - a[0])/(b[0] - a[0]) + 1.4], .7, null, matOf(from.col)); }
+  return (facing([0,1,0]) ? lip(y0) + s + lip(y1) : lip(y1) + s + lip(y0));
+}
+function scrSpout(st, fl){
+  const x0 = SCR.XF, x1 = 90, z0 = 14, z1 = 10.5, y0 = 36, y1 = 44, M = GT.IRON, [, to] = scrMats(st);
+  const lip = y => shape([[x0, y, z0], [x1, y, z1], [x1, y, z1 + 2.4], [x0, y, z0 + 2.4]], toneI([0, y > 40 ? 1 : -1, 0], M), .8);
+  let s = shape([[x0, y0, z0], [x1, y0, z1], [x1, y1, z1], [x0, y1, z0]], toneI(norm([3.5, 0, 6]), M), .9);
+  if (fl.out) for (let i = 0; i < 4; i++){ const u = ((fl.p*12 + i/4) % 1), x = x0 + (x1 - x0)*u; s += scrSpeck([x, 38 + i*1.4, z0 + (z1 - z0)*u + .6], .8, to.col); }
+  return facing([0,1,0]) ? lip(y0) + s + lip(y1) : lip(y1) + s + lip(y0);
+}
+function scrTub(st, fl){
+  const [x0, y0, x1, y1] = SCR.tub, h = SCR.tubH, [, to] = scrMats(st), mm = matOf(to.col);
+  const A = on(PZ(0), rrUV(x0 + .8, y0 + .8, x1 - .8, y1 - .8, 2)), B = on(PZ(h), rrUV(x0, y0, x1, y1, 2.5));
+  const n = st.output | 0, full = gtClamp(n/8), cx = (x0 + x1)/2, cy = (y0 + y1)/2;
+  let inner = fill(pd(on(PZ(.8), rrUV(x0 + 1.4, y0 + 1.4, x1 - 1.4, y1 - 1.4, 2))), SCR_PINE.d);
+  if (n > 0 || fl.out){
+    const zt = 2 + 7*full, a = on(PZ(.8), ellUV(cx, cy, 5.2, 10.5, 18)), b = on(PZ(zt), ellUV(cx, cy, 1.4 + 2*full, 3 + 4*full, 18));
+    inner += loft(a, b, nn => toneI(nn, mm)) + fill(pd(b), mm.l) + hullInk([...a, ...b], .7);
+    if (to.s > 0) for (let i = 0; i < 9; i++) inner += scrSpeck([cx + 6*(scrRand(i, 1) - .5), cy + 13*(scrRand(i, 2) - .5), .8 + .55*zt + .4*zt*scrRand(i, 3)], .7, mm.d);
+  }
+  if (fl.out) for (let i = 0; i < 3; i++){ const u = (fl.p*12 + i/3) % 1; inner += scrSpeck([91.5, 38 + i*2, 10.5 - 6*u], .8, to.col); }
+  return openShell(A, B, nn => toneI(nn, SCR_PINE), inner) + ink(pd(B), 1.3) + hullInk([...A, ...B], 1.7);
+}
+
+/* ---------- see-through: what the plinth hides ---------- */
+let SCR_LABELS = '';
+function scrInner(st, fl){
+  const out = [], put = (b, svg) => out.push({ box: b, svg }), { cx, cy, XF, ZF } = SCR, [, to] = scrMats(st);
+  // the shaft stands in an iron cup on a step stone
+  put([[cx - 7, cy - 7, 3], [cx + 7, cy + 7, 6]], box(cx - 7, cy - 7, 3, cx + 7, cy + 7, 6, SCR_RUN, toneI, 1));
+  put([[cx - 4, cy - 4, 6], [cx + 4, cy + 4, 9]], cyl(cx, cy, 6, 9, 4, GT.IRON, toneI, .9));
+  put([[cx - 2.6, cy - 2.6, 9], [cx + 2.6, cy + 2.6, ZF]], cyl(cx, cy, 9, ZF, 2.6, SCR_OAK, toneI, .9));
+  // the chute from the floor slot to the spout's mouth
+  const a = [64, 26], b = [XF, 13], y0 = 35, y1 = 45, M = SCR_PINE;
+  const lip = y => shape([[a[0], y, a[1]], [b[0], y, b[1]], [b[0], y, b[1] + 3], [a[0], y, a[1] + 3]], toneI([0, y > 40 ? 1 : -1, 0], M), .8);
+  let ch = shape([[a[0], y0, a[1]], [b[0], y0, b[1]], [b[0], y1, b[1]], [a[0], y1, a[1]]], toneI(norm([13, 0, 20]), M), .9);
+  if (fl.out) for (let i = 0; i < 5; i++){ const u = (fl.p*10 + i/5) % 1; ch += scrSpeck([a[0] + (b[0] - a[0])*u, 37 + (i*1.7) % 6, a[1] + (b[1] - a[1])*u + .7], .9, to.col); }
+  put([[a[0], y0, b[1]], [b[0], y1, a[1] + 3]], (facing([0,1,0]) ? lip(y0) + ch + lip(y1) : lip(y1) + ch + lip(y0)));
+  // the throat from the floor slot down to the chute
+  put([[64, 36, 26], [72, 44, ZF]], box(64, 36, 26, 72, 44, ZF, matOf(GT.RECESS), toneI, .7));
+  return byDepth(out);
+}
+
+/* ---------- scene ---------- */
+function scene(st){
+  const k = ease(st.xr || 0), fade = (svg, a = .55) => k > 0 ? `<g opacity="${f(1 - a*k)}">${svg}</g>` : svg, fl = scrFlow(st), run = !!st.running;
+  const { XF, Y0, Y1, ZP, cx, cy, xr, zb0, zb1, zbar, zd0, zd1, pul, wt, shaft } = SCR, top = zb1 + 1;
+  let s = castShadow([...on(PX(12), SCR_OUT), ...on(PX(XF), SCR_OUT), [44, Y0, 50], [52, Y1, 50], [wt.x, wt.y + wt.hw, 30], [0, 28, 30], [0, 52, 30]])
+    .replace('<path ', `<path opacity="${f(1 - .75*k)}" `);
+  let plinth = scrPlinth();
+  if (k > 0) plinth = fill(pd(on(PZ(0), rectUV(12, Y0, XF, Y1))), '#f2efe7', `opacity="${f(.85*k)}"`) + xrGhost(plinth, '', k, SCR_OUT, 12, XF, SCR_STONE) + `<g opacity="${f(k)}">${scrInner(st, fl)}</g>`;
+  const bx = (b, svg) => ({ box: b, svg });
+  const barA = fl.ang + Math.PI/2, bc = Math.cos(barA)*24, bs = Math.sin(barA)*24;
+  const parts = [
+    bx([[12, Y0, 0], [XF, Y1, ZP]], plinth),
+    bx([[0, 28, 0], [12, 52, 46]], act('hopper', fade(scrHopper(st, fl), .4))),
+    bx([[12, 36, 33], [19.5, 44, 38]], fade(scrTrough(st, fl), .4)),
+    bx([[XF, 36, 10], [90, 44, 17]], scrSpout(st, fl)),
+    bx([[SCR.tub[0], SCR.tub[1], 0], [SCR.tub[2], SCR.tub[3], SCR.tubH]], scrTub(st, fl)),
+    // the pan and the mill in it: below everything else that stands on the plinth
+    bx([[19, 11, ZP], [77, 69, 47]], fade(scrPan(st, fl), .55) + scrMill(st, fl)),
+    // the frame
+    bx([[44, Y0, ZP], [52, 10, zb0]], fade(box(44, Y0, ZP, 52, 10, zb0, SCR_OAK, toneI, 1.3))),
+    bx([[44, 70, ZP], [52, Y1, zb0]], fade(box(44, 70, ZP, 52, Y1, zb0, SCR_OAK, toneI, 1.3))),
+    bx([[46, 10, 88], [50, 24, zb0]], fade(rod([48, 10, 88], [48, 24, zb0], 1.5, SCR_OAK, toneI, .8, 1.5, 4))),
+    bx([[46, 56, 88], [50, 70, zb0]], fade(rod([48, 70, 88], [48, 56, zb0], 1.5, SCR_OAK, toneI, .8, 1.5, 4))),
+    bx([[44, 2, zb0], [58, 90, zb1]], fade(box(44, 2, zb0, 58, 90, zb1, SCR_OAK, toneI, 1.4))),
+    bx([[50.5, pul.y - 1, 94], [51.5, pul.y + 1, zb0]], fade(box(50.5, pul.y - 1, 94, 51.5, pul.y + 1, zb0, GT.IRON, toneI, .7))),
+    bx([[54.5, pul.y - 1, 94], [55.5, pul.y + 1, zb0]], fade(box(54.5, pul.y - 1, 94, 55.5, pul.y + 1, zb0, GT.IRON, toneI, .7))),
+    // the shaft above the mill, in lengths between the things on it
+    bx([[cx - shaft, cy - shaft, 47], [cx + shaft, cy + shaft, zbar - 2]], cyl(cx, cy, 47, zbar - 2, shaft, SCR_OAK, toneI, 1)),
+    bx([[cx - 24, cy - 24, zbar - 2], [cx + 24, cy + 24, zbar + 2]], scrBeam([cx - bc, cy - bs, zbar], [cx + bc, cy + bs, zbar], 1.5, 1.5, SCR_PINE, 1) + cyl(cx, cy, zbar - 2.2, zbar + 2.2, 3.4, GT.IRON, toneI, .9)),
+    bx([[cx - shaft, cy - shaft, zbar + 2], [cx + shaft, cy + shaft, zd0]], cyl(cx, cy, zbar + 2, zd0, shaft, SCR_OAK, toneI, 1)),
+    bx([[cx - 6.5, cy - 6.5, zd0], [cx + 6.5, cy + 6.5, zd1]], scrDrum(fl)),
+    bx([[cx - shaft, cy - shaft, zd1], [cx + shaft, cy + shaft, zb0]], cyl(cx, cy, zd1, zb0, shaft, SCR_OAK, toneI, 1)),
+    bx([[cx - 3.4, cy - 3.4, zb1], [cx + 3.4, cy + 3.4, top]], cyl(cx, cy, zb1, top, 3.4, GT.IRON, toneI, .9)),
+    // the rope, in lengths either side of the brake, the pulley, the fall to the weight, the weight
+    bx([[xr - .6, cy + 6.5, 97.5], [xr + .6, 70.5, 100]], scrCord([[xr, cy, 97.6], [xr, 70.5, 99.5]])),
+    bx([[52, 70.5, 76], [61, 75.5, 103.5]], act('valve', scrBrake(st))),
+    bx([[xr - .6, 75.5, 99.5], [xr + .6, pul.y - 4, 100.5]], scrCord([[xr, 75.5, 99.8], [xr, pul.y - 4, pul.z + pul.r + .2]])),
+    bx([[xr - 1.5, pul.y - 4, 92], [xr + 1.5, pul.y + 4, pul.z + 4.5]], scrPulley()),
+    bx([[xr - .6, wt.y - .6, fl.wz + wt.h], [xr + .6, wt.y + .6, pul.z]], scrCord([[xr, wt.y, fl.wz + wt.h + 1.4], [xr, wt.y, pul.z]])),
+    bx([[wt.x - wt.hw, wt.y - wt.hw, fl.wz], [wt.x + wt.hw, wt.y + wt.hw, fl.wz + wt.h]], scrWeight(fl)),
+  ];
+  s += byDepth(parts);
+  const bounds = [0, 99, 0, 94, 0, top];
+  const a = fl.ang, wheel = [cx + Math.cos(a)*SCR.rr, cy + Math.sin(a)*SCR.rr, 47];
+  if (k > .6) s += xrCallouts([
+    { at: wheel, text: 'RUNNER STONE', on: run },
+    { at: [cx, cy, 66], text: 'MAIN SHAFT', on: run },
+    { at: [cx + bc, cy + bs, zbar], text: 'WINDING BAR', on: st.active && fl.p >= .9 },
+    { at: [cx, cy + 5, zd1 - 3], text: 'ROPE DRUM', on: run },
+    { at: [xr, pul.y, pul.z + pul.r], text: 'PULLEY', on: run },
+    { at: [wt.x, wt.y - wt.hw, fl.wz + wt.h], text: 'COUNTERWEIGHT', on: run },
+    { at: [cx, cy + 7, 5], text: 'STEP BEARING', on: run },
+    { at: [76, 35, 19], text: 'DISCHARGE CHUTE', on: fl.out },
+    { at: [cx + 20*Math.cos(a - .75), cy + 20*Math.sin(a - .75), SCR.ZF + 4], text: 'SWEEP', on: fl.grind },
+    { at: [5, 40, 46], text: 'HOPPER', on: fl.feed } ], bounds);
+  else s += xrCallouts([
+    { at: wheel, text: 'RUNNER STONES', on: run },
+    { at: [cx, cy + SCR.R, SCR.ZR], text: 'STONE PAN', on: st.active },
+    { at: [cx, cy + 5, zd1 - 3], text: 'ROPE DRUM', on: run },
+    { at: [wt.x, wt.y - wt.hw, fl.wz + wt.h], text: 'FALLING WEIGHT', on: run },
+    { at: [xr, 73, 100], text: 'ROPE BRAKE', on: st.valve > .5 },
+    { at: [5, 40, 46], text: 'HOPPER', on: fl.feed },
+    { at: [SCR.tub[2], 40, SCR.tubH], text: 'OUTPUT TUB', on: (st.output || 0) > 0 } ], bounds);
+  return s;
+}
+
+gtMachine({
+  fig:'C1', title:'Stone Crusher', size:[99, 96, 111], center:[50, 48], scene, demoSeconds: 8, heatTime: .3,
+  recipes:[{ id:'crush_cobblestone', name:'Gravel' }, { id:'crush_gravel', name:'Sand' }, { id:'crush_sand', name:'Stone Dust' }],
+  toggleLabel:'Rope brake', loadLabel:'Load stone', inLabel:'Stone', outLabel:'Made',
+  tile:[[-3, -1, 0], [99, -1, 0], [99, 101, 0], [-3, 101, 0]],
+});
+</script>
+<script src="cf-tail.js"></script>
+</body></html>

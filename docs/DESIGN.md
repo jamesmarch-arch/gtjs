@@ -27,15 +27,15 @@ Colorfigures style (hand-inked, flat-coloured, isometric, every machine works wh
   - A machine on a net with a higher voltage than its own **explodes** (GT's classic lesson), unless
     it is fed through a transformer.
   - Cables have a voltage limit and burn out above it.
-- **Ore:** ore veins on the map. Mine them by hand at first (click), then with steam and LV miners
-  that feed ore into the network.
+- **Ore:** there is no map to mine. Cobblestone is the only thing gathered by hand, and everything else is crushed and
+  sifted out of it (see *Everything from cobblestone*).
 - **Quest book:** a tiered list of goals that teaches the chains and gates what comes next, as in GTNH.
 
 ## First playable slice: Steam age → LV
 
 | Stage | Key machines | Key chain | Goal |
 |---|---|---|---|
-| Stone | Hand mining, coke oven (multiblock, 3×3) | coal → coke + creosote | First bronze |
+| Stone | Crusher, sifter, furnace, soaking barrel, tree farm, coke oven (multiblock, 3×3) | cobblestone → gravel → sifted coal and ore; coal → coke + creosote | First bronze |
 | Steam | Bronze boiler, steam macerator / furnace / compressor / alloy smelter / forge hammer / extractor | 3 copper + 1 tin → 4 bronze; ore → crushed → impure dust → ingot | Steel (bricked blast furnace) |
 | LV | Steam turbine, battery buffer, tin cable, LV macerator / furnace / ore washer / wiremill / bender / lathe / assembler / centrifuge / extractor | rubber, wires, vacuum tube → basic circuit; ore washer byproducts | Build an **Electric Blast Furnace** |
 
@@ -97,6 +97,9 @@ their **face**, the recess in the middle of the front, where each shows its own 
 rollers, the washer's porthole, the bender's ram), and by what they carry on the roof. An LV figure is `gtLv({...})`
 with `face`, `parts`, `inside` and `product`. Generators, batteries and transformers pass `noRecipe: true`: they
 have only a power switch and read `rate` (0..1 of the EU they make or move), `energy` and `mode` from the game.
+
+The stone crusher, stone sifter, soaking barrel and tree farm are built in cobblestone and wood on the furnace's model;
+the steam crusher and sifter have the steam family's bronze; the LV crusher and sifter each have a face of their own.
 
 Every machine has a figure. Screenshot URLs take the
 skill's `?yaw= &pitch= &xr=1 &labels=1` plus `run=1` (working), `freeze=1` (hold one still frame: headless Chrome
@@ -194,13 +197,47 @@ credit them on the game's About screen. Figures may set `credit:false` inside th
 
 The slice is complete: steam age, LV and the EBF, from an empty floor to MV.
 
-**Starting empty (after M6).** New games start with an empty floor and empty storage, as GTNH does. The bootstrap is
-by hand and by fire: gather cobblestone for a coal-fired furnace (`stone_furnace`); craft a stone hammer and a stone
-mortar (`tools` on a recipe: needed in storage, never used up); hammer ore into crushed ore and grind it to dust at
-the workbench; mix bronze dust (3 copper + 1 tin); smelt in the furnace (one coal smelts eight);
-then bronze plates and bricks make the first boiler. The quest book's opening follows that path. A test
-(`src/sim/bootstrap.test.ts`) proves a boiler is reachable with hand crafting and the furnace alone, and every machine
-after it. The old starting kit lives on as a test fixture (`src/sim/fixtures.ts`).
+**Starting empty (after M6).** New games start with an empty floor and empty storage, as GTNH does. The bootstrap starts
+with the one thing you can gather: cobblestone (shift-click for ten). Eight each makes a stone crusher, a stone sifter
+and a coal-fired furnace (`stone_furnace`). Gravel from the crusher sifts to coal and ores. A stone hammer and a stone
+mortar (cobblestone alone; `tools` on a recipe: needed in storage, never used up) hammer ore into crushed ore and grind
+it to dust at the workbench; mix bronze dust (3 copper + 1 tin); smelt in the furnace (one coal smelts eight); then four
+bronze plates and a furnace make the first boiler. It takes no bricks, so the barrel and the clay can come after it.
+The quest book's opening follows that path: cobblestone, crusher, sifter, furnace, hand tools, bronze, boiler, soaking
+barrel for clay and bricks, tree farm. It takes about three minutes of game time and 65 to 90 cobblestone from an empty
+world to a boiler, the worst seed of ten under ten minutes (a test plays it). Tests (`src/sim/bootstrap.test.ts`) prove
+that a boiler is reachable with hand crafting and unpowered machines alone, and every machine and item in the game from
+cobblestone. The old starting kit lives on as a test fixture (`src/sim/fixtures.ts`).
+
+**Everything from cobblestone.** After Ex Nihilo and skyblock packs: cobblestone is the only gatherable item
+(`GATHERABLE`), and the data is in `src/sim/data/cobble.ts`. The more a block has been crushed, the later and rarer its
+finds, so rarity pays for itself.
+- *Crusher:* cobblestone → gravel → sand → stone dust, one for one, one stage a recipe.
+- *Sifter:* one independent roll per find (the chanced outputs recipes already had), so a block can give several things
+  or nothing. All its outputs are chanced, so the recipe has a `name` ("Sift Gravel") for the machine's list.
+
+  | Block | Finds, each a chance per block |
+  |---|---|
+  | Gravel | Coal 30%, iron ore 30%, copper ore 30%, tin ore 20% |
+  | Sand | Bauxite ore 15%, redstone 15%, lapis 8%, diamond 1% |
+  | Stone dust | Nickel dust 15%, gold dust 8%, ender pearl 1% |
+  | Dirt | Sapling 25% |
+
+- *Tiers:* crusher and sifter each come three ways, each twice as fast as the one before, like the other machine
+  families (`recipesForMachine` goes by kind and power): stone (cobblestone alone, no power; 4 s a crush, 6 s a sift),
+  steam (4 L/t; 2 s, 3 s), LV (2 EU/t, which overclocks to 32 EU/t; 1 s, 1.5 s).
+- *Soaking barrel:* no power; water comes from the main, as for the ore washer and boilers, so it is no item. Stone dust →
+  clay, sand → dirt, 10 s each. Six cobblestone and two iron plates (its hoops; no wood, which comes after it).
+- *Tree farm:* eight dirt and four cobblestone, no power. The recipe `grow_tree` has no inputs but `holds` a sapling: the
+  machine takes one from storage when it first runs (`MachineState.holding`) and keeps it for good, giving it back when
+  it is removed. Every 30 s: 2 wood planks, and a 50% chance of a sticky resin.
+- *The gems' first uses:* redstone in the Electronic Circuit (one, by hand and in the assembler) and the battery buffer (4);
+  lapis in the ME Terminal (4) and Crafting CPU (2); an ender pearl in the 9 x 9 compact floor; two pearls and two
+  diamonds in the 13 x 13. Rooms bigger than their blocks take pearls, as in Compact Machines.
+- *Old saves* (format 6 and before) load with everything they hold: things once gathered are just items. Quests they have
+  done stay done, and the new ones at the start of the book stand open, to catch up on when they like.
+- *To tune by playing.* The chances are a first pass. Gravel gives about 1.1 useful finds a block, so the opening is
+  no grind; a pearl or a diamond (a hundred blocks on average) is meant to be a machine left running.
 
 **The camera (after M6).** The floor is 32 x 32 tiles (`FLOOR` in `src/sim/world.ts`); saves from the 12 x 8 days
 grow to it on load, with everything on its tile. The floor's frame is a fixed window with a camera: drag with the
@@ -216,8 +253,8 @@ from the same side.
 **Sound.** `src/view/audio.ts` makes every sound in code with the Web Audio API, from one small kit (noise bursts
 through a sliding filter, tones that fall or rise and die away), so there are no files to load and the sounds share a
 character the way the figures do. Each play varies a little in pitch and level. So far: gathering by hand (stone
-knocks, ore rings at its metal's pitch, coal crunches, planks knock, clay squelches, sand shushes, resin drips; a
-shift-click of ten strikes three times), panels opening and closing, and the boilers: one looping hiss for all the lit
+knocks; a shift-click of ten strikes three times; the kit still has the rings and crunches of the ores, coal, planks,
+clay, sand and resin, from when those were gathered too), panels opening and closing, and the boilers: one looping hiss for all the lit
 boilers (not one each), set every frame from where they are on screen (`Floor.hearing`: louder in the frame and
 zoomed in, panned across it), with the safety valve's chuffing roar on top while a boiler's steam net is full. The speaker button in the toolbar (or M) mutes
 it, remembered in the browser. Browsers allow sound only after a click, so the audio starts on the first click or
@@ -226,7 +263,7 @@ key; a hidden tab goes quiet.
 **Item icons.** `src/view/ui/icons.ts` draws every item in code in the figures' style (flat light / mid / dark bands,
 ink outline, the figures' palette). Most items are one of a few shapes coloured by what they are made of: ingot,
 plate, dust heap (specked when impure), ore in the rock, broken ore (purified glints, centrifuged spins), wire spool,
-cable coil, block (stone, brick, planks, glass, panel, coil), lump, drop. Ore and what it breaks into take the
+cable coil, block (stone, brick, planks, glass, panel, coil), lump, drop, cut gem, heap of pebbles. Ore and what it breaks into take the
 mineral's colour, not the metal's (rusty iron). About a dozen parts are drawn on their own (circuit, vacuum tube,
 resistor, motor, the hand tools). Machines use their floor sprite, trimmed to the drawing in the browser. Each icon is
 an SVG `<symbol>` defined once, and `icon(id)` returns a small `<svg><use>` for it, so long lists stay light. Icons
@@ -295,12 +332,20 @@ crafting job (further below) carries a plan out. It returns:
   makes, the tools it needs, the machine that runs it and its time there (overclocked as it would run), and `depth` in
   the tree under the target, for indenting.
 - `missing` raw materials to gather first, `blocked` (what can't be made now, and why), `fromStorage`, `leftovers`,
-  the `tools` it makes, `byproducts` and `chanced` (expected), `totals` per recipe and per machine, and `ok`.
+  the `tools` it makes, `byproducts` and `chanced` (expected), `totals` per recipe and per machine, `average` (some of
+  it rests on chance), and `ok`.
 
 The rules: take leftovers of earlier steps first, then storage, then make the rest; a step's runs round up and the
-rest is a leftover the next steps use. Only a recipe's main (first) output counts, and only when it is guaranteed;
-byproducts and chanced outputs are a bonus, never planned on (so nickel, which only comes by chance from the ore line,
-is blocked with where it comes from). Gatherable items are never made, only gathered. A hand tool a step needs is made
+rest is a leftover the next steps use. Where something can be made for sure (a hand craft, or a recipe's guaranteed main
+output), only those ways count: the extras of a recipe are a bonus, never planned on. Where it can only come by chance
+(a sifter's finds, nickel and gold, sticky resin), any recipe with it as a chanced output is a way, planned on its
+*average* yield: three iron ore at 30% is ten runs. Such a step is marked `average`; what else it finds, on average, goes
+in the pool for later steps too (or the two finds of one sifter would each pay for all its runs, and bronze would take
+half as much gravel again as it does), and a walk over the finished steps (`setGoals`) says in whole items what the plan
+needs out of each average step (`until`). The same recipe on several tiers is one way, on the fastest machine built (with
+none built, the tier to build first, all of them named when it is blocked), so tiers don't multiply the trials below.
+A guaranteed extra is still no way to make something (creosote, only ever beside coke). A recipe that `holds`
+something asks for one as a tool, unless a machine built already holds it. Gatherable items are never made, only gathered. A hand tool a step needs is made
 once if storage has none, and stays. The target is always made, not taken from storage. A machine recipe counts on a
 built machine (any that `recipesForMachine` says can run it, the fastest); without one it is still planned, but
 blocked, with the machine it needs, so steel without an EBF shows the whole chain and the one thing in the way. A
@@ -310,7 +355,7 @@ Where there are several ways to make something, it plans each in a trial (a chil
 plan so far and keeps its own changes) and keeps the best: fewest blocked, then doable without gathering, then
 cheapest (fewest items taken from storage or gathered, tools included), then quickest, then fewest hand crafts; ties
 go to hand crafts before machines, then by recipe id, so the same storage always gives the same plan. The choice is
-greedy, one need at a time. A whole EBF with every machine built plans in a few tens of milliseconds.
+greedy, one need at a time. A whole EBF from nothing, down to cobblestone, with every machine built, plans in a few tens of milliseconds.
 
 The planner doesn't model fuel and power (the coal furnace's coal, boilers' steam, EU), machines that are busy, or
 running steps on several machines at once (`totals.ticks` is all machine time, one after another): a job deals with
@@ -330,7 +375,8 @@ sample, and the panel needs the width for the plan. `MachineDef.terminal` marks 
   target on top and what goes into each step under it, numbered in the order they run; each says what it makes, by
   hand or on which machine, its runs and time, what it uses (tools marked) and, when blocked, why. Below: what is taken
   from storage, what to gather, what is blocked and why, tools it makes, leftovers, byproducts and chances, machine time
-  per machine and in total. A line on top sums it up: ready, gather first, blocked, or machine runs waiting for jobs.
+  per machine and in total. Steps that rest on chance say so ("about 10 runs, on average"), and so does the summary.
+  Everything that comes by chance can be picked; only cobblestone can't, being gathered. A line on top sums it up: ready, gather first, blocked, or machine runs waiting for jobs.
   The plan is cached until storage, the machines or the ask change (the panel redraws ten times a second).
 - *Craft now.* When the plan is all hand crafts with nothing missing or blocked, Craft runs it: `craftNow(w, item, n)`
   plans again and runs each step through the workbench's `craft()`, in order, all or nothing (storage and stats go
@@ -359,6 +405,14 @@ machines, so a machine that finished a run this tick can be handed back and lent
   to the idle opted-in machines that can run its recipe (any machine of the right kind and power, not only the one the
   plan named) and are powered for it: an EU machine on a net with enough voltage for the recipe as that machine runs
   it, a steam machine on a net with steam or a lit boiler. The runs are split as evenly as they go across all of them.
+- *Steps that rest on chance.* A step marked `average` in the plan isn't done after its runs, but when it has made what
+  the plan needs out of it (`until`: each with `got`, counted as a machine's run finishes). It is lent a run at a time to
+  every machine that can take it, and when the last find comes in, a run still going is given up and its inputs
+  returned. If luck runs it out of input, or anything else takes what a step needs, it asks the step that made that for
+  more (`makeMore`: more runs of a sure step, a higher goal for a chanced one), and waits for it; those ask the steps before them
+  in turn, down to "3 more Cobblestone (gather it)". A job's progress counts an average step by what it has found. The
+  terminal shows it as finds so far of finds wanted. A recipe that `holds` something only goes to a machine that has one
+  or can take one from storage.
 - *A lease* (`MachineState.job`) sets the machine to the step's recipe, switched on, for exactly its runs: it starts no
   run beyond them. Each run counts towards its step as it finishes, so a machine removed mid-step keeps what it did
   (its run under way gives its inputs back, as any removal does) and the rest of its runs go back to the step. Then it
@@ -370,12 +424,15 @@ machines, so a machine that finished a run this tick can be handed back and lent
   Nothing is reserved: another job or the player can take what a job planned on, and the job waits for more.
 - *Cancel* hands every borrowed machine back (a run under way is given up and its inputs returned) and drops the job;
   what it made stays in storage. A finished job makes a toast and a three-note chime.
-- *Saves* are format 6: `jobs` (each step with `after`, runs done and its reason) and `nextJob`, a machine's
-  `autocraft`, and a lent machine's lease. A lease whose job is gone (dropped on load because this version doesn't know
-  one of its recipes or items) hands the machine back. Format 5 and older load with no jobs and no machine opted in.
-- Tests: `src/sim/jobs.test.ts` (ore macerated then smelted on two machines, a step split across machines, waiting for
+- *Saves* are format 7: `jobs` (each step with `after`, runs done, its reason, and `until` if it rests on chance) and
+  `nextJob`, a machine's `autocraft`, what it is `holding`, and a lent machine's lease. A lease whose job is gone (dropped
+  on load because this version doesn't know one of its recipes or items) hands the machine back. Format 5 and older load
+  with no jobs and no machine opted in.
+- Tests: `src/sim/jobs.test.ts` (steps on chance over twenty seeds, making more when luck falls short, waiting for
+  cobblestone, a tree farm's sapling; ore macerated then smelted on two machines, a step split across machines, waiting for
   a busy machine, a machine not opted in left alone, a pause for a missing input that resumes, a machine on an inner
   floor, hand steps, cancel, CPUs, save and load mid-job), the format 6 cases in `src/sim/save.test.ts`, and the jobs
   list in `src/view/ui/terminal.test.ts`.
 - Not yet: the terminal and CPUs draw no power; jobs have no priority over each other; a job is not re-planned when
-  storage changes under it (it waits instead).
+  storage changes under it (it waits, or asks its earlier steps for more). A step that rests on chance runs on the tier
+  the plan chose, not any tier of the machine.

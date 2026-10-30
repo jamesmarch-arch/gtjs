@@ -18,9 +18,6 @@ export const items: ItemDef[] = [
   { id: 'ebf', name: 'Electric Blast Furnace' },
 ];
 
-/** Gathered by hand, as well as the steam-age list. */
-export const gatherable = ['bauxite_ore'];
-
 // GT's EBF is a 3x3x4 multiblock: a casing layer with the controller, buses and hatches; two layers of coil rings
 // round a hollow core; a casing layer with a muffler on top. Here it is assembled at the workbench and placed whole.
 export const machines: MachineDef[] = [

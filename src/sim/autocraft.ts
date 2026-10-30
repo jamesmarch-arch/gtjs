@@ -10,7 +10,7 @@ import { allMachines, type World } from './world';
 /** What the plan starts from: a World fits. Only machines on the floor count as built (not ones in storage). */
 export interface PlanFrom {
   storage: Record<string, number>;
-  machines: readonly { def: string }[];
+  machines: readonly { def: string; holding?: string }[];
 }
 
 /** The game data the planner reads; tests swap in their own. Defaults to the game's. */
@@ -33,6 +33,8 @@ export interface PlanStep {
   ticks: number; // machine time for all runs on that machine (overclocked as it would run); 0 by hand
   byproducts: Stack[]; // guaranteed extra outputs, all runs: a bonus, never planned on
   chanced: Stack[]; // chanced outputs, their expected count over all runs (may be fractional)
+  average?: boolean; // it makes its output by chance: `runs` and `output` are averages, and a job runs it until `until` is met
+  until?: Stack[]; // average steps: what the plan needs out of it, whole items (a job stops when it has them all)
   depth: number; // 0 for the step that makes the target; an ingredient's step is one deeper than its user's
   blocked?: string; // why it can't run now (its machine isn't built)
 }
@@ -56,7 +58,8 @@ export interface CraftPlan {
   leftovers: Stack[]; // made beyond what the plan uses: runs round up
   tools: string[]; // tools the plan makes (once each), which stay in storage after
   byproducts: Stack[]; // all steps' guaranteed byproducts
-  chanced: Stack[]; // all steps' chanced outputs, expected
+  chanced: Stack[]; // chanced outputs nothing in the plan uses, expected
+  average: boolean; // some steps rest on chance: the numbers are averages, and a job runs those steps until it has enough
   totals: {
     handCrafts: number; // hand craft runs
     machineRuns: number;
@@ -66,15 +69,16 @@ export interface CraftPlan {
   };
 }
 
-/** A way to make an item: a hand craft or a machine recipe, by its main output. */
+/** A way to make an item: a hand craft or a machine recipe. `average`: the item comes by chance, and `per` is the average. */
 interface Way {
   kind: 'craft' | 'machine';
   id: string;
   item: string;
-  per: number; // main output a run
+  per: number; // how many of the item a run makes
+  average?: boolean;
   inputs: Stack[];
   tools: string[];
-  extras: Stack[]; // the other outputs
+  extras: Stack[]; // the recipe's other outputs
   machine?: MachineDef;
   ticksPerRun: number;
   blocked?: string;
@@ -87,33 +91,48 @@ function canRun(def: MachineDef, r: RecipeDef): boolean {
 
 const ticksOn = (def: MachineDef, r: RecipeDef) => (r.euPerTick === undefined ? r.ticks : overclock(r.euPerTick, r.ticks, def.tier ?? 'LV').ticks);
 
-/** Every way to make each item, hand crafts first, then machine recipes, each by id. A recipe counts only for its
- *  main (first) output, and only when that output is guaranteed. */
-function waysToMake(data: PlanData, built: Set<string>): { ways: Map<string, Way[]>; besides: Map<string, string[]> } {
-  const ways = new Map<string, Way[]>(), besides = new Map<string, string[]>(); // item -> recipes it comes from as a bonus
-  const add = (w: Way) => ways.set(w.item, [...(ways.get(w.item) ?? []), w]);
+/** Every way to make each item, hand crafts first, then machine recipes, each by id. Where an item has ways that are
+ *  sure (a hand craft, or a recipe's guaranteed main output), those are its ways. Where it has none, it comes by chance:
+ *  any recipe with it as a chanced output is a way, planned on its average yield. The same recipe on different tiers (the
+ *  stone, steam and LV crusher's) is one way, on the fastest machine built, so tiers don't multiply the plan's trials. */
+function waysToMake(data: PlanData, from: PlanFrom): { ways: Map<string, Way[]>; besides: Map<string, string[]> } {
+  const sure = new Map<string, Way[]>(), chance = new Map<string, Way[]>(), besides = new Map<string, string[]>(); // item -> recipes it comes from as a bonus
+  const add = (to: Map<string, Way[]>, w: Way) => to.set(w.item, [...(to.get(w.item) ?? []), w]);
   for (const c of [...data.crafts].sort((a, b) => a.id.localeCompare(b.id)))
-    add({ kind: 'craft', id: c.id, item: c.output.item, per: c.output.count, inputs: c.inputs, tools: c.tools ?? [], extras: [], ticksPerRun: 0 });
-  const machines = [...data.machines];
+    add(sure, { kind: 'craft', id: c.id, item: c.output.item, per: c.output.count, inputs: c.inputs, tools: c.tools ?? [], extras: [], ticksPerRun: 0 });
+  const machines = [...data.machines], built = new Set(from.machines.map((m) => m.def)), held = new Set(from.machines.map((m) => m.holding));
+  const families = new Map<string, RecipeDef[]>();
   for (const r of [...data.recipes].sort((a, b) => a.id.localeCompare(b.id))) {
-    const [main, ...extras] = r.outputs;
-    for (const o of r.outputs) if (o !== main || o.chance !== undefined) besides.set(o.item, [...(besides.get(o.item) ?? []), r.id]);
-    if (!main || main.chance !== undefined) continue;
-    const able = machines.filter((d) => canRun(d, r));
-    const ready = able.filter((d) => built.has(d.id));
-    const fastest = (ready.length ? ready : able).sort((a, b) => ticksOn(a, r) - ticksOn(b, r) || a.id.localeCompare(b.id))[0];
-    const blocked = ready.length ? undefined
-      : able.length ? `needs ${able.map((d) => `${/^([AEIOU]|LV|MV)/.test(d.name) ? 'an' : 'a'} ${d.name}`).join(' or ')}, and none is built`
-      : `no machine can run ${r.id}`;
-    add({ kind: 'machine', id: r.id, item: main.item, per: main.count, inputs: r.inputs, tools: [], extras, machine: fastest,
-      ticksPerRun: fastest ? ticksOn(fastest, r) : r.ticks, blocked });
+    const key = JSON.stringify([r.machine, r.inputs, r.outputs, r.holds, r.heat ?? 0]);
+    families.set(key, [...(families.get(key) ?? []), r]);
   }
-  return { ways, besides };
+  for (const family of families.values()) {
+    const options = family.flatMap((r) => machines.filter((d) => canRun(d, r)).map((d) => ({ r, d, ticks: ticksOn(d, r) })));
+    // quickest first, of the machines built; with none built, the tier to build first: the slowest, then the next
+    const ready = options.filter((o) => built.has(o.d.id)).sort((a, b) => a.ticks - b.ticks || a.d.id.localeCompare(b.d.id));
+    options.sort((a, b) => b.ticks - a.ticks || a.d.id.localeCompare(b.d.id));
+    const best = ready[0] ?? options[0];
+    const r = best?.r ?? family[0], [main] = r.outputs;
+    const blocked = ready.length ? undefined
+      : options.length ? `needs ${options.map(({ d }) => `${/^([AEIOU]|LV|MV)/.test(d.name) ? 'an' : 'a'} ${d.name}`).join(' or ')}, and none is built`
+      : `no machine can run ${r.id}`;
+    const way = (o: Stack): Way => ({
+      kind: 'machine', id: r.id, item: o.item, per: o.count * (o.chance ?? 1), ...(o.chance !== undefined || o !== main ? { average: true } : {}), inputs: r.inputs,
+      tools: r.holds && !held.has(r.holds) ? [r.holds] : [], extras: r.outputs.filter((x) => x !== o), machine: best?.d, ticksPerRun: best?.ticks ?? r.ticks, blocked,
+    });
+    if (main && main.chance === undefined) add(sure, way(main));
+    for (const o of r.outputs) if (o.chance !== undefined) add(chance, way(o));
+    for (const o of r.outputs) if (o !== main && o.chance === undefined) besides.set(o.item, [...(besides.get(o.item) ?? []), r.id]);
+  }
+  return { ways: new Map([...chance, ...sure]), besides };
 }
+
+// averages add up to fractions: keep them clean, so 10 x 0.3 is 3 and nothing is left to make for 1e-16 of an item
+const clean = (n: number) => Math.round(n * 1e6) / 1e6;
 
 const bump = (m: Map<string, number>, item: string, n: number) => m.set(item, (m.get(item) ?? 0) + n);
 const stacks = (m: Map<string, number>): Stack[] =>
-  [...m].filter(([, n]) => n > 0).sort(([a], [b]) => a.localeCompare(b)).map(([item, count]) => ({ item, count }));
+  [...m].filter(([, n]) => n > 1e-6).sort(([a], [b]) => a.localeCompare(b)).map(([item, count]) => ({ item, count: clean(count) }));
 
 /** A plan in progress. A trial of one way to make something is a child ledger: it reads through to its parent and
  *  keeps its own changes, so a losing trial is dropped and the winner is committed into its parent. */
@@ -124,6 +143,7 @@ class Ledger {
   missing = new Map<string, number>();
   blocked: Blocked[] = [];
   tools = new Set<string>();
+  chancy = new Set<string>(); // what the made pool holds by chance, on average (not sure to be there)
   cost = 0; // items taken from storage plus raw items to gather: what "cheapest" compares
   ticks = 0;
   crafts = 0;
@@ -153,6 +173,7 @@ class Ledger {
     for (const [item, n] of this.missing) bump(p.missing, item, n);
     p.blocked.push(...this.blocked);
     for (const t of this.tools) p.tools.add(t);
+    for (const c of this.chancy) p.chancy.add(c);
     p.cost += this.cost;
     p.ticks += this.ticks;
     p.crafts += this.crafts;
@@ -170,12 +191,40 @@ const better = (a: number[], b: number[]) => {
   return false;
 };
 
+/** What the plan needs out of each average step, in whole items: walk the steps in order with what storage holds and what
+ *  sure steps make, and what is still short of an input comes from the last average step before it that can make it.
+ *  A crafting job runs an average step until it has this much. */
+function setGoals(steps: PlanStep[], storage: Record<string, number>, target: string, count: number): void {
+  const avail = new Map(Object.entries(storage)), goals = new Map<PlanStep, Map<string, number>>();
+  const claim = (item: string, n: number, before: number) => {
+    const use = Math.min(n, avail.get(item) ?? 0);
+    avail.set(item, (avail.get(item) ?? 0) - use);
+    if (n - use <= 0) return;
+    for (let j = before - 1; j >= 0; j--) {
+      const e = steps[j];
+      if (e.average && [e.output, ...e.byproducts, ...e.chanced].some((o) => o.item === item)) { bump(goals.get(e)!, item, n - use); return; }
+    }
+  };
+  steps.forEach((s, i) => {
+    if (s.average) goals.set(s, new Map());
+    for (const t of s.tools) if ((avail.get(t) ?? 0) < 1) { claim(t, 1, i); bump(avail, t, 1); }
+    for (const x of s.inputs) claim(x.item, x.count, i);
+    if (!s.average) for (const o of [s.output, ...s.byproducts]) bump(avail, o.item, o.count);
+  });
+  const last = steps[steps.length - 1]; // the step that makes the target: it is always made, never taken from storage
+  if (last?.average && last.output.item === target) bump(goals.get(last)!, target, count);
+  for (const [s, g] of goals) s.until = stacks(g);
+}
+
 /**
  * Plan how to make `count` more of `target`: which hand crafts and machine runs, in order, using what storage holds
  * (leftovers of earlier steps first), and what has to be gathered or built first. Deterministic.
  *
  * - Runs round up, and what is over is kept as leftovers for later steps to use.
- * - Only a recipe's main output counts; its other outputs are byproducts, and chanced outputs are never planned on.
+ * - A recipe counts for its main output, and its other outputs are a bonus, never planned on. But what comes only by
+ *   chance (no hand craft or main output makes it) is planned on its average yield: a sifter's finds, nickel from the ore
+ *   line. Such a step's `runs` are an average, and what else it finds on average is there for later steps to use. A
+ *   crafting job runs it until it really has enough (`until`).
  * - Tools a step needs are made once if storage has none, and never used up.
  * - Where there are several ways, it takes the one that can be done now, then the cheapest (fewest items from storage
  *   and from gathering), then the quickest; ties go to hand crafts before machines, then by recipe id.
@@ -189,22 +238,22 @@ export function planCraft(target: string, count: number, from: PlanFrom, data: P
     machines: data.machines ?? MACHINES.values(), gatherable: data.gatherable ?? GATHERABLE,
   };
   const raw = new Set(d.gatherable);
-  const { ways, besides } = waysToMake(d, new Set(from.machines.map((m) => m.def)));
+  const { ways, besides } = waysToMake(d, from);
   const making = new Set<string>(); // items being made further up this branch: a way back to one is a cycle
 
-  const put = (l: Ledger, item: string, n: number) => l.set('made', item, l.get('made', item) + n);
+  const put = (l: Ledger, item: string, n: number) => l.set('made', item, clean(l.get('made', item) + n));
 
   // take n of an item: leftovers first, then storage, then make the rest
   function need(l: Ledger, item: string, n: number, depth: number): void {
     const leftover = Math.min(n, l.get('made', item));
-    if (leftover) l.set('made', item, l.get('made', item) - leftover);
+    if (leftover) put(l, item, -leftover);
     const stored = Math.min(n - leftover, l.get('stored', item));
     if (stored) l.set('stored', item, l.get('stored', item) - stored);
     l.cost += stored;
-    const rest = n - leftover - stored;
+    const rest = clean(n - leftover - stored);
     if (rest > 0) {
       make(l, item, rest, depth);
-      l.set('made', item, l.get('made', item) - rest);
+      put(l, item, -rest);
     }
   }
 
@@ -239,7 +288,7 @@ export function planCraft(target: string, count: number, from: PlanFrom, data: P
   }
 
   function run(l: Ledger, way: Way, n: number, depth: number): void {
-    const runs = Math.ceil(n / way.per);
+    const runs = Math.ceil(clean(n / way.per));
     making.add(way.item);
     for (const t of way.tools) if (l.have(t) < 1) { make(l, t, 1, depth + 1); l.tools.add(t); }
     for (const s of way.inputs) need(l, s.item, s.count * runs, depth + 1);
@@ -249,10 +298,16 @@ export function planCraft(target: string, count: number, from: PlanFrom, data: P
       kind: way.kind, recipe: way.id, runs, output: { item: way.item, count: way.per * runs }, inputs: way.inputs.map(all), tools: way.tools,
       ...(way.machine ? { machine: way.machine.id } : {}), ticks: way.ticksPerRun * runs,
       byproducts: way.extras.filter((s) => s.chance === undefined).map(all), chanced: way.extras.filter((s) => s.chance !== undefined).map(all),
-      depth, ...(way.blocked ? { blocked: way.blocked } : {}),
+      depth, ...(way.blocked ? { blocked: way.blocked } : {}), ...(way.average ? { average: true } : {}),
     });
     if (way.blocked) l.blocked.push({ item: way.item, count: n, why: way.blocked, recipe: way.id });
     put(l, way.item, way.per * runs);
+    // a step that rests on chance runs anyway, and what else it finds is counted too, or two finds of one sifter would
+    // each pay for all its runs
+    if (way.average) {
+      l.chancy.add(way.item);
+      for (const e of way.extras) { put(l, e.item, e.count * (e.chance ?? 1) * runs); l.chancy.add(e.item); }
+    }
     if (way.kind === 'craft') l.crafts += runs;
     else l.ticks += way.ticksPerRun * runs;
   }
@@ -264,13 +319,17 @@ export function planCraft(target: string, count: number, from: PlanFrom, data: P
 
   const leftovers = new Map(root.made);
   for (const t of root.tools) bump(leftovers, t, -1);
+  setGoals(root.steps, from.storage, target, count);
   const fromStorage = new Map<string, number>();
   for (const [item, n] of Object.entries(from.storage)) if (n > 0) fromStorage.set(item, n - (root.stored.get(item) ?? n));
   const byproducts = new Map<string, number>(), chanced = new Map<string, number>();
+  for (const c of root.chancy) { bump(chanced, c, leftovers.get(c) ?? 0); leftovers.delete(c); } // on average, not for sure
   const totals: CraftPlan['totals'] = { handCrafts: 0, machineRuns: 0, ticks: 0, byMachine: {}, byRecipe: {} };
   for (const s of root.steps) {
-    for (const b of s.byproducts) bump(byproducts, b.item, b.count);
-    for (const c of s.chanced) bump(chanced, c.item, c.count);
+    if (!s.average) {
+      for (const b of s.byproducts) bump(byproducts, b.item, b.count);
+      for (const c of s.chanced) bump(chanced, c.item, c.count);
+    }
     const r = (totals.byRecipe[s.recipe] ??= { runs: 0, ticks: 0 });
     r.runs += s.runs;
     r.ticks += s.ticks;
@@ -286,7 +345,7 @@ export function planCraft(target: string, count: number, from: PlanFrom, data: P
   return {
     target, count, ok: !root.missing.size && !root.blocked.length, steps: root.steps, missing: stacks(root.missing), blocked: root.blocked,
     fromStorage: stacks(fromStorage), leftovers: stacks(leftovers), tools: [...root.tools].sort(),
-    byproducts: stacks(byproducts), chanced: stacks(chanced), totals,
+    byproducts: stacks(byproducts), chanced: stacks(chanced), average: root.steps.some((s) => s.average), totals,
   };
 }
 

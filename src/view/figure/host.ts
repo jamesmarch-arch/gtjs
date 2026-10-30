@@ -32,6 +32,7 @@ export interface FigureMachine {
 // named after what it makes ('Crushed Iron Ore', 'Bronze Ingot'), and what from when the same machine can make it two
 // ways ('Iron Ingot from Crushed Iron Ore', 'Iron Ingot from Impure Iron Dust')
 export function recipeName(r: RecipeDef): string {
+  if (r.name) return r.name;
   const made = itemName(r.outputs[0].item);
   const twins = [...RECIPES.values()].filter((o) => o.machine === r.machine && o.outputs[0].item === r.outputs[0].item
     && (o.euPerTick === undefined) === (r.euPerTick === undefined));
@@ -84,7 +85,8 @@ export function figureMachine(w: World, m: MachineState): FigureMachine {
     steam,
     recipe: selected ? { id: selected.id, name: recipeName(selected) } : null,
     recipes: recipesForMachine(def).map((r) => ({ id: r.id, name: recipeName(r) })),
-    input: shown ? count(w, shown.inputs[0].item) : 0,
+    // a recipe with no inputs but something it holds (a tree farm's sapling): 1 while it holds one, else what storage has
+    input: !shown ? 0 : shown.inputs[0] ? count(w, shown.inputs[0].item) : m.holding === shown.holds ? 1 : shown.holds ? count(w, shown.holds) : 0,
     output: shown ? count(w, shown.outputs[0].item) : 0,
     energy: euCapacity(m) > 0 ? m.eu / euCapacity(m) : 0, lowVolts: !!m.lowVolts,
     burn: def.fuel && m.burnMax ? m.burn / m.burnMax : 0, burning: !!def.fuel && m.burn > 0, venting: false,

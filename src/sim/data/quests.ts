@@ -1,4 +1,5 @@
-// The quest book. The Steam Age chapter walks from an empty floor (a furnace, hand tools) to the first tin cables. The
+// The quest book. The Steam Age chapter walks from an empty floor (cobblestone, a crusher, a sifter, a furnace, hand
+// tools, bronze, a boiler, a soaking barrel, a tree farm) to the first tin cables. The
 // Compact Floors chapter runs alongside the others: each size opens with the tier that can afford it.
 import type { QuestDef } from './types';
 
@@ -10,13 +11,28 @@ export const FINAL_QUEST = 'aluminium';
 
 export const quests: QuestDef[] = [
   {
-    id: 'furnace', chapter: 'steam', title: 'A furnace', after: [],
-    text: 'Everything starts by hand. Gather eight cobblestone, craft a furnace at the workbench and place it on the floor.',
+    id: 'cobblestone', chapter: 'steam', title: 'Cobblestone', after: [],
+    text: 'There is nothing here but stone, and everything you will ever make starts with it. Gather eight cobblestone.',
+    goals: [{ kind: 'have', item: 'cobblestone', count: 8 }], rewards: [{ item: 'cobblestone', count: 8 }],
+  },
+  {
+    id: 'crusher', chapter: 'steam', title: 'Break it down', after: ['cobblestone'],
+    text: 'Eight cobblestone make a stone crusher at the workbench. Place it, open it, set it to Gravel and switch it on. It needs no power; it’s just slow.',
+    goals: [{ kind: 'built', machine: 'stone_crusher', count: 1 }, { kind: 'made', item: 'gravel', count: 4 }], rewards: [{ item: 'cobblestone', count: 16 }],
+  },
+  {
+    id: 'sifter', chapter: 'steam', title: 'What’s in the gravel', after: ['crusher'],
+    text: 'A stone sifter is eight more cobblestone. Set it to Sift Gravel: every block has a chance of coal, iron, copper and tin, each rolled on its own, so one block can give several things or nothing.',
+    goals: [{ kind: 'built', machine: 'stone_sifter', count: 1 }, { kind: 'made', item: 'coal', count: 2 }], rewards: [{ item: 'gravel', count: 16 }],
+  },
+  {
+    id: 'furnace', chapter: 'steam', title: 'A furnace', after: ['sifter'],
+    text: 'Eight cobblestone make a furnace too. Craft one at the workbench and place it on the floor.',
     goals: [{ kind: 'built', machine: 'stone_furnace', count: 1 }], rewards: [{ item: 'coal', count: 8 }],
   },
   {
     id: 'crush', chapter: 'steam', title: 'Crush some ore', after: ['furnace'],
-    text: 'GregTech furnaces won’t take raw ore. Craft a stone hammer (cobblestone and wood planks), then hammer iron ore into crushed ore at the workbench.',
+    text: 'GregTech furnaces won’t take raw ore. Craft a stone hammer (five cobblestone), then hammer iron ore into crushed ore at the workbench.',
     goals: [{ kind: 'made', item: 'crushed_iron', count: 4 }], rewards: [{ item: 'iron_ore', count: 4 }],
   },
   {
@@ -46,20 +62,40 @@ export const quests: QuestDef[] = [
     goals: [{ kind: 'made', item: 'bronze_plate', count: 4 }], rewards: [{ item: 'bronze_ingot', count: 4 }],
   },
   {
-    id: 'bricks', chapter: 'steam', title: 'Bricks', after: ['ingots'],
-    text: 'Gather clay and fire it into bricks in the furnace.',
-    goals: [{ kind: 'made', item: 'brick', count: 8 }], rewards: [{ item: 'clay', count: 8 }],
-  },
-  {
-    id: 'boiler', chapter: 'steam', title: 'Raise steam', after: ['plates', 'bricks'],
-    text: 'Four bronze plates and three bricks make a small coal boiler. Place it, switch it on, and keep coal in storage.',
+    id: 'boiler', chapter: 'steam', title: 'Raise steam', after: ['plates'],
+    text: 'Four bronze plates round a furnace make a small coal boiler. Place it, switch it on, and keep coal in storage.',
     goals: [{ kind: 'built', machine: 'bronze_boiler', count: 1 }], rewards: [{ item: 'coal', count: 16 }],
   },
   {
-    id: 'steam_machines', chapter: 'steam', title: 'Your first steam machines', after: ['boiler'],
+    id: 'soak', chapter: 'steam', title: 'Clay from dust', after: ['boiler'],
+    text: 'A soaking barrel is cobblestone with iron hoops, plumbed to the water main. Crush gravel to sand and sand to stone dust; a barrel soaks the dust into clay.',
+    goals: [{ kind: 'built', machine: 'soaking_barrel', count: 1 }, { kind: 'made', item: 'clay', count: 4 }], rewards: [{ item: 'stone_dust', count: 8 }],
+  },
+  {
+    id: 'bricks', chapter: 'steam', title: 'Bricks', after: ['soak'],
+    text: 'Fire clay into bricks in the furnace.',
+    goals: [{ kind: 'made', item: 'brick', count: 8 }], rewards: [{ item: 'clay', count: 8 }],
+  },
+  {
+    id: 'sapling', chapter: 'steam', title: 'Something green', after: ['soak'],
+    text: 'A barrel soaks sand into dirt, and one block of dirt in four sifts out a sapling.',
+    goals: [{ kind: 'made', item: 'sapling', count: 1 }], rewards: [{ item: 'dirt', count: 8 }],
+  },
+  {
+    id: 'tree_farm', chapter: 'steam', title: 'A tree farm', after: ['sapling'],
+    text: 'Eight dirt in a bed of cobblestone make a tree farm. It takes a sapling from storage and keeps it, and slowly grows wood planks and sticky resin. Remove the farm and you get the sapling back.',
+    goals: [{ kind: 'built', machine: 'tree_farm', count: 1 }, { kind: 'made', item: 'wood_planks', count: 4 }], rewards: [{ item: 'sapling', count: 1 }],
+  },
+  {
+    id: 'steam_machines', chapter: 'steam', title: 'Your first steam machines', after: ['bricks'],
     text: 'A bronze hull and two pipes make a steam machine. Pipe a macerator and a steam furnace to the boiler: they work while you don’t.',
     goals: [{ kind: 'built', machine: 'steam_macerator', count: 1 }, { kind: 'built', machine: 'steam_furnace', count: 1 }],
     rewards: [{ item: 'iron_ore', count: 16 }],
+  },
+  {
+    id: 'steam_tiers', chapter: 'steam', title: 'Crushing on steam', after: ['steam_machines'],
+    text: 'A steam crusher and a steam sifter work twice as fast as the stone ones, for 4 L of steam a tick each.',
+    goals: [{ kind: 'built', machine: 'steam_crusher', count: 1 }, { kind: 'built', machine: 'steam_sifter', count: 1 }], rewards: [{ item: 'gravel', count: 32 }],
   },
   {
     id: 'forge_hammer', chapter: 'steam', title: 'A better hammer', after: ['steam_machines'],
@@ -82,8 +118,8 @@ export const quests: QuestDef[] = [
     goals: [{ kind: 'made', item: 'coke', count: 4 }], rewards: [{ item: 'coal', count: 16 }],
   },
   {
-    id: 'resin', chapter: 'steam', title: 'A sticky situation', after: ['bronze'],
-    text: 'Rubber trees give sticky resin. Tap a few.',
+    id: 'resin', chapter: 'steam', title: 'A sticky situation', after: ['tree_farm'],
+    text: 'Some of what the tree farm grows is sticky resin. Keep a few.',
     goals: [{ kind: 'have', item: 'sticky_resin', count: 4 }], rewards: [{ item: 'tin_ore', count: 4 }],
   },
   {
@@ -104,8 +140,13 @@ export const quests: QuestDef[] = [
     goals: [{ kind: 'made', item: 'glass', count: 8 }], rewards: [{ item: 'sand', count: 16 }],
   },
   {
-    id: 'circuit', chapter: 'lv', title: 'Your first circuit', after: ['glass'],
-    text: 'An Electronic Circuit is a coated board, two resistors, two vacuum tubes and copper wire. By hand it is dear; the assembler comes later.',
+    id: 'redstone', chapter: 'lv', title: 'Redstone', after: ['glass'],
+    text: 'Sift sand for redstone. There’s bauxite and lapis in there too, and about one block in a hundred has a diamond.',
+    goals: [{ kind: 'made', item: 'redstone', count: 4 }], rewards: [{ item: 'lapis', count: 4 }],
+  },
+  {
+    id: 'circuit', chapter: 'lv', title: 'Your first circuit', after: ['redstone'],
+    text: 'An Electronic Circuit is a coated board, two resistors, two vacuum tubes, copper wire and redstone. By hand it is dear; the assembler comes later.',
     goals: [{ kind: 'made', item: 'circuit_lv', count: 1 }], rewards: [{ item: 'copper_ore', count: 16 }],
   },
   {
@@ -117,6 +158,11 @@ export const quests: QuestDef[] = [
     id: 'power', chapter: 'lv', title: 'Power on', after: ['turbine'],
     text: 'Generate EU. Cables join generators, batteries and machines into an EU net.',
     goals: [{ kind: 'eu', count: 10000 }], rewards: [{ item: 'iron_ore', count: 16 }],
+  },
+  {
+    id: 'lv_tiers', chapter: 'lv', title: 'Crushing on EU', after: ['power'],
+    text: 'An LV crusher and an LV sifter are twice as fast again as the steam ones, at up to 32 EU/t each.',
+    goals: [{ kind: 'built', machine: 'lv_crusher', count: 1 }, { kind: 'built', machine: 'lv_sifter', count: 1 }], rewards: [{ item: 'sand', count: 32 }],
   },
   {
     id: 'hp_boiler', chapter: 'lv', title: 'High pressure', after: ['turbine'],
@@ -147,7 +193,7 @@ export const quests: QuestDef[] = [
   },
   {
     id: 'nickel', chapter: 'lv', title: 'Byproducts', after: ['washer'],
-    text: 'Iron ore carries nickel. You will want it: cupronickel coils heat the electric blast furnace.',
+    text: 'Iron ore carries nickel, and so does stone dust in a sifter. You will want it: cupronickel coils heat the electric blast furnace.',
     goals: [{ kind: 'made', item: 'nickel_dust', count: 4 }], rewards: [{ item: 'iron_ore', count: 16 }],
   },
   {
@@ -206,7 +252,7 @@ export const quests: QuestDef[] = [
   },
   {
     id: 'bauxite', chapter: 'ebf', title: 'Bauxite', after: ['steel'],
-    text: 'Aluminium starts as bauxite. Macerate it, then spin the dust in the centrifuge.',
+    text: 'Aluminium starts as bauxite, which you sift out of sand. Macerate it, then spin the dust in the centrifuge.',
     goals: [{ kind: 'made', item: 'aluminium_dust', count: 4 }], rewards: [{ item: 'bauxite_ore', count: 16 }],
   },
   {
@@ -231,8 +277,13 @@ export const quests: QuestDef[] = [
     goals: [{ kind: 'inside', power: 'steam', count: 1 }], rewards: [{ item: 'coal', count: 32 }],
   },
   {
-    id: 'compact_9', chapter: 'compact', title: 'Room to grow', after: ['compact_steam', 'assembler'],
-    text: 'The 9 by 9 floor is walled with LV casings and wants four circuits. Room for a proper workshop.',
+    id: 'ender_pearl', chapter: 'compact', title: 'Bigger on the inside', after: ['compact_steam'],
+    text: 'A room bigger than its block takes an ender pearl to hold it open. About one block of stone dust in a hundred has one: set a sifter on it and let it run.',
+    goals: [{ kind: 'made', item: 'ender_pearl', count: 1 }], rewards: [{ item: 'stone_dust', count: 32 }],
+  },
+  {
+    id: 'compact_9', chapter: 'compact', title: 'Room to grow', after: ['ender_pearl', 'assembler'],
+    text: 'The 9 by 9 floor is walled with LV casings and wants four circuits and an ender pearl. Room for a proper workshop.',
     goals: [{ kind: 'built', machine: 'compact_floor_9', count: 1 }], rewards: [{ item: 'tin_cable', count: 16 }],
   },
   {
@@ -247,7 +298,7 @@ export const quests: QuestDef[] = [
   },
   {
     id: 'compact_13', chapter: 'compact', title: 'The big room', after: ['compact_nest', 'steel'],
-    text: 'The 13 by 13 floor has walls of dense steel, eight circuits and copper cable in the walls. Nearly a second factory.',
+    text: 'The 13 by 13 floor has walls of dense steel, eight circuits and copper cable in the walls, and takes two ender pearls and two diamonds to hold it open. Nearly a second factory.',
     goals: [{ kind: 'built', machine: 'compact_floor_13', count: 1 }], rewards: [{ item: 'steel_ingot', count: 16 }],
   },
 ];

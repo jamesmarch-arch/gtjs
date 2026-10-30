@@ -64,7 +64,7 @@ export function mountMachinePanel(el: HTMLElement, getWorld: () => World, m: Mac
       if (r) {
         const run = asRun(m, r), unit = r.euPerTick !== undefined ? 'EU/t' : 'L/t';
         const oc = r.euPerTick !== undefined && run.ticks < r.ticks ? ` (overclocked from ${r.euPerTick} EU/t)` : '';
-        detail.textContent = `${r.inputs.map((s) => `${s.count} ${itemName(s.item)}`).join(' + ')} → ${r.outputs.map((s) => `${s.count} ${itemName(s.item)}${s.chance ? ` (${Math.round(s.chance * 100)}%)` : ''}`).join(' + ')}`
+        detail.textContent = `${r.inputs.map((s) => `${s.count} ${itemName(s.item)}`).join(' + ') || (r.holds ? `holds a ${itemName(r.holds)}` : '')} → ${r.outputs.map((s) => `${s.count} ${itemName(s.item)}${s.chance ? ` (${Math.round(s.chance * 100)}%)` : ''}`).join(' + ')}`
           + ` · ${run.ticks / TICKS_PER_SECOND} s at ${run.perTick} ${unit}${oc} · have ${v.input}, made ${v.output}`;
       } else detail.textContent = '-';
     }

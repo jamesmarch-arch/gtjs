@@ -6,7 +6,7 @@
 import { CRAFTS, ITEMS, MACHINES, RECIPES, itemName } from '../../sim/data';
 import type { Stack } from '../../sim/data/types';
 import { planFor, whyNotNow, type CraftPlan, type PlanStep } from '../../sim/autocraft';
-import { jobProgress, lentTo, stepName, whyNotJob, type Job, type JobStep } from '../../sim/jobs';
+import { jobProgress, lentTo, stepDone, stepName, whyNotJob, type Job, type JobStep } from '../../sim/jobs';
 import { TICKS_PER_SECOND, allMachines, count, type World } from '../../sim/world';
 import { icon } from './icons';
 
@@ -27,10 +27,10 @@ export function parseAmount(text: string): number | null {
 }
 
 let makeable: Set<string> | null = null;
-/** Can the planner make this: a hand craft makes it, or a machine recipe has it as its guaranteed main output. */
+/** Can the planner make this: a hand craft makes it, or a machine recipe has it as its main output or by chance. */
 export function canMake(item: string): boolean {
   makeable ??= new Set([...[...CRAFTS.values()].map((c) => c.output.item),
-    ...[...RECIPES.values()].filter((r) => r.outputs[0] && r.outputs[0].chance === undefined).map((r) => r.outputs[0].item)]);
+    ...[...RECIPES.values()].flatMap((r) => r.outputs.filter((o, i) => i === 0 || o.chance !== undefined).map((o) => o.item))]);
   return makeable.has(item);
 }
 
@@ -56,7 +56,7 @@ export function duration(ticks: number): string {
 // the planner is quick, but the panel redraws ten times a second: plan again only when something it reads changes
 let memo: { key: string; plan: CraftPlan } | null = null;
 function planOf(w: World, item: string, n: number): CraftPlan {
-  const key = `${item}|${n}|${JSON.stringify(w.storage)}|${allMachines(w).map((m) => m.def).sort().join()}`;
+  const key = `${item}|${n}|${JSON.stringify(w.storage)}|${allMachines(w).map((m) => `${m.def}:${m.holding ?? ''}`).sort().join()}`;
   if (memo?.key !== key) memo = { key, plan: planFor(w, item, n) };
   return memo.plan;
 }
@@ -87,7 +87,7 @@ function itemsHtml(w: World, v: TerminalView): string {
 // one step as a row of the tree (the plan's steps run ingredients first, so the tree is them backwards): what it makes, how (by hand or on which machine, and how long), and what it uses
 function stepRow(s: PlanStep, i: number): string {
   const how = s.kind === 'craft' ? `by hand${s.runs > 1 ? `, ${s.runs} times` : ''}`
-    : `${icon(s.machine ?? '')}${esc(s.machine ? machineName(s.machine) : 'no machine')}, ${s.runs} run${s.runs === 1 ? '' : 's'}, ${duration(s.ticks)}`;
+    : `${icon(s.machine ?? '')}${esc(s.machine ? machineName(s.machine) : 'no machine')}, ${s.average ? 'about ' : ''}${s.runs} run${s.runs === 1 ? '' : 's'}, ${duration(s.ticks)}${s.average ? ' <span class="average">on average</span>' : ''}`;
   const uses = [...s.inputs.map(stack), ...s.tools.map((t) => `<span class="tool">uses ${icon(t)}${esc(itemName(t))}</span>`)].join(' ');
   return `<li class="step ${s.kind}${s.blocked ? ' blocked' : ''}" style="--depth:${s.depth}">
       <span class="n">${i + 1}</span>
@@ -100,10 +100,10 @@ function stepRow(s: PlanStep, i: number): string {
 function verdict(plan: CraftPlan): { cls: string; text: string } {
   const machines = plan.steps.filter((s) => s.kind === 'machine').length;
   if (plan.blocked.length) return { cls: 'bad', text: `Blocked: ${plan.blocked.length === 1 ? 'one thing' : `${plan.blocked.length} things`} in it can’t be made now (below).` };
-  const gather = plan.missing.map((s) => `${num(s.count)} ${itemName(s.item)}`).join(', ');
+  const gather = (plan.average ? 'about ' : '') + plan.missing.map((s) => `${num(s.count)} ${itemName(s.item)}`).join(', ');
   if (plan.missing.length && !machines) return { cls: 'wait', text: `Gather first: ${gather}.` };
   if (plan.missing.length) return { cls: 'wait', text: `Gather first: ${gather}. A job can start now and wait for them.` };
-  if (machines) return { cls: 'ok', text: `Every machine it needs is built: ${plan.totals.machineRuns} machine run${plan.totals.machineRuns === 1 ? '' : 's'}, ${duration(plan.totals.ticks)} of machine time. Start it as a crafting job: machines available for autocrafting run its steps.` };
+  if (machines) return { cls: 'ok', text: `Every machine it needs is built: ${plan.totals.machineRuns} machine run${plan.totals.machineRuns === 1 ? '' : 's'}, ${duration(plan.totals.ticks)} of machine time. Start it as a crafting job: machines available for autocrafting run its steps.${plan.average ? ' Some steps rest on chance, so these are averages: a job runs them until it has enough.' : ''}` };
   return { cls: 'ok', text: `Ready: ${plan.totals.handCrafts} hand craft${plan.totals.handCrafts === 1 ? '' : 's'}, all from storage.` };
 }
 
@@ -126,19 +126,20 @@ function planHtml(w: World, v: TerminalView): string {
       ${why ? `<small class="muted">${esc(why)}.</small>` : ''}</div>
     <h3>Steps <span class="muted">${plan.steps.length} · the target on top, what goes into each step under it · numbered in the order they run</span></h3>
     <ol class="steps">${plan.steps.map(stepRow).reverse().join('')}</ol>
+    ${plan.average ? '<p class="muted">Steps marked <span class="average">on average</span> rest on chance: their runs and what comes of them are averages, and a job runs them until it really has enough.</p>' : ''}
     ${section('Taken from storage', plan.fromStorage.length ? `<p>${stackList(plan.fromStorage)}</p>` : '')}
     ${section('To gather', plan.missing.length ? `<p class="short">${stackList(plan.missing)}</p>` : '')}
     ${section('Blocked', plan.blocked.length ? `<ul class="blocked-list">${plan.blocked.map((b) => `<li>${stack(b)} <span class="why">${esc(b.why)}</span></li>`).join('')}</ul>` : '')}
     ${section('Tools it makes', plan.tools.length ? `<p>${plan.tools.map((t) => `${icon(t)}${esc(itemName(t))}`).join(', ')} <small class="muted">(they stay in storage)</small></p>` : '')}
     ${section('Left over', plan.leftovers.length ? `<p>${stackList(plan.leftovers)}</p>` : '')}
-    ${section('Also made', extras.length ? `<p>${stackList(extras)} <small class="muted">(byproducts and chances: a bonus, not planned on)</small></p>` : '')}
+    ${section('Also made', extras.length ? `<p>${stackList(extras)} <small class="muted">(a bonus: byproducts, and on average what chance steps find besides)</small></p>` : '')}
     ${section('Machine time', byMachine ? `<ul class="list">${byMachine}<li class="total">Total, one after another<b>${duration(plan.totals.ticks)}</b></li></ul>` : '')}`;
 }
 
 // how a step of a job stands: done, waiting for the steps before it, under way (on which machines), or stuck and why
 function jobStepState(w: World, job: Job, s: JobStep, i: number): { cls: string; text: string } {
-  if (s.done >= s.runs) return { cls: 'done', text: 'done' };
-  const before = s.after.filter((j) => job.steps[j].done < job.steps[j].runs);
+  if (stepDone(s)) return { cls: 'done', text: 'done' };
+  const before = s.after.filter((j) => !stepDone(job.steps[j]));
   if (before.length) return { cls: 'later', text: `after step${before.length === 1 ? '' : 's'} ${before.map((j) => j + 1).join(', ')}` };
   const on = lentTo(w, job, i).map((m) => `${MACHINES.get(m.def)!.name} at (${m.x}, ${m.y})`);
   const where = on.length > 2 ? `on ${on.length} machines` : on.length ? `on ${on.join(' and ')}` : s.kind === 'craft' ? 'by hand' : '';
@@ -151,7 +152,7 @@ function jobHtml(w: World, job: Job): string {
   const p = jobProgress(job), steps = job.steps.map((s, i) => {
     const st = jobStepState(w, job, s, i);
     return `<li class="${st.cls}" style="--depth:${s.depth}"><span class="n">${i + 1}</span>${icon(s.output.item)}<span>${esc(stepName(s))}
-      <b>${s.done}/${s.runs}</b> <small>${esc(st.text)}</small></span></li>`;
+      <b>${s.until ? s.until.map((u) => `${Math.min(u.got, u.count)}/${u.count}${s.until!.length > 1 ? ` ${esc(itemName(u.item))}` : ''}`).join(', ') : `${s.done}/${s.runs}`}</b> <small>${esc(st.text)}</small></span></li>`;
   }).join('');
   return `<li class="job${job.paused ? ' paused' : ''}">
       <div class="job-head">${icon(job.target, 'ic big')}<div><b>${job.count.toLocaleString()} ${esc(itemName(job.target))}</b>
