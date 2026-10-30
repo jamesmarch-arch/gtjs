@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Crafting CPU</title>
+<script src="cf-head.js"></script></head><body>
+<script src="core.js"></script>
+<script src="gt-bridge.js"></script>
+<script src="gt-parts.js"></script>
+<script src="gt-lv.js"></script>
+<script>
+/* Crafting CPU (gtjs, LV, after Applied Energistics 2): the cabinet that runs crafting jobs. The crafting terminal
+   hands it a request; it works out every step from the known recipes, sets the inputs aside and sends the steps to
+   the machines, many at once, until the item is made.
+
+   How it works (truth first)
+   1. A job comes in from a terminal over the network. The CPU plans it: the item, what each step needs, and in what
+      order (the tree of recipes down to what is in storage).
+   2. The crafting storage module holds the plan and the items set aside for it, so another job can't take them; the
+      meter strip under the blades shows how much of it the job uses.
+   3. Four co-processor cards do the steps side by side: each sends a step to a free machine and waits for its
+      product. Their blades on the face blink as they work: a few steady lights while it stands, a busy flicker while
+      a job runs (running), faster as more steps are under way.
+   4. The cards run hot: the fan on the roof draws air up through them and out of its grille, spinning while the
+      CPU works.
+   Where a job goes: terminal -> network -> control board -> crafting storage (plan, set-aside items) -> co-processors
+   -> machines -> storage. Where the power is: cable -> socket -> control board -> backplane -> cards and fan.
+
+   Parts
+   OUTSIDE  the LV case (see gt-lv.js) . four co-processor blades on the face, each with a pull and a column of seven
+            lights . crafting storage meter strip . roof fan in its housing, with a grille
+   INSIDE   backplane . four co-processor cards with chips and heat sinks . crafting storage module with its cells .
+            air duct up to the fan . fan motor . control board and its power lead (gt-lv.js)
+
+   Contact checks (numbers)
+   - blades 13 wide, 2 apart, y 11..69, z 26..57 in the face recess (8..72, 15..60); meter strip y 11..69, z 17..23.5.
+   - cards x 32..72 (front plates in the face at x 74, 2 behind) at the blades' y, z 26..57, plugged into the
+     backplane x 30..32, y 10..70, z 20..62; the control board (x 2..4) sits behind it, 26 clear.
+   - storage module x 34..70, y 12..68, z 10..22 under the cards, its front behind the meter strip.
+   - fan housing r 13 at (x 44, y 40) on the roof, clear of the grille (x 6..26): 31..57; duct r 10 from the cards'
+     tops (z 57) up to the roof (z 84); fan blades r 11 on the motor at z 85.
+*/
+const CC = { bw: 13, gap: 2, y0: 69, z: [26, 57], fan: [44, 40], leds: 7 };
+const ccBlade = b => { const y1 = CC.y0 - b*(CC.bw + CC.gap); return [y1 - CC.bw, y1]; };
+const ccHash = (a, b) => { const s = Math.sin(a*91.7 + b*47.3)*43758.5453; return s - Math.floor(s); };
+const ccProg = st => gtBridge.embedded || st.progFixed ? gtClamp(st.progress || 0) : ((st.t || 0)*.12) % 1;
+
+function ccFace(st){
+  const run = !!st.running, t = st.t || 0, busy = .5 + .5*gtClamp(st.rate || 0);
+  let s = '';
+  for (let b = 0; b < 4; b++){
+    const [ya, yb] = ccBlade(b), [za, zb] = CC.z, yc = (ya + yb)/2;
+    s += shape(lvOn(rrUV(ya, za, yb, zb, 1.5), .45), '#3a4148', 1.1);
+    s += shape(lvOn(rrUV(ya + 3, zb - 4.2, yb - 3, zb - 1.6, 1), .5), '#1d2125', .7);       // the pull
+    s += fill(pd(lvOn(rectUV(ya + 1.2, za + 1.5, ya + 2.4, zb - 6), .5)), '#ffffff', 'opacity=".12"');
+    // seven lights down the blade
+    for (let i = 0; i < CC.leds; i++){
+      const z = zb - 8 - i*3.6, h = ccHash(b, i);
+      const on = run ? Math.sin(t*(9 + 14*h)*busy + h*20) > .1 - .3*busy : st.on ? h < .3 : false;
+      const col = on ? (run && h > .78 ? '#f4b829' : '#5fd06e') : '#262c31';
+      s += shape(lvOn(ellUV(yc + 2.2, z, 1.05, 1.05, 10), .55), col, .4);
+      if (on) s += fill(pd(lvOn(ellUV(yc + 2.2, z, 2, 2, 10), .58)), col, 'opacity=".3"');
+      s += fill(pd(lvOn(rectUV(yc - 3.2, z - .5, yc + .2, z + .5), .55)), '#262c31');   // a slot for a note beside each light
+    }
+  }
+  // the crafting storage meter: twelve steps, amber as the job sets items aside
+  const used = st.running ? .25 + .6*ccProg(st) : 0;
+  s += shape(lvOn(rrUV(11, 17, 69, 23.5, 1), .45), '#14181c', 1);
+  for (let k = 0; k < 12; k++){ const y1 = 68 - k*4.75, lit = used > (k + .5)/12;
+    s += fill(pd(lvOn(rectUV(y1 - 3.9, 18, y1, 22.5), .5)), lit ? '#f4b829' : '#323a40'); }
+  return s;
+}
+
+// the roof fan: housing, blades turning under the grille
+function ccParts(st, k, fade){
+  const [fx, fy] = CC.fan, ZT = LV.ZT, a = (st.t || 0)*(st.running ? 9 : 0);
+  let s = cyl(fx, fy, ZT, ZT + 5, 13, GT_TRIM, toneI, 1.2, 32);
+  if (facing([0,0,1])){
+    const top = ZT + 5.05;
+    s += fill(pd(on(PZ(top), ellUV(fx, fy, 11, 11, 28))), '#14181c');
+    // the blades: five, swept
+    for (let i = 0; i < 5; i++){ const b = a + i*2*Math.PI/5;
+      s += shape(on(PZ(top + .05), [[fx + 2.5*Math.cos(b), fy + 2.5*Math.sin(b)], [fx + 10.5*Math.cos(b + .25), fy + 10.5*Math.sin(b + .25)], [fx + 10.5*Math.cos(b + .75), fy + 10.5*Math.sin(b + .75)], [fx + 2.5*Math.cos(b + .6), fy + 2.5*Math.sin(b + .6)]]), '#8e979c', .5); }
+    s += shape(on(PZ(top + .1), ellUV(fx, fy, 3, 3, 14)), GT_TRIM.l, .7);
+    // the grille: rings and four spokes over it
+    let g = ''; for (const r of [5, 8, 11]) g += pd(on(PZ(top + .2), ellUV(fx, fy, r, r, 28)));
+    for (let i = 0; i < 4; i++){ const b = i*Math.PI/2 + .4; g += pd([[fx + 3*Math.cos(b), fy + 3*Math.sin(b), top + .2], [fx + 11*Math.cos(b), fy + 11*Math.sin(b), top + .2]], false); }
+    s += `<path d="${g}" fill="none" stroke="${INK}" stroke-width=".9"/><path d="${g}" fill="none" stroke="${GT_TRIM.l}" stroke-width=".4"/>`;
+  }
+  return [{ box: [[fx - 13, fy - 13, ZT], [fx + 13, fy + 13, ZT + 5.3]], svg: fade(s) }];
+}
+
+function ccInside(st){
+  const out = [], put = (b, svg) => out.push({ box: b, svg }), run = !!st.running, [fx, fy] = CC.fan;
+  // the backplane, the storage module under the cards
+  put([[30, 10, 20], [32, 70, 62]], box(30, 10, 20, 32, 70, 62, GT_PCB, toneI, 1));
+  put([[34, 12, 10], [70, 68, 22]], box(34, 12, 10, 70, 68, 22, GT_TRIM, toneI, 1)
+    + (facing([0,0,1]) ? [16, 26, 36, 46, 56].map(y => shape(on(PZ(22.05), rectUV(40, y, 64, y + 7)), run ? '#7a6230' : '#4a4f55', .5)).join('') : ''));
+  // four cards: a board, two chips with heat sinks
+  for (let b = 0; b < 4; b++){ const [ya, yb] = ccBlade(b), y = (ya + yb)/2 - 2;
+    put([[32, y - 1, CC.z[0]], [72, y + 1, CC.z[1]]], box(32, y - 1, CC.z[0], 72, y + 1, CC.z[1], GT_PCB, toneI, .8)
+      + [[44, 34], [58, 46]].map(([x, z]) => box(x - 5, y + 1, z - 5, x + 5, y + 4, z + 5, GT.IRON, toneI, .6)
+        + (facing([0,1,0]) ? (() => { let fn = ''; for (let xx = x - 4; xx <= x + 4; xx += 2) fn += pd([[xx, y + 4.05, z - 4.5], [xx, y + 4.05, z + 4.5]], false); return ink(fn, .4); })() : '')).join(''));
+  }
+  // the air duct up to the fan, its motor
+  put([[fx - 10, fy - 10, CC.z[1] + 1], [fx + 10, fy + 10, LV.ZT - 3]], cyl(fx, fy, CC.z[1] + 1, LV.ZT - 3, 10, matOf('#c3cad0'), toneI, 1, 24));
+  put([[fx - 4, fy - 4, LV.ZT - 3], [fx + 4, fy + 4, LV.ZT]], cyl(fx, fy, LV.ZT - 3, LV.ZT, 4, GT_TRIM, toneI, .8, 16));
+  out.push(gtWire([[4.5, 50, 60], [18, 50, 60], [30, 50, 50]], run ? '#f6b98a' : GT.COPPER.m, .7));
+  return out;
+}
+
+gtLv({
+  fig:'AE2', title:'Crafting CPU', name:'CRAFTING CPU', sub:'ME 4 CORES 32 V', nameSize: 4.4, noRecipe: true, height: 104,
+  face: ccFace, parts: ccParts, inside: ccInside,
+  shadowPts: [[CC.fan[0] - 13, CC.fan[1], LV.ZT + 5], [CC.fan[0] + 13, CC.fan[1], LV.ZT + 5]],
+  params: (s, q) => { if (q.has('progress')) s.progFixed = true; },
+  stats: st => [{ label:'Job', value: st.running ? `${Math.round(ccProg(st)*100)}%` : 'idle' },
+    { label:'Co-processors', value: 4, small:true }, { label:'Storage used', value: `${Math.round((st.running ? .25 + .6*ccProg(st) : 0)*100)}%`, small:true }],
+  callouts: st => [
+    ...(facing([1,0,0]) ? [{ at: [LV.W, ccBlade(0)[1], CC.z[1]], text: 'CO-PROCESSORS', on: !!st.running }, { at: [LV.W, 30, 17], text: 'STORAGE METER', on: !!st.running }] : []),
+    { at: [CC.fan[0], CC.fan[1] + 13, LV.ZT + 5], text: 'FAN', on: !!st.running }],
+  insideCallouts: st => [{ at: [31, 12, 62], text: 'BACKPLANE', on: !!st.on }, { at: [60, ccBlade(1)[1], CC.z[1]], text: 'PROCESSOR CARDS', on: !!st.running },
+    { at: [52, 12, 22], text: 'CRAFTING STORAGE', on: !!st.running }, { at: [CC.fan[0], CC.fan[1] + 10, 72], text: 'AIR DUCT', on: !!st.running },
+    { at: [CC.fan[0], CC.fan[1] - 4, LV.ZT - 1.5], text: 'FAN MOTOR', on: !!st.running }],
+});
+</script>
+<script src="cf-tail.js"></script>
+</body></html>

@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Compact Floor (large)</title>
+<script src="cf-head.js"></script></head><body>
+<script src="core.js"></script>
+<script src="gt-bridge.js"></script>
+<script src="gt-parts.js"></script>
+<script src="gt-lv.js"></script>
+<script src="gt-compact.js"></script>
+<script>
+/* Compact Floor, large (gtjs): one tile on the floor, a 13 x 13 floor inside. The kit is gt-compact.js.
+
+   How it works (truth first)
+   1. The block folds a whole floor into itself: step into it (press the window) and you build on an inner floor of
+      13 x 13 tiles, walled in on four sides. What you build there runs like anything on the outer floor.
+   2. The EU socket on the +y side and the steam flange on the -y side go straight through the 4 cm wall to the two
+      port blocks on the inner walls (floor_port_eu, floor_port_steam): a cable or a pipe on the inner floor that
+      touches a port is on the same net as the one outside that touches the socket or the flange.
+   3. Strip lamps along the inner walls light the floor; windows in the front and the back look onto it (one shows
+      from every side). The beacon on the roof glows in the tier's colour while the block is powered. While machines
+      inside are working (running), their lamps chase across the floor and parcels ride the aisle belt.
+   Where the power is: cable -> outer socket -> link through the wall -> EU port -> the inner floor's cables.
+   Where the steam is: pipe -> outer flange -> link through the wall -> steam port -> the inner floor's pipes.
+
+   Parts
+   OUTSIDE  heavy steel case . violet trim band round every face with 5 rivets to an edge . window on the front .
+            a window in the back . beacon on the roof . name plate with the tier . EU socket, lamp and cable (+y) . steam flange and stub (-y) .
+            service hatch with hinges and a pull (-y, above the flange)
+   INSIDE   inner floor of 13 x 13 tiles . tiny machines with lamps . aisle belt with parcels . EU port (+y wall) .
+            steam port (-y wall) . EU link and steam link through the walls . strip lamps . panel seams
+
+   Contact checks (numbers)
+   - case x 5..95, y 5..95, z 0..90; chamber x 9..91, y 9..91, z 14..86 (walls 4 thick); trim band 7 wide.
+   - window 29 either side of (y 50, z 46): y 21..79, z 17..75, its frame 4 more, inside the band (7..83).
+   - the inner floor stands on the 14 cm base (z 14), so it shows through the windows from their sills up.
+   - beacon r 10 collar on a bolted ring r 15 in the middle of the roof, lens r 7.5 z 94..100, cap to z 102.
+   - tiles 5.7 wide from 13 to 87; machines stand on z 14 and are inset 14% of a tile, so they never touch.
+   - EU socket (x 50, z 30) on y 95; its link runs in the wall at y 93 down to z 18 and into the EU port (y 87.5..91, z 14..23).
+   - steam flange r 7.5 at (x 50, z 14) on y 5, stub to the tile's edge (y -1); the link runs y 5..7 at z 14, up to
+     z 18, into the steam port (y 9..12.5, z 14..23).
+   - cable from the socket out 2.6, down to z 3 and along the floor to y 101 (the next tile).
+*/
+gtCompact('large', 'CF3');
+</script>
+<script src="cf-tail.js"></script>
+</body></html>
