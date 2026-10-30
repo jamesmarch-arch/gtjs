@@ -5,10 +5,16 @@
 // screen. It rests on whole quarter turns, the four views each figure has a sprite for (<figure>@r); while it turns
 // in between (a right-button drag, or the swing to the next view) each machine shows the nearest view's sprite upright,
 // riding on the middle of its turning tile. It pans over the floor and zooms about the pointer.
+//
+// It shows one floor at a time: the factory floor, or the floor inside a compact floor block (`enter` steps in, and
+// out again). Each floor keeps its own camera. An inner floor is drawn with a low wall round it, and its ports on the wall.
 import { CONDUITS, MACHINES } from '../../sim/data';
-import { joinsSteam } from '../../sim/nets';
+import { joinsSteam, portsOf } from '../../sim/nets';
 import { joinsEu } from '../../sim/power';
-import { build, canBuild, demolish, isConduit, occupant, type Buildable, type CableState, type MachineState, type Occupant, type World, type WorldEvent } from '../../sim/world';
+import {
+  build, canBuild, demolish, FACTORY, floorPath, isConduit, isInner, isPort, levelOf, occupant, PORT_NAMES, tileOf, type Buildable, type CableState, type Level,
+  type MachineState, type Occupant, type PortState, type World, type WorldEvent,
+} from '../../sim/world';
 import { loadSprite, spriteTransform, type Sprite } from './sprites';
 
 export type Tool = { kind: 'inspect' } | { kind: 'remove' } | { kind: 'build'; what: Buildable };
@@ -25,6 +31,8 @@ const INK = '#231e16', SHADOW = '#41538f';
 const BRONZE = { l: '#eab36c', m: '#c98a42', d: '#5c3b17' }, BRICK = { l: '#d98a6a', m: '#b5654a', d: '#4e2418' };
 const STEEL = { l: '#d3d8db', m: '#a3abb0', d: '#4a5157' }, IRONP = { l: '#a7aeb2', m: '#7d858b', d: '#3b4146' };
 const STONE = { l: '#cfc9be', m: '#a39d93', d: '#4e4a44' };
+const COMPACT = { l: '#b3abc4', m: '#7d7391', d: '#3a3346' }, WALL = { l: '#ddd8cf', m: '#b4ada2', d: '#5a554d' };
+const WALL_H = 0.3, PORT_H = 0.45; // an inner floor's wall, and a port on it, in tiles of height
 // screen height of one tile-length of height, in units of T. The floor's tiles are 2:1, and a figure sprite mapped
 // onto a tile stretches to match, which makes its heights exactly T per tile: boxes use the same so they line up.
 const ZK = 1;
@@ -66,6 +74,9 @@ export class Floor {
   private booms: { x: number; y: number; t: number; big: boolean }[] = [];
   private lastFrame = 0;
   private puffClock = new Map<string, number>();
+  private at = FACTORY; // the floor on show
+  private cams = new Map<string, { cam: Pt; T: number; angle: number }>(); // each floor's camera, while another is shown
+  private zoomTo: number | null = null; // the tile size a step in or out is easing to
 
   constructor(private host: HTMLElement, private getWorld: () => World, private events: FloorEvents) {
     host.appendChild(this.canvas);
@@ -77,6 +88,7 @@ export class Floor {
     this.canvas.addEventListener('pointerleave', () => { this.hover = this.pointer = null; this.events.status(''); });
     this.canvas.addEventListener('wheel', (e) => {
       e.preventDefault();
+      this.zoomTo = null;
       this.zoomAt(this.T * Math.exp(-e.deltaY * 0.0015), this.local(e));
     }, { passive: false });
     this.canvas.addEventListener('contextmenu', (e) => e.preventDefault()); // right-drag turns; a right click puts the tool down
@@ -92,8 +104,43 @@ export class Floor {
 
   getTool(): Tool { return this.tool; }
 
+  /** The id of the floor on show. */
+  shownFloor(): string { return this.at; }
+
+  /** The floor on show; the factory floor if the one that was shown is gone (its block removed, a new game loaded). */
+  level(): Level {
+    const lv = levelOf(this.getWorld(), this.at);
+    if (lv) return lv;
+    this.enter(FACTORY);
+    return this.getWorld();
+  }
+
+  /** Show another floor: step into a compact block's floor, or back out. The floor left keeps its camera; one shown
+   * for the first time fits the frame. Either way the view eases in a little, so the step reads as a step. */
+  enter(id: string) {
+    if (id === this.at || !levelOf(this.getWorld(), id)) return;
+    const w = this.getWorld(), inward = floorPath(w, id).length > floorPath(w, this.at).length;
+    this.cams.set(this.at, { cam: this.cam, T: this.T, angle: this.angle });
+    this.at = id;
+    const saved = this.cams.get(id);
+    this.cams.delete(id);
+    let T: number;
+    if (saved) { this.angle = this.target = saved.angle; this.cam = saved.cam; T = saved.T; }
+    else {
+      const { w, h } = this.level().floor, span = w + h + 2; // a floor and its walls span (w + h + 2) tile widths across
+      this.angle = this.target = Math.round(this.angle);
+      this.recenter();
+      T = Math.max(T_MIN, Math.min(T_MAX, Math.min(this.cw / span, (this.ch * 2) / (span + 2)) * 0.9));
+    }
+    this.T = Math.max(T_MIN, T * (inward ? 0.6 : 1.25));
+    this.zoomTo = T;
+    this.hover = null;
+    this.host.dispatchEvent(new CustomEvent('floorchange', { detail: id }));
+    this.describeHover();
+  }
+
   /** Zoom (1 = 100%) about the middle of the frame. */
-  setZoom(z: number) { this.zoomAt(z * BASE_T, [this.cw / 2, this.ch / 2]); }
+  setZoom(z: number) { this.zoomTo = null; this.zoomAt(z * BASE_T, [this.cw / 2, this.ch / 2]); }
 
   getZoom(): number { return this.T / BASE_T; }
 
@@ -139,8 +186,8 @@ export class Floor {
 
   /** Point the camera at the machines, or at the middle of an empty floor. */
   recenter() {
-    const w = this.getWorld();
-    if (!w.machines.length) { this.cam = this.rot(w.floor.w / 2, w.floor.h / 2); return; }
+    const w = this.level();
+    if (!w.machines.length || isInner(w)) { this.cam = this.rot(w.floor.w / 2, w.floor.h / 2); return; } // a small floor: all of it
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
     for (const m of w.machines) {
       const [fw, fh] = MACHINES.get(m.def)!.footprint;
@@ -169,12 +216,12 @@ export class Floor {
 
   /** The floor's (x, y) on the view's axes (u, v), measured from the middle of the floor. */
   private rot(x: number, y: number): Pt {
-    const { w, h } = this.getWorld().floor, [c, s] = this.turn(), dx = x - w / 2, dy = y - h / 2;
+    const { w, h } = this.level().floor, [c, s] = this.turn(), dx = x - w / 2, dy = y - h / 2;
     return [dx * c + dy * s, dy * c - dx * s];
   }
 
   private unrot(u: number, v: number): Pt {
-    const { w, h } = this.getWorld().floor, [c, s] = this.turn();
+    const { w, h } = this.level().floor, [c, s] = this.turn();
     return [w / 2 + u * c - v * s, h / 2 + u * s + v * c];
   }
 
@@ -200,7 +247,11 @@ export class Floor {
   /** A machine's footprint in view space, [u0, v0, u1, v1]: exact at rest, the turned tile's bounds in between. */
   private viewRect(m: MachineState): [number, number, number, number] {
     const [fw, fh] = MACHINES.get(m.def)!.footprint;
-    const pts = [this.rot(m.x, m.y), this.rot(m.x + fw, m.y), this.rot(m.x + fw, m.y + fh), this.rot(m.x, m.y + fh)];
+    return this.tileRect(m.x, m.y, fw, fh);
+  }
+
+  private tileRect(x: number, y: number, fw = 1, fh = 1): [number, number, number, number] {
+    const pts = [this.rot(x, y), this.rot(x + fw, y), this.rot(x + fw, y + fh), this.rot(x, y + fh)];
     const us = pts.map((p) => p[0]), vs = pts.map((p) => p[1]);
     return [Math.min(...us), Math.min(...vs), Math.max(...us), Math.max(...vs)];
   }
@@ -214,7 +265,7 @@ export class Floor {
 
   // keep the middle of the frame over the floor
   private clampCam(c: Pt): Pt {
-    const { w, h } = this.getWorld().floor, [x, y] = this.unrot(...c);
+    const { w, h } = this.level().floor, [x, y] = this.unrot(...c);
     return this.rot(Math.max(0, Math.min(w, x)), Math.max(0, Math.min(h, y)));
   }
 
@@ -222,7 +273,7 @@ export class Floor {
 
   /** The machine whose drawn box is under the point, front-most first; else whatever is on the tile there. */
   private pick(px: number, py: number): Occupant | undefined {
-    const w = this.getWorld();
+    const w = this.level();
     const ms = [...w.machines].sort((a, b) => this.depth(b) - this.depth(a));
     for (const m of ms) {
       const [u0, v0, u1, v1] = this.viewRect(m), h = this.heightOf(m);
@@ -266,7 +317,7 @@ export class Floor {
   private onDown(e: PointerEvent) {
     this.pointer = this.local(e);
     this.hover = this.tileAt(...this.pointer);
-    const t = this.tool, w = this.getWorld();
+    const t = this.tool, w = this.getWorld(), lv = this.level();
     // the right button turns and the middle one pans, with any tool; the left one pans too with the open tool, once it moves
     if (e.button !== 0 || t.kind === 'inspect') {
       this.pan = { from: this.pointer, cam: this.cam, angle: this.angle, moved: false, button: e.button };
@@ -274,9 +325,9 @@ export class Floor {
       return;
     }
     if (t.kind === 'build' && !isConduit(t.what)) {
-      const why = canBuild(w, t.what, ...this.hover);
+      const why = canBuild(w, t.what, ...this.hover, lv);
       if (why) return this.events.status(why);
-      build(w, t.what, ...this.hover);
+      build(w, t.what, ...this.hover, lv);
       this.events.changed();
       this.describeHover();
       return;
@@ -308,16 +359,15 @@ export class Floor {
     const key = this.hover.join(',');
     if (key === this.lastDragTile) return;
     this.lastDragTile = key;
-    const t = this.tool, w = this.getWorld();
+    const t = this.tool, w = this.getWorld(), lv = this.level();
     if (t.kind === 'remove') {
       const o = this.pick(...this.pointer);
       if (!o) return;
-      const at = o.kind === 'machine' ? [o.m.x, o.m.y] : o.kind === 'pipe' ? [o.p.x, o.p.y] : [o.c.x, o.c.y];
-      demolish(w, at[0], at[1]);
+      demolish(w, ...tileOf(o), lv);
       this.events.changed();
     } else if (t.kind === 'build') {
-      if (canBuild(w, t.what, ...this.hover)) return; // painting skips taken tiles quietly
-      build(w, t.what, ...this.hover);
+      if (canBuild(w, t.what, ...this.hover, lv)) return; // painting skips taken tiles quietly
+      build(w, t.what, ...this.hover, lv);
       this.events.changed();
     }
     this.describeHover();
@@ -327,8 +377,8 @@ export class Floor {
     if (!this.hover || !this.pointer) return;
     const w = this.getWorld(), t = this.tool;
     if (t.kind === 'build') {
-      const why = canBuild(w, t.what, ...this.hover);
-      const name = isConduit(t.what) ? CONDUITS.get(t.what)!.name : MACHINES.get(t.what)!.name;
+      const why = canBuild(w, t.what, ...this.hover, this.level());
+      const name = isPort(t.what) ? PORT_NAMES[t.what] : isConduit(t.what) ? CONDUITS.get(t.what)!.name : MACHINES.get(t.what)!.name;
       return this.events.status(why ? `${name}: ${why}` : `Place ${name} at (${this.hover.join(', ')})`);
     }
     const o = this.pick(...this.pointer);
@@ -336,7 +386,16 @@ export class Floor {
     if (o.kind === 'machine') {
       const def = MACHINES.get(o.m.def)!;
       const side = def.transformer ? ` · ${o.m.mode === 'up' ? 'step-up' : 'step-down'}, high side in front (${FRONT_DIR[this.view]})` : '';
+      if (def.compact) {
+        const ports = (['steam', 'eu'] as const).map((k) => portsOf(w, o.m, k).length);
+        const has = `${ports[0]} steam port${ports[0] === 1 ? '' : 's'}, ${ports[1]} EU port${ports[1] === 1 ? '' : 's'}`;
+        return this.events.status(`${def.name} (${o.m.x}, ${o.m.y}): ${has}${t.kind === 'remove' ? ' · click to remove it and everything in it' : ' · click to step in'}`);
+      }
       return this.events.status(`${def.name} (${o.m.x}, ${o.m.y}): ${machineStatus(o.m)}${side}${t.kind === 'remove' ? ' · click to remove' : ' · click to open'}`);
+    }
+    if (o.kind === 'port') {
+      const what = o.port.carries === 'steam' ? 'steam' : 'EU';
+      return this.events.status(`${o.port.carries === 'steam' ? 'Steam' : 'EU'} port: joins the ${what} net in here to the one round the block outside${t.kind === 'remove' ? ' · click to remove' : ''}`);
     }
     const cd = CONDUITS.get(o.kind === 'pipe' ? 'pipe' : o.c.kind)!;
     this.events.status(`${cd.name}${cd.maxVoltage ? ` · up to ${cd.maxVoltage} V` : ''}${t.kind === 'remove' ? ' · click to remove' : ''}`);
@@ -348,17 +407,28 @@ export class Floor {
     const dt = Math.min(0.1, (now - (this.lastFrame || now)) / 1000);
     this.lastFrame = now;
     const ctx = this.ctx, w = this.getWorld(), dpr = devicePixelRatio || 1;
-    if (w !== this.world) { this.world = w; this.recenter(); } // a new game or a loaded save: look at it
+    if (w !== this.world) { // a new game or a loaded save: back to its factory floor, and look at it
+      this.world = w;
+      this.cams.clear();
+      if (this.at !== FACTORY) { this.at = FACTORY; this.host.dispatchEvent(new CustomEvent('floorchange', { detail: FACTORY })); }
+      this.recenter();
+    }
+    const lv = this.level();
     if (this.angle !== this.target) { // swinging to a view: ease in, land exactly
       const d = this.target - this.angle;
       this.setAngle(Math.abs(d) < 0.003 ? this.target : this.angle + d * Math.min(1, dt * 12));
+    }
+    if (this.zoomTo !== null) { // stepping into or out of a floor: ease to its zoom
+      const d = this.zoomTo - this.T;
+      this.zoomAt(Math.abs(d) < 0.05 ? this.zoomTo : this.T + d * Math.min(1, dt * 9), [this.cw / 2, this.ch / 2]);
+      if (this.T === this.zoomTo) this.zoomTo = null;
     }
     if (this.canvas.width !== Math.round(this.cw * dpr)) this.layout();
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
     ctx.lineJoin = ctx.lineCap = 'round';
 
-    this.drawGrid(w);
+    this.drawGrid(lv);
     const highlight = this.highlightTarget();
     if (highlight) this.drawFootprint(highlight.x, highlight.y, highlight.fw, highlight.fh, highlight.fill);
 
@@ -370,22 +440,35 @@ export class Floor {
       return px > -m && px < this.cw + m && py > -m && py < this.ch + m + up * this.T;
     };
     const tileDepth = (x: number, y: number) => { const [u, v] = this.rot(x + 0.5, y + 0.5); return u + v; };
-    for (const m of w.machines) {
+    for (const m of lv.machines) {
       const [fw, fh] = MACHINES.get(m.def)!.footprint;
       if (shows(m.x + fw / 2, m.y + fh / 2, 4.5 + fw)) items.push({ depth: this.depth(m), draw: () => this.drawMachine(m) });
     }
-    for (const p of w.pipes) if (shows(p.x + 0.5, p.y + 0.5, 0)) items.push({ depth: tileDepth(p.x, p.y), draw: () => this.drawConduit(w, p.x, p.y, 'pipe') });
-    for (const c of w.cables) if (shows(c.x + 0.5, c.y + 0.5, 0)) items.push({ depth: tileDepth(c.x, c.y), draw: () => this.drawConduit(w, c.x, c.y, c.kind) });
-    const ghost = this.ghost(w);
+    for (const p of lv.pipes) if (shows(p.x + 0.5, p.y + 0.5, 0)) items.push({ depth: tileDepth(p.x, p.y), draw: () => this.drawConduit(w, lv, p.x, p.y, 'pipe') });
+    for (const c of lv.cables) if (shows(c.x + 0.5, c.y + 0.5, 0)) items.push({ depth: tileDepth(c.x, c.y), draw: () => this.drawConduit(w, lv, c.x, c.y, c.kind) });
+    // an inner floor's wall, all round it, with its ports in it
+    if (isInner(lv)) {
+      const ports = new Map(lv.ports.map((p) => [`${p.x},${p.y}`, p]));
+      for (let x = -1; x <= lv.floor.w; x++) for (let y = -1; y <= lv.floor.h; y++) {
+        if (onFloor(lv, x, y)) continue;
+        const port = ports.get(`${x},${y}`);
+        items.push({ depth: tileDepth(x, y), draw: () => (port ? this.drawPort(port) : this.drawWall(x, y)) });
+      }
+    }
+    const ghost = this.ghost(w, lv);
     if (ghost) items.push(ghost);
     items.sort((a, b) => a.depth - b.depth);
     for (const it of items) it.draw();
+    // a highlighted wall tile shows on top of the wall
+    if (highlight && isInner(lv) && !onFloor(lv, highlight.x, highlight.y)) {
+      this.drawFootprint(highlight.x, highlight.y, 1, 1, highlight.fill, occupant(lv, highlight.x, highlight.y) ? PORT_H : WALL_H);
+    }
 
-    this.drawPuffs(w, dt);
+    this.drawPuffs(lv, dt);
     this.drawBooms(dt);
   }
 
-  private drawGrid(w: World) {
+  private drawGrid(w: Level) {
     const ctx = this.ctx;
     ctx.fillStyle = 'rgba(35,30,22,.035)';
     ctx.beginPath();
@@ -406,10 +489,10 @@ export class Floor {
     ctx.stroke();
   }
 
-  private drawFootprint(x: number, y: number, fw: number, fh: number, fill: string) {
+  private drawFootprint(x: number, y: number, fw: number, fh: number, fill: string, z = 0) {
     const ctx = this.ctx;
     ctx.beginPath();
-    for (const p of [this.iso(x, y), this.iso(x + fw, y), this.iso(x + fw, y + fh), this.iso(x, y + fh)]) ctx.lineTo(...p);
+    for (const p of [this.iso(x, y, z), this.iso(x + fw, y, z), this.iso(x + fw, y + fh, z), this.iso(x, y + fh, z)]) ctx.lineTo(...p);
     ctx.closePath();
     ctx.fillStyle = fill;
     ctx.fill();
@@ -419,25 +502,31 @@ export class Floor {
     if (!this.hover || !this.pointer) return null;
     const t = this.tool, w = this.getWorld();
     if (t.kind === 'build') {
-      const [fw, fh] = isConduit(t.what) ? [1, 1] : MACHINES.get(t.what)!.footprint;
-      const ok = !canBuild(w, t.what, ...this.hover);
+      const [fw, fh] = isConduit(t.what) || isPort(t.what) ? [1, 1] : MACHINES.get(t.what)!.footprint;
+      const ok = !canBuild(w, t.what, ...this.hover, this.level());
       return { x: this.hover[0], y: this.hover[1], fw, fh, fill: ok ? 'rgba(67,194,92,.28)' : 'rgba(226,72,61,.28)' };
     }
     const o = this.pick(...this.pointer);
     if (!o) return null;
     const fill = t.kind === 'remove' ? 'rgba(226,72,61,.32)' : 'rgba(35,30,22,.12)';
     if (o.kind === 'machine') { const [fw, fh] = MACHINES.get(o.m.def)!.footprint; return { x: o.m.x, y: o.m.y, fw, fh, fill }; }
-    const c = o.kind === 'pipe' ? o.p : o.c;
-    return { x: c.x, y: c.y, fw: 1, fh: 1, fill };
+    const [x, y] = tileOf(o);
+    return { x, y, fw: 1, fh: 1, fill };
   }
 
   /** A see-through preview of the machine about to be placed. */
-  private ghost(w: World): { depth: number; draw: () => void } | null {
+  private ghost(w: World, lv: Level): { depth: number; draw: () => void } | null {
     const t = this.tool;
     if (t.kind !== 'build' || !this.hover || isConduit(t.what)) return null;
-    const def = MACHINES.get(t.what)!, [x, y] = this.hover;
+    const [x, y] = this.hover;
+    if (isPort(t.what)) { // a port: in the wall tile it would go in, when it can
+      if (canBuild(w, t.what, x, y, lv)) return null;
+      const port: PortState = { x, y, carries: t.what === 'steam_port' ? 'steam' : 'eu' }, [u, v] = this.rot(x + 0.5, y + 0.5);
+      return { depth: u + v + 0.01, draw: () => { this.ctx.globalAlpha = 0.6; this.drawPort(port); this.ctx.globalAlpha = 1; } };
+    }
+    const def = MACHINES.get(t.what)!;
     const fake: MachineState = { uid: 'ghost', def: def.id, x, y, recipe: null, enabled: false, active: null, progress: 0, stalled: false, steam: 0, burn: 0, burnMax: 0, eu: 0, rate: 0, mode: 'down' };
-    const ok = !canBuild(w, t.what, x, y);
+    const ok = !canBuild(w, t.what, x, y, lv);
     return { depth: this.depth(fake) + 0.01, draw: () => { this.ctx.globalAlpha = ok ? 0.55 : 0.3; this.drawMachine(fake); this.ctx.globalAlpha = 1; } };
   }
 
@@ -482,24 +571,51 @@ export class Floor {
 
   /** A plain inked box in the figures' palette: a machine with no figure, or one whose sprite is still loading. */
   private drawBox(m: MachineState) {
-    const def = MACHINES.get(m.def)!, h = this.heightOf(m), ctx = this.ctx, i = INSET;
-    const pal = def.kind === 'coke_oven' ? BRICK : def.fuel ? STONE : def.id === 'hp_boiler' ? IRONP : def.power === 'eu' ? STEEL : BRONZE;
-    const [U0, V0, U1, V1] = this.viewRect(m), u0 = U0 + i, v0 = V0 + i, u1 = U1 - i, v1 = V1 - i;
+    const def = MACHINES.get(m.def)!;
+    const pal = def.compact ? COMPACT : def.kind === 'coke_oven' ? BRICK : def.fuel ? STONE : def.id === 'hp_boiler' ? IRONP : def.power === 'eu' ? STEEL : BRONZE;
+    this.drawSolid(this.viewRect(m), this.heightOf(m), pal, def.short);
+  }
+
+  /** A length of an inner floor's wall: a low, plain block on a tile just off the floor. */
+  private drawWall(x: number, y: number) {
+    this.drawSolid(this.tileRect(x, y), WALL_H, WALL, '', 0, false);
+  }
+
+  /** A port in the wall, a little taller than the wall: bronze for steam, steel with a yellow band for EU. */
+  private drawPort(p: PortState) {
+    const steam = p.carries === 'steam', rect = this.tileRect(p.x, p.y), i = 0.08;
+    this.drawSolid(rect, PORT_H, steam ? BRONZE : STEEL, steam ? 'STEAM' : 'EU', i, false);
+    if (steam) return;
+    // the band, round the top of its two near faces
+    const [u0, v0, u1, v1] = [rect[0] + i, rect[1] + i, rect[2] - i, rect[3] - i], z0 = PORT_H * 0.8, z1 = PORT_H * 0.95, ctx = this.ctx;
+    for (const [[ua, va], [ub, vb]] of [[[u0, v1], [u1, v1]], [[u1, v0], [u1, v1]]]) {
+      ctx.beginPath();
+      for (const pt of [this.scr(ua, va, z0), this.scr(ub, vb, z0), this.scr(ub, vb, z1), this.scr(ua, va, z1)]) ctx.lineTo(...pt);
+      ctx.closePath(); ctx.fillStyle = '#f4b829'; ctx.fill(); ctx.strokeStyle = INK; ctx.lineWidth = 1; ctx.stroke();
+    }
+  }
+
+  /** A plain inked block over a view-space rectangle, `h` tiles tall, with a label along its lit face. */
+  private drawSolid(rect: [number, number, number, number], h: number, pal: { l: string; m: string; d: string }, label: string, i = INSET, shadow = true) {
+    const ctx = this.ctx, [U0, V0, U1, V1] = rect, u0 = U0 + i, v0 = V0 + i, u1 = U1 - i, v1 = V1 - i;
     const P = (u: number, v: number, z: number): Pt => { const [px, py] = this.scr(u, v, z); return [px + wob(u, v, z), py + wob(v, z, u)]; };
     const poly = (pts: Pt[], fill: string, line = 1.4) => {
       ctx.beginPath(); for (const p of pts) ctx.lineTo(...p); ctx.closePath();
       ctx.fillStyle = fill; ctx.fill(); ctx.strokeStyle = INK; ctx.lineWidth = line; ctx.stroke();
     };
     // shadow toward the lower left, like the figures'
-    ctx.fillStyle = SHADOW;
-    ctx.beginPath();
-    for (const p of [P(u0, v1, 0), P(u1, v1, 0), P(u1 - 0.1, v1 + 0.35 * h, 0), P(u0 - 0.1, v1 + 0.35 * h, 0)]) ctx.lineTo(...p);
-    ctx.closePath(); ctx.fill();
+    if (shadow) {
+      ctx.fillStyle = SHADOW;
+      ctx.beginPath();
+      for (const p of [P(u0, v1, 0), P(u1, v1, 0), P(u1 - 0.1, v1 + 0.35 * h, 0), P(u0 - 0.1, v1 + 0.35 * h, 0)]) ctx.lineTo(...p);
+      ctx.closePath(); ctx.fill();
+    }
     poly([P(u0, v1, 0), P(u1, v1, 0), P(u1, v1, h), P(u0, v1, h)], mix(pal.d, pal.m, 0.25)); // the lower-left face, in shade
     poly([P(u1, v0, 0), P(u1, v1, 0), P(u1, v1, h), P(u1, v0, h)], mix(pal.l, pal.m, 0.3)); // the lower-right face, lit
     poly([P(u0, v0, h), P(u1, v0, h), P(u1, v1, h), P(u0, v1, h)], pal.l); // top
     // the name, written along the lower-right face
-    const T = this.T, [lx, ly] = this.scr(u1, (v0 + v1) / 2, h * 0.72);
+    const T = this.T, [lx, ly] = this.scr(u1, (v0 + v1) / 2, h * (h < 0.6 ? 0.3 : 0.72));
+    if (label) {
     ctx.save();
     ctx.setTransform(ctx.getTransform().multiply(new DOMMatrix([1, -0.5, 0, 1, lx, ly])));
     ctx.fillStyle = INK;
@@ -507,10 +623,11 @@ export class Floor {
     // shrink long names to fit the face: along it, the skewed text runs 1 px per px of the face's width (v1 - v0) * T
     const font = (px: number) => `800 ${px}px ui-monospace, Menlo, monospace`, base = Math.max(7, T * 0.2);
     ctx.font = font(base);
-    const fit = ((v1 - v0) * T * 0.82) / ctx.measureText(def.short).width;
+    const fit = ((v1 - v0) * T * 0.82) / ctx.measureText(label).width;
     if (fit < 1) ctx.font = font(Math.max(5, base * fit));
-    ctx.fillText(def.short, 0, 0);
+    ctx.fillText(label, 0, 0);
     ctx.restore();
+    }
     // silhouette
     ctx.beginPath();
     for (const p of [P(u0, v0, h), P(u1, v0, h), P(u1, v0, 0), P(u1, v1, 0), P(u0, v1, 0), P(u0, v1, h)]) ctx.lineTo(...p);
@@ -530,10 +647,12 @@ export class Floor {
     ctx.strokeStyle = INK; ctx.lineWidth = 1.2; ctx.stroke();
   }
 
-  private drawConduit(w: World, x: number, y: number, kind: 'pipe' | CableState['kind']) {
-    const ctx = this.ctx, T = this.T, copper = kind === 'cable_copper';
-    const joins = (o: Occupant | undefined) => !!o && (kind === 'pipe'
-      ? o.kind === 'pipe' || (o.kind === 'machine' && joinsSteam(o.m))
+  private drawConduit(w: World, lv: Level, x: number, y: number, kind: 'pipe' | CableState['kind']) {
+    const ctx = this.ctx, T = this.T, copper = kind === 'cable_copper', carries = kind === 'pipe' ? 'steam' : 'eu';
+    // it joins its own kind, machines on its kind of net, and ports and compact blocks that carry its kind
+    const joins = (o: Occupant | undefined) => !!o && (o.kind === 'port' ? o.port.carries === carries
+      : o.kind === 'machine' && portsOf(w, o.m, carries).length > 0 ? true
+      : kind === 'pipe' ? o.kind === 'pipe' || (o.kind === 'machine' && joinsSteam(o.m))
       : o.kind === 'cable' || (o.kind === 'machine' && joinsEu(o.m)));
     const z = kind === 'pipe' ? 0.12 : 0.04, r = kind === 'pipe' ? T * 0.075 : T * (copper ? 0.05 : 0.04);
     // cables: black rubber; copper cable has a copper stripe along it, tin a pale one
@@ -541,8 +660,8 @@ export class Floor {
     const c = this.iso(x + 0.5, y + 0.5, z);
     const ends: { p: Pt; machine: boolean }[] = [];
     for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-      const o = occupant(w, x + dx, y + dy);
-      if (joins(o)) ends.push({ p: this.iso(x + 0.5 + dx * 0.5, y + 0.5 + dy * 0.5, z), machine: o!.kind === 'machine' });
+      const o = occupant(lv, x + dx, y + dy);
+      if (joins(o)) ends.push({ p: this.iso(x + 0.5 + dx * 0.5, y + 0.5 + dy * 0.5, z), machine: o!.kind === 'machine' || o!.kind === 'port' });
     }
     if (!ends.length) ends.push({ p: this.iso(x + 0.8, y + 0.5, z), machine: false }, { p: this.iso(x + 0.2, y + 0.5, z), machine: false });
     const path = () => { ctx.beginPath(); for (const e of ends) { ctx.moveTo(...c); ctx.lineTo(...e.p); } };
@@ -562,6 +681,7 @@ export class Floor {
 
   /** Something broke: an explosion where a machine stood, a flash of sparks where a cable burned. */
   boom(e: WorldEvent) {
+    if (e.floor !== this.at) return; // it broke on another floor
     const def = MACHINES.get(e.what), [fw, fh] = def ? def.footprint : [1, 1];
     this.booms.push({ x: e.x + fw / 2, y: e.y + fh / 2, t: 0, big: e.kind === 'explode' });
   }
@@ -597,7 +717,7 @@ export class Floor {
   }
 
   /** Spent steam puffing from working steam machines. */
-  private drawPuffs(w: World, dt: number) {
+  private drawPuffs(w: Level, dt: number) {
     const ctx = this.ctx;
     for (const m of w.machines) {
       const st = machineStatus(m);
@@ -620,6 +740,9 @@ export class Floor {
     ctx.globalAlpha = 1;
   }
 }
+
+// on the floor itself (not on an inner floor's wall)
+const onFloor = (lv: Level, x: number, y: number) => x >= 0 && y >= 0 && x < lv.floor.w && y < lv.floor.h;
 
 export function machineStatus(m: MachineState): 'off' | 'working' | 'burning' | 'stalled' | 'idle' {
   const def = MACHINES.get(m.def)!;

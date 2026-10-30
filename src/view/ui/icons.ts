@@ -72,6 +72,14 @@ function block(t: Tones, pattern: 'plain' | 'stone' | 'brick' | 'planks' | 'glas
   if (pattern === 'coil') s += [13, 16.5, 20, 23.5].map((y) => line([4, y, 16, y + 6], '#7a3d1c', 1.3) + line([16, y + 6, 28, y], '#7a3d1c', 1.3)).join('');
   return s;
 }
+// a compact floor: a dark casing with a lit window onto the floor inside, more panes the bigger it is
+const COMPACT = tones('#7d7391');
+function compact(size: number) {
+  const panes = size >= 13 ? 3 : size >= 9 ? 2 : 1;
+  let s = block(COMPACT) + poly([6.5, 13.5, 13.5, 17, 13.5, 25, 6.5, 21.5], '#f4d27a', 1) + poly([18.5, 17, 25.5, 13.5, 25.5, 21.5, 18.5, 25], '#f4d27a', 1);
+  for (let i = 1; i < panes + 1; i++) s += line([6.5 + (7 * i) / (panes + 1), 13.5 + (3.5 * i) / (panes + 1), 6.5 + (7 * i) / (panes + 1), 21.5 + (3.5 * i) / (panes + 1)], INK, 0.8);
+  return s + poly([12, 9, 16, 7, 20, 9, 16, 11], COMPACT.d, 0.9);
+}
 // a lump: coal, coke (porous), clay, resin
 const lump = (t: Tones, holes = false) => poly([5, 19, 9, 10, 17, 7, 25, 11, 28, 20, 21, 26, 10, 26], t.m) + poly([9, 10, 17, 7, 25, 11, 16, 14], t.l, 1)
   + (holes ? [[12, 18], [19, 19], [16, 23], [23, 16]].map(([x, y]) => `<circle cx="${x}" cy="${y}" r="1.5" fill="${t.d}"/>`).join('') : line([20, 17, 24, 14], t.l, 1.2));
@@ -122,6 +130,7 @@ function drawing(id: string): string | null {
   if (/^(crushed|purified|centrifuged)_/.test(id)) return chunks(t, id.split('_')[0] as 'crushed' | 'purified' | 'centrifuged');
   if (id.startsWith('impure_')) return dust(t, '#4a4038');
   if (id.endsWith('_dust') || id === 'sand') return dust(id === 'sand' ? tones(MATERIAL.sand) : t);
+  if (id.startsWith('compact_floor_')) return compact(Number(id.slice('compact_floor_'.length)));
   const own: Record<string, () => string> = {
     cobblestone: () => block(STONE, 'stone'), brick: () => brick(tones('#b5654a')), coke_oven_brick: () => block(tones('#c9a072'), 'brick'),
     glass: () => block(tones(GLASS), 'glass'), wood_planks: () => block(WOOD, 'planks'), cupronickel_coil: () => block(tones('#e7a578'), 'coil'),

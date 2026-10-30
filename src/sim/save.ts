@@ -1,17 +1,21 @@
 // Saves: JSON with a version number. Loading rebuilds the world through the same placement rules a player uses,
 // so a damaged or hand-edited save can't put two things on one tile or name a machine that doesn't exist.
 import { ITEMS, MACHINES, QUESTS, RECIPES } from './data';
-import { emptyWorld, FLOOR, placeCable, placeMachine, placePipe, type World } from './world';
+import { allMachines, emptyWorld, FLOOR, isInner, levels, placeCable, placeMachine, placePipe, placePort, type Level, type World } from './world';
 
 // 1: M2 (no cables). 2: M3 adds cables. 3: M4 adds stats and quests. 4: M5 adds EU, cable kinds, transformer modes.
-export const SAVE_VERSION = 4;
+// 5: nested floors: `floors` holds every compact block's inner floor (machines, pipes, cables, ports) by id, and a
+// compact block's machine names its floor in `inner`. A save before 5 has one floor and loads as before.
+export const SAVE_VERSION = 5;
 export const SAVE_KEY = 'gtjs.save';
 
 export class SaveError extends Error {}
 
 export function serialize(w: World): string {
-  const { layoutRev: _, events: __, ...rest } = w;
-  return JSON.stringify({ version: SAVE_VERSION, world: rest }, (k, v) => (k === 'lowVolts' || k === 'lastVolts' ? undefined : v));
+  const { layoutRev: _, events: __, floors: ___, ...rest } = w;
+  // the floors in the order they tick (depth first), so a loaded game saves the same text again
+  const floors = Object.fromEntries(levels(w).slice(1).map(({ id }) => [id, w.floors[id]]));
+  return JSON.stringify({ version: SAVE_VERSION, world: { ...rest, floors } }, (k, v) => (k === 'lowVolts' || k === 'lastVolts' ? undefined : v));
 }
 
 const num = (v: unknown, what: string, min = 0): number => {
@@ -32,7 +36,7 @@ export function deserialize(text: string): World {
   try { data = JSON.parse(text); } catch { throw new SaveError('The save is not valid JSON'); }
   const top = obj(data, 'The save');
   const version = top.version;
-  if (version !== 1 && version !== 2 && version !== 3 && version !== SAVE_VERSION) throw new SaveError(`Unknown save version ${String(version)}`);
+  if (version !== 1 && version !== 2 && version !== 3 && version !== 4 && version !== SAVE_VERSION) throw new SaveError(`Unknown save version ${String(version)}`);
   const s = obj(top.world, 'world');
 
   const w = emptyWorld();
@@ -48,38 +52,61 @@ export function deserialize(text: string): World {
     if (v > 0) w.storage[item] = v;
   }
 
-  for (const raw of arr(s.machines, 'machines')) {
-    const m = obj(raw, 'a machine');
-    if (typeof m.def !== 'string' || !MACHINES.has(m.def)) throw new SaveError(`Unknown machine ${String(m.def)}`);
-    let placed;
-    try { placed = placeMachine(w, m.def, num(m.x, 'machine x'), num(m.y, 'machine y')); }
-    catch (e) { throw new SaveError(`Can't place ${m.def}: ${(e as Error).message}`); }
-    if (typeof m.uid === 'string') placed.uid = m.uid;
-    const kind = MACHINES.get(m.def)!.kind, ok = (r: unknown) => typeof r === 'string' && RECIPES.get(r)?.machine === kind;
-    placed.recipe = ok(m.recipe) ? (m.recipe as string) : null;
-    placed.active = ok(m.active) ? (m.active as string) : null;
-    placed.progress = placed.active ? num(m.progress, 'progress') : 0;
-    placed.enabled = m.enabled === true;
-    placed.stalled = m.stalled === true;
-    placed.steam = num(m.steam, 'steam');
-    placed.burn = num(m.burn ?? 0, 'burn');
-    placed.burnMax = num(m.burnMax ?? 0, 'burnMax');
-    placed.eu = Math.min(num(m.eu ?? 0, 'eu'), MACHINES.get(m.def)!.euCapacity ?? 0);
-    placed.rate = num(m.rate ?? 0, 'rate');
-    placed.mode = m.mode === 'up' ? 'up' : 'down';
-  }
-  for (const raw of arr(s.pipes, 'pipes')) {
-    const p = obj(raw, 'a pipe');
-    try { placePipe(w, num(p.x, 'pipe x'), num(p.y, 'pipe y')).steam = num(p.steam, 'pipe steam'); }
-    catch (e) { throw e instanceof SaveError ? e : new SaveError(`Can't place a pipe: ${(e as Error).message}`); }
-  }
-  for (const raw of version === 1 ? [] : arr(s.cables, 'cables')) {
-    const c = obj(raw, 'a cable');
-    const kind = c.kind === undefined || c.kind === 'cable' ? 'cable' : c.kind === 'cable_copper' ? 'cable_copper' : null;
-    if (!kind) throw new SaveError(`Unknown cable ${String(c.kind)}`);
-    try { placeCable(w, num(c.x, 'cable x'), num(c.y, 'cable y'), kind); }
-    catch (e) { throw e instanceof SaveError ? e : new SaveError(`Can't place a cable: ${(e as Error).message}`); }
-  }
+  // inner floors (format 5), by id; each is loaded once, when the block that holds it is
+  const savedFloors = version >= 5 ? obj(s.floors, 'floors') : {}, loaded = new Set<string>();
+  const loadLevel = (on: Level, l: Record<string, unknown>, where: string) => {
+    for (const raw of arr(l.machines, `machines on ${where}`)) {
+      const m = obj(raw, 'a machine');
+      if (typeof m.def !== 'string' || !MACHINES.has(m.def)) throw new SaveError(`Unknown machine ${String(m.def)}`);
+      let placed;
+      try { placed = placeMachine(w, m.def, num(m.x, 'machine x'), num(m.y, 'machine y'), on); }
+      catch (e) { throw new SaveError(`Can't place ${m.def} on ${where}: ${(e as Error).message}`); }
+      if (typeof m.uid === 'string') placed.uid = m.uid;
+      const kind = MACHINES.get(m.def)!.kind, ok = (r: unknown) => typeof r === 'string' && RECIPES.get(r)?.machine === kind;
+      placed.recipe = ok(m.recipe) ? (m.recipe as string) : null;
+      placed.active = ok(m.active) ? (m.active as string) : null;
+      placed.progress = placed.active ? num(m.progress, 'progress') : 0;
+      placed.enabled = m.enabled === true;
+      placed.stalled = m.stalled === true;
+      placed.steam = num(m.steam, 'steam');
+      placed.burn = num(m.burn ?? 0, 'burn');
+      placed.burnMax = num(m.burnMax ?? 0, 'burnMax');
+      placed.eu = Math.min(num(m.eu ?? 0, 'eu'), MACHINES.get(m.def)!.euCapacity ?? 0);
+      placed.rate = num(m.rate ?? 0, 'rate');
+      placed.mode = m.mode === 'up' ? 'up' : 'down';
+      if (!placed.inner) continue;
+      // a compact block: placing it made it a new, empty floor; it takes its saved floor's id and contents instead
+      const id = m.inner, inside = `the compact floor at (${placed.x}, ${placed.y}) on ${where}`;
+      if (typeof id !== 'string' || !Object.hasOwn(savedFloors, id)) throw new SaveError(`The floor inside ${inside} is missing`);
+      if (loaded.has(id) || (id !== placed.inner && Object.hasOwn(w.floors, id))) throw new SaveError(`Two compact floors share the floor ${id}`);
+      loaded.add(id);
+      const f = w.floors[placed.inner];
+      delete w.floors[placed.inner];
+      placed.inner = f.id = id;
+      w.floors[id] = f;
+      loadLevel(f, obj(savedFloors[id], `floor ${id}`), inside);
+    }
+    for (const raw of arr(l.pipes, `pipes on ${where}`)) {
+      const p = obj(raw, 'a pipe');
+      try { placePipe(w, num(p.x, 'pipe x'), num(p.y, 'pipe y'), on).steam = num(p.steam, 'pipe steam'); }
+      catch (e) { throw e instanceof SaveError ? e : new SaveError(`Can't place a pipe on ${where}: ${(e as Error).message}`); }
+    }
+    for (const raw of version === 1 ? [] : arr(l.cables, `cables on ${where}`)) {
+      const c = obj(raw, 'a cable');
+      const kind = c.kind === undefined || c.kind === 'cable' ? 'cable' : c.kind === 'cable_copper' ? 'cable_copper' : null;
+      if (!kind) throw new SaveError(`Unknown cable ${String(c.kind)}`);
+      try { placeCable(w, num(c.x, 'cable x'), num(c.y, 'cable y'), kind, on); }
+      catch (e) { throw e instanceof SaveError ? e : new SaveError(`Can't place a cable on ${where}: ${(e as Error).message}`); }
+    }
+    if (!isInner(on)) return;
+    for (const raw of arr(l.ports, `ports on ${where}`)) {
+      const p = obj(raw, 'a port');
+      if (p.carries !== 'steam' && p.carries !== 'eu') throw new SaveError(`Unknown port ${String(p.carries)}`);
+      try { placePort(w, on, num(p.x, 'port x', -1), num(p.y, 'port y', -1), p.carries); }
+      catch (e) { throw e instanceof SaveError ? e : new SaveError(`Can't place a port on ${where}: ${(e as Error).message}`); }
+    }
+  };
+  loadLevel(w, s, 'the factory floor');
   if (version >= 3) {
     const stats = obj(s.stats, 'stats');
     for (const [item, n] of Object.entries(obj(stats.made, 'stats.made'))) if (ITEMS.has(item)) w.stats.made[item] = num(n, `stats.made.${item}`);
@@ -91,10 +118,11 @@ export function deserialize(text: string): World {
       w.quests[id] = state;
     }
   }
-  // uids must stay unique: carry on numbering after the highest one in the save
-  const highest = Math.max(0, ...w.machines.map((m) => Number(m.uid.replace(/^m/, '')) || 0));
+  // uids must stay unique: carry on numbering after the highest one in the save (inner floors' numbers too)
+  const machines = allMachines(w), numberOf = (id: string) => Number(id.replace(/^[mf]/, '')) || 0;
+  const highest = Math.max(0, ...machines.map((m) => numberOf(m.uid)), ...Object.keys(w.floors).map(numberOf));
   w.nextUid = Math.max(num(s.nextUid ?? 1, 'nextUid', 1), highest + 1);
-  if (new Set(w.machines.map((m) => m.uid)).size !== w.machines.length) throw new SaveError('Two machines share an id');
+  if (new Set(machines.map((m) => m.uid)).size !== machines.length) throw new SaveError('Two machines share an id');
   return w;
 }
 

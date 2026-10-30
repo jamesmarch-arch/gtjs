@@ -24,7 +24,7 @@ describe('the workbench tabs', () => {
     const w = emptyWorld();
     expect(craftIds(workbenchHtml(w, { group: 'machines', tier: 'steam' }))).toContain('steam_macerator');
     expect(craftIds(workbenchHtml(w, { group: 'machines', tier: 'lv' }))).toContain('lv_macerator');
-    expect(craftIds(workbenchHtml(w, { group: 'machines', tier: 'mv' }))).toEqual(['ebf']);
+    expect(craftIds(workbenchHtml(w, { group: 'machines', tier: 'mv' }))).toEqual(['ebf', 'compact_floor_13']);
     expect(craftIds(workbenchHtml(w, { group: 'parts', tier: 'steam' }))).not.toContain('circuit_lv');
   });
 

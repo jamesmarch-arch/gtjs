@@ -1,3 +1,4 @@
+import * as compact from './compact';
 import * as lv from './lv';
 import * as mv from './mv';
 import * as quests from './quests';
@@ -6,12 +7,12 @@ import type { ConduitDef, CraftDef, CraftTier, ItemDef, MachineDef, QuestDef, Re
 
 const byId = <T extends { id: string }>(list: T[]) => new Map<T['id'], T>(list.map((x) => [x.id, x]));
 
-export const ITEMS = byId<ItemDef>([...steam.items, ...lv.items, ...mv.items]);
-export const MACHINES = byId<MachineDef>([...steam.machines, ...lv.machines, ...mv.machines]);
+export const ITEMS = byId<ItemDef>([...steam.items, ...lv.items, ...mv.items, ...compact.items]);
+export const MACHINES = byId<MachineDef>([...steam.machines, ...lv.machines, ...mv.machines, ...compact.machines]);
 export const RECIPES = byId<RecipeDef>([...steam.recipes, ...lv.recipes, ...mv.recipes]);
 export const CONDUITS = byId<ConduitDef>([...steam.conduits, ...lv.conduits]);
 const tiered = (tier: CraftTier, list: CraftDef[]) => list.map((c) => ({ ...c, tier }));
-export const CRAFTS = byId<CraftDef>([...tiered('steam', steam.crafts), ...tiered('lv', lv.crafts), ...tiered('mv', mv.crafts)]);
+export const CRAFTS = byId<CraftDef>([...tiered('steam', steam.crafts), ...tiered('lv', lv.crafts), ...tiered('mv', mv.crafts), ...compact.crafts]);
 export const CRAFT_TIERS: { id: CraftTier; name: string }[] = [{ id: 'steam', name: 'Steam' }, { id: 'lv', name: 'LV' }, { id: 'mv', name: 'MV' }];
 export const QUESTS = byId<QuestDef>(quests.quests);
 export const CHAPTERS = quests.chapters;
