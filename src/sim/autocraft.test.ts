@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { planCraft, type CraftPlan, type PlanData } from './autocraft';
+import { craftNow, planCraft, planFor, whyNotNow, type CraftPlan, type PlanData } from './autocraft';
 import { craft } from './craft';
 import { MACHINES, RECIPES, recipesForMachine } from './data';
 import type { CraftDef, RecipeDef, Stack } from './data/types';
@@ -258,3 +258,46 @@ describe('the autocrafting planner', () => {
 const s = (item: string, count = 1): Stack => ({ item, count });
 const craftDef = (id: string, inputs: Stack[], output: Stack): CraftDef => ({ id, group: 'parts', inputs, output });
 const recipe = (id: string, machine: string, inputs: Stack[], outputs: Stack[]): RecipeDef => ({ id, machine, inputs, outputs, ticks: 100, steamPerTick: 2 });
+
+describe('crafting a plan now, by hand', () => {
+  it('hammers a stack of plates, using the hammer it already has', () => {
+    const w = emptyWorld();
+    w.storage = { bronze_ingot: 130, stone_hammer: 1 };
+    const p = craftNow(w, 'bronze_plate', 64);
+    expect(recipes(p)).toEqual(['bronze_plate x64']);
+    expect(w.storage).toEqual({ bronze_ingot: 2, bronze_plate: 64, stone_hammer: 1 });
+    expect(w.stats.made.bronze_plate).toBe(64); // counts for quests, as crafting at the workbench does
+  });
+
+  it('runs every step in order: the tool first, then the ingredients, then the target', () => {
+    const w = emptyWorld();
+    w.storage = { copper_ingot: 8, cobblestone: 3, wood_planks: 2 };
+    const p = craftNow(w, 'copper_wire', 4);
+    expect(recipes(p)).toEqual(['stone_hammer x1', 'copper_plate x4', 'copper_wire x4']);
+    expect(w.storage).toEqual({ copper_wire: 4, stone_hammer: 1 });
+  });
+
+  it('refuses a plan with machine runs, with something to gather or blocked, and leaves storage as it was', () => {
+    const w = emptyWorld();
+    w.storage = { sand: 1 };
+    placeMachine(w, 'stone_furnace', 0, 0);
+    expect(() => craftNow(w, 'glass_tube', 1)).toThrow('It needs machine runs: running them comes with crafting jobs');
+    expect(() => craftNow(w, 'glass_tube', 2)).toThrow('Gather what is missing first');
+    expect(() => craftNow(w, 'steel_ingot', 1)).toThrow("One thing in it can't be made now");
+    expect(w.storage).toEqual({ sand: 1 });
+    expect(w.stats.made).toEqual({});
+  });
+
+  it('says why in plain words, and nothing when it can be done', () => {
+    expect(whyNotNow(planCraft('bronze_plate', 1, on({ bronze_ingot: 2, stone_hammer: 1 })))).toBeNull();
+    expect(whyNotNow(planCraft('iron_plate', 1, on({ iron_ingot: 3 }, 'steam_forge_hammer')))).toMatch(/machine runs/);
+  });
+
+  it('plans with the machines on every floor, inner floors too', () => {
+    const w = emptyWorld();
+    w.storage = { iron_ingot: 2, coal: 2 };
+    const block = placeMachine(w, 'compact_floor_5', 0, 0);
+    placeMachine(w, 'ebf', 1, 1, w.floors[block.inner!]);
+    expect(planFor(w, 'steel_ingot', 2).blocked).toEqual([]);
+  });
+});

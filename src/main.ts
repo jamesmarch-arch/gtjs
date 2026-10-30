@@ -1,6 +1,7 @@
 // gtjs: gather, craft at the workbench, build on the floor, power it with steam and EU, follow the quest book to MV.
 import { CONDUITS, FINAL_QUEST, GATHERABLE, MACHINES, itemName } from './sim/data';
 import { craft } from './sim/craft';
+import { craftNow } from './sim/autocraft';
 import { checkQuests, claimQuest } from './sim/quests';
 import { netSteam, steamCapacity, steamNets } from './sim/nets';
 import { euNets } from './sim/power';
@@ -11,9 +12,10 @@ import {
 import { Floor, type Tool } from './view/floor/floor';
 import { openMachineGui, type MachineGui } from './view/ui/gui';
 import { openOverlay, type Overlay } from './view/ui/overlay';
-import { boilerHiss, closeSound, gatherSound, isMuted, openSound, setMuted } from './view/audio';
+import { boilerHiss, closeSound, craftSound, gatherSound, isMuted, openSound, setMuted } from './view/audio';
 import { benchView, claimable, endHtml, questBookHtml, workbenchHtml, type BenchView } from './view/ui/sheets';
 import { icon } from './view/ui/icons';
+import { terminalHtml, type TerminalView } from './view/ui/terminal';
 
 const AUTOSAVE_MS = 10_000;
 
@@ -30,6 +32,8 @@ let sheet: Overlay | null = null; // the workbench or the quest book, when open
 // the workbench's tab and tier sub-tab, remembered between visits (and reloads, when the browser allows)
 let bench: BenchView = { group: 'parts', tier: 'steam' };
 let benchQuery = ''; // the workbench's search; it starts empty each time the workbench opens
+// the ME terminal's pick and amount, kept between visits; its search starts empty each time, like the workbench's
+const term: TerminalView = { query: '', pick: null, amount: '1' };
 try { bench = benchView({ ...bench, ...JSON.parse(localStorage.getItem('gtjs.bench') ?? '{}') }); } catch { /* keep the default */ }
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
@@ -69,7 +73,8 @@ const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getEleme
 
 /* ---------- the floor and its tools ---------- */
 const floor = new Floor($('floor'), () => w, {
-  inspect: (m) => (m.inner ? floor.enter(m.inner) : openGui(m.uid)), // a compact block: step into its floor
+  // a compact block: step into its floor; a terminal: its panel, not its figure
+  inspect: (m) => (m.inner ? floor.enter(m.inner) : MACHINES.get(m.def)!.terminal ? openSheet('terminal') : openGui(m.uid)),
   changed: () => refresh(),
   status: (text) => { $('status').textContent = text || ' '; },
 });
@@ -165,12 +170,13 @@ function refreshTools() {
 /* ---------- the workbench and the quest book ---------- */
 let switching = false; // a panel closing to make way for another: only the new one's sound plays
 const sheetClosed = () => { sheet = null; if (!switching) closeSound(); };
-function openSheet(which: 'bench' | 'book') {
+function openSheet(which: 'bench' | 'book' | 'terminal') {
   gui?.close();
   switching = true;
   sheet?.close();
   switching = false;
   openSound();
+  if (which === 'terminal') { sheet = openTerminal(); return; }
   sheet = which === 'bench'
     ? (benchQuery = '', openOverlay('Workbench', () => workbenchHtml(w, bench, benchQuery), (el) => {
       if (el.dataset.act === 'craft') craft(w, el.dataset.id!, +el.dataset.n!);
@@ -186,6 +192,27 @@ function openSheet(which: 'bench' | 'book') {
       refresh();
       if (el.dataset.id === FINAL_QUEST) showEnd();
     }, sheetClosed);
+}
+// the ME terminal: browse storage, plan a craft, and craft it now when it is all hand crafts
+function openTerminal(): Overlay {
+  term.query = '';
+  return openOverlay('ME Terminal', () => terminalHtml(w, term), (el) => {
+    if (el.dataset.act === 'pick') term.pick = el.dataset.id!;
+    else if (el.dataset.act === 'amount') term.amount = el.dataset.n!;
+    else if (el.dataset.act === 'craftnow') {
+      const id = el.dataset.id!, n = +el.dataset.n!;
+      try {
+        const plan = craftNow(w, id, n);
+        craftSound(plan.steps.length);
+        toast(`Crafted ${n} ${itemName(id)}: ${plan.totals.handCrafts} hand craft${plan.totals.handCrafts === 1 ? '' : 's'} in ${plan.steps.length} step${plan.steps.length === 1 ? '' : 's'}.`);
+      } catch (e) { toast(`Couldn't craft ${itemName(id)}: ${(e as Error).message}.`, true); }
+    }
+    refresh();
+  }, sheetClosed, {
+    search: { placeholder: 'Search items: in storage, or anything that can be made', onInput: (q) => { term.query = q; } },
+    onInput: (el) => { if (el.dataset.act === 'typed') term.amount = el.value; },
+    className: 'terminal',
+  });
 }
 function showEnd() {
   sheet?.close();

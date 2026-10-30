@@ -46,7 +46,9 @@ craft and machine job it takes, runs them, and tells you what is missing.
    the guaranteed amount), tools that are needed but not used up, and recipe cycles. New files only
    (`src/sim/autocraft.ts` and its tests), so it can be written alongside anything.
 2. **Terminal (view).** A panel to browse and search storage (reusing the workbench search), pick something and an
-   amount, see the plan (steps, machine time, what is missing), and start it.
+   amount, see the plan (steps, machine time, what is missing), and start it. **Done:** the ME Terminal block (LV) opens a panel that
+   browses and searches storage, plans any item that can be made in any amount, and crafts plans of hand crafts at
+   once; plans with machine steps show them and wait for task 3 (see DESIGN, "Autocrafting: the terminal").
 3. **Execution.** A crafting job runs the plan: hand crafts happen at once, machine steps are given to machines of the
    right kind that opt in (an "available for autocrafting" switch, on any floor), which switch to that recipe, run it,
    and are handed back. Jobs show progress, can be cancelled, and pause when something is missing. Probably an

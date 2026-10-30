@@ -43,6 +43,7 @@ export interface MachineDef {
   // moves EU between the net on its front (+x) tile, the high side, and the nets on its other sides, the low side
   transformer?: { low: Tier; high: Tier; amps: number };
   compact?: { size: number }; // a compact floor: a block with a size x size floor inside it (see world.ts)
+  terminal?: boolean; // the ME terminal: opening it shows the crafting terminal panel instead of its figure
   figure?: string; // public/figures/<figure>.html
 }
 

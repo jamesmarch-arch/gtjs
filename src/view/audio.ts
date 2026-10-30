@@ -177,3 +177,16 @@ export function closeSound() {
   tone(0.01, 700, 690, 0.08, 0.12, 'triangle');
   tone(0.06, 470, 460, 0.11, 0.11, 'triangle');
 }
+
+/** A craft from the terminal: a few quick knocks at the bench (more for a bigger job), then a bright two-note chime. */
+export function craftSound(steps = 1) {
+  const knocks = Math.min(4, Math.max(2, steps));
+  for (let i = 0; i < knocks; i++) {
+    const k = vary(), at = i * 0.06;
+    tone(at, 210 * k, 120 * k, 0.07, 0.3);
+    hiss(at, 0.05, 0.2, 'bandpass', 1100 * k, 800 * k, 1.8);
+  }
+  const at = knocks * 0.06 + 0.04;
+  tone(at, 880, 890, 0.2, 0.11, 'triangle');
+  tone(at + 0.08, 1320, 1330, 0.3, 0.09, 'triangle');
+}

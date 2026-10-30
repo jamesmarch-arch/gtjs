@@ -1,8 +1,11 @@
 // Autocrafting: plan how to make N of an item from what storage holds, hand crafts and the machines on the floor.
-// Pure planning: nothing here changes the world. A terminal shows the plan; a job runner carries out its steps in order.
+// Planning is pure: planCraft changes nothing. The terminal shows a plan; craftNow runs one made of hand crafts only, and
+// a job runner (to come) will carry out machine steps too.
 import { CRAFTS, GATHERABLE, MACHINES, RECIPES, itemName, recipePower } from './data';
 import type { CraftDef, MachineDef, RecipeDef, Stack } from './data/types';
+import { craft } from './craft';
 import { overclock } from './tiers';
+import { allMachines, type World } from './world';
 
 /** What the plan starts from: a World fits. Only machines on the floor count as built (not ones in storage). */
 export interface PlanFrom {
@@ -285,4 +288,34 @@ export function planCraft(target: string, count: number, from: PlanFrom, data: P
     fromStorage: stacks(fromStorage), leftovers: stacks(leftovers), tools: [...root.tools].sort(),
     byproducts: stacks(byproducts), chanced: stacks(chanced), totals,
   };
+}
+
+/** The plan for `count` more of `target` from what this world holds, with every machine built on any floor. */
+export function planFor(w: World, target: string, count: number): CraftPlan {
+  return planCraft(target, count, { storage: w.storage, machines: allMachines(w) });
+}
+
+/** Why a plan can't be crafted now, all at once by hand, or null when it can. Machine steps wait for crafting jobs. */
+export function whyNotNow(plan: CraftPlan): string | null {
+  if (plan.blocked.length) return `${plan.blocked.length === 1 ? 'One thing' : `${plan.blocked.length} things`} in it can't be made now`;
+  if (plan.missing.length) return 'Gather what is missing first';
+  if (plan.steps.some((s) => s.kind === 'machine')) return 'It needs machine runs: running them comes with crafting jobs';
+  return null;
+}
+
+/** Craft `count` more of `target` now: plan it afresh and run every step by hand at the workbench, in order. All or
+ *  nothing: if a step can't be done, storage is left as it was. Throws why when it can't be done now. */
+export function craftNow(w: World, target: string, count: number): CraftPlan {
+  const plan = planFor(w, target, count);
+  const why = whyNotNow(plan);
+  if (why) throw new Error(why);
+  const storage = { ...w.storage }, made = { ...w.stats.made };
+  try {
+    for (const s of plan.steps) craft(w, s.recipe, s.runs);
+  } catch (e) {
+    w.storage = storage;
+    w.stats.made = made;
+    throw e;
+  }
+  return plan;
 }

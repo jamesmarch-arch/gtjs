@@ -2,10 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { CONDUITS, CRAFTS, GATHERABLE, ITEMS, MACHINES, QUESTS, RECIPES } from '.';
 import * as compact from './compact';
 import * as lv from './lv';
+import * as me from './me';
 import * as mv from './mv';
 import * as steam from './steam';
 
-const items = [...steam.items, ...lv.items, ...mv.items, ...compact.items], machines = [...steam.machines, ...lv.machines, ...mv.machines, ...compact.machines];
+const items = [...steam.items, ...lv.items, ...mv.items, ...compact.items, ...me.items], machines = [...steam.machines, ...lv.machines, ...mv.machines, ...compact.machines, ...me.machines];
 const recipes = [...steam.recipes, ...lv.recipes, ...mv.recipes], conduits = [...steam.conduits, ...lv.conduits];
 
 describe('game data', () => {

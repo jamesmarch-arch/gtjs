@@ -267,8 +267,8 @@ a limit: a compact floor can hold compact floors.
 **Autocrafting: the planner.** Crafting on demand, after Applied Energistics 2 and Refined Storage, but items stay in
 the one storage: ask for 16 circuits and the game works out every hand craft and machine run it takes. The first piece
 is the planner, `planCraft(target, count, from, data?)` in `src/sim/autocraft.ts`: pure, it reads `from.storage` and
-the machines on the floor (`from.machines`; a World fits) and changes nothing. A terminal to ask from and a job runner
-that carries out the steps come later, on top of it. It returns:
+the machines on the floor (`from.machines`; a World fits) and changes nothing. The terminal (below) asks it; a job
+runner that carries out machine steps comes next, on top of it. It returns:
 
 - `steps`, in order (run them top to bottom): a hand craft or a machine recipe, its runs, everything it uses and
   makes, the tools it needs, the machine that runs it and its time there (overclocked as it would run), and `depth` in
@@ -294,3 +294,23 @@ greedy, one need at a time. A whole EBF with every machine built plans in a few 
 Not modelled yet: fuel and power (the coal furnace's coal, boilers' steam, EU), machines that are busy, and running
 steps on several machines at once (`totals.ticks` is all machine time, one after another). Steps that make the same
 thing in different places in the tree stay separate steps; `totals.byRecipe` adds them up.
+
+**Autocrafting: the terminal.** The ME Terminal (`src/sim/data/me.ts`) is a 1 x 1 LV block, crafted at the workbench in
+the LV tier (an LV hull, two circuits, glass for the screen, copper wire: a placeholder cost), so it comes once circuits
+do. It sits on an EU net like any LV machine, and explodes above LV, but draws no power yet. Opening it shows the
+terminal panel (`src/view/ui/terminal.ts`, through `openOverlay`) instead of its figure: the figure's screen is a fixed
+sample, and the panel needs the width for the plan. `MachineDef.terminal` marks it.
+- *Browse.* Everything in storage as a grid of icons and counts, by name. The search (above the redrawn part, as in the
+  workbench) narrows it by item name and adds everything that can be made and storage has none of. Gathered things
+  show but can't be picked: there is nothing to plan.
+- *Plan.* Pick something and an amount (1, 8, 64, or typed, up to 10,000; the typed field keeps its focus as the panel
+  redraws). `planFor(w, item, n)` plans from storage with the machines on every floor. The steps show as a tree, the
+  target on top and what goes into each step under it, numbered in the order they run; each says what it makes, by
+  hand or on which machine, its runs and time, what it uses (tools marked) and, when blocked, why. Below: what is taken
+  from storage, what to gather, what is blocked and why, tools it makes, leftovers, byproducts and chances, machine time
+  per machine and in total. A line on top sums it up: ready, gather first, blocked, or machine runs waiting for jobs.
+  The plan is cached until storage, the machines or the ask change (the panel redraws ten times a second).
+- *Craft now.* When the plan is all hand crafts with nothing missing or blocked, Craft runs it: `craftNow(w, item, n)`
+  plans again and runs each step through the workbench's `craft()`, in order, all or nothing (storage and stats go
+  back if a step fails), with a sound and a toast. `whyNotNow(plan)` says why not otherwise. Plans with machine steps
+  show them, with the button off: running machine steps is the crafting jobs task.
