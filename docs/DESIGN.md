@@ -229,3 +229,34 @@ mineral's colour, not the metal's (rusty iron). About a dozen parts are drawn on
 resistor, motor, the hand tools). Machines use their floor sprite, trimmed to the drawing in the browser. Each icon is
 an SVG `<symbol>` defined once, and `icon(id)` returns a small `<svg><use>` for it, so long lists stay light. Icons
 show in the workbench (output and inputs), the storage list and quest rewards; a test checks every item has one.
+
+**Autocrafting: the planner.** Crafting on demand, after Applied Energistics 2 and Refined Storage, but items stay in
+the one storage: ask for 16 circuits and the game works out every hand craft and machine run it takes. The first piece
+is the planner, `planCraft(target, count, from, data?)` in `src/sim/autocraft.ts`: pure, it reads `from.storage` and
+the machines on the floor (`from.machines`; a World fits) and changes nothing. A terminal to ask from and a job runner
+that carries out the steps come later, on top of it. It returns:
+
+- `steps`, in order (run them top to bottom): a hand craft or a machine recipe, its runs, everything it uses and
+  makes, the tools it needs, the machine that runs it and its time there (overclocked as it would run), and `depth` in
+  the tree under the target, for indenting.
+- `missing` raw materials to gather first, `blocked` (what can't be made now, and why), `fromStorage`, `leftovers`,
+  the `tools` it makes, `byproducts` and `chanced` (expected), `totals` per recipe and per machine, and `ok`.
+
+The rules: take leftovers of earlier steps first, then storage, then make the rest; a step's runs round up and the
+rest is a leftover the next steps use. Only a recipe's main (first) output counts, and only when it is guaranteed;
+byproducts and chanced outputs are a bonus, never planned on (so nickel, which only comes by chance from the ore line,
+is blocked with where it comes from). Gatherable items are never made, only gathered. A hand tool a step needs is made
+once if storage has none, and stays. The target is always made, not taken from storage. A machine recipe counts on a
+built machine (any that `recipesForMachine` says can run it, the fastest); without one it is still planned, but
+blocked, with the machine it needs, so steel without an EBF shows the whole chain and the one thing in the way. A
+recipe cycle is blocked where it closes, never looped.
+
+Where there are several ways to make something, it plans each in a trial (a child ledger that reads through to the
+plan so far and keeps its own changes) and keeps the best: fewest blocked, then doable without gathering, then
+cheapest (fewest items taken from storage or gathered, tools included), then quickest, then fewest hand crafts; ties
+go to hand crafts before machines, then by recipe id, so the same storage always gives the same plan. The choice is
+greedy, one need at a time. A whole EBF with every machine built plans in a few tens of milliseconds.
+
+Not modelled yet: fuel and power (the coal furnace's coal, boilers' steam, EU), machines that are busy, and running
+steps on several machines at once (`totals.ticks` is all machine time, one after another). Steps that make the same
+thing in different places in the tree stay separate steps; `totals.byRecipe` adds them up.
