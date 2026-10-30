@@ -233,7 +233,7 @@ show in the workbench (output and inputs), the storage list and quest rewards; a
 
 **Nested floors (compact floors).** After Compact Machines: a compact floor block is a 1 x 1 machine with a floor of
 its own inside, which you step into and build on. Inner floors come in sized tiers (`src/sim/data/compact.ts`): 5 x 5
-(steam age), 9 x 9 (LV), 13 x 13 (MV); their crafting costs are placeholders until the content task. Blocks nest without
+(steam age), 9 x 9 (LV), 13 x 13 (MV), each crafted from its tier's parts (see *Content* below). Blocks nest without
 a limit: a compact floor can hold compact floors.
 - *The world* (`src/sim/world.ts`). Every floor's layout is a `Level` (its size, machines, pipes, cables). The world is
   the factory floor's level and holds every inner floor in `w.floors`, by id (`f<n>`); a compact block's machine
@@ -264,6 +264,25 @@ a limit: a compact floor can hold compact floors.
   EU). The tools, the machine GUI, the hiss of boilers and explosions work on whichever floor is shown; the port tools
   show only on an inner floor. A breakage on another floor is a toast that says where. Compact blocks and ports are
   plain inked boxes until they get figures (the art task), and the figure test lets compact floors off until then.
+- *Content* (`src/sim/data/compact.ts`). As in Compact Machines, a bigger room takes more and better wall, and each
+  size costs what a few of its tier's machines do. Every block has a hull, walls, and glass for its window:
+  - 5 x 5 (steam): a bronze hull, 3 dense bronze plates, 16 bricks, 4 glass, about 35 bronze plates in all: a steam
+    machine's worth twice over, all of it within reach by hand and the coal furnace.
+  - 9 x 9 (LV): an LV hull, 4 LV casings, 4 circuits, 8 glass: two LV machines' circuits and 40 iron plates.
+  - 13 x 13 (MV): an LV hull, 4 dense steel plates, 8 circuits, 16 glass, 4 copper cable (MV cable in the walls).
+    The 36 steel make it the blast furnace's, after the EBF.
+  The wall part is the dense plate (`dense_bronze_plate`, `dense_steel_plate`): nine plates hammered into one at the
+  workbench, or nine ingots in an LV bender (900 ticks), half the metal. Ports stay free: they are part of the block, and
+  costing them would need the layout code (`build` / `demolish`) to charge and refund them, a follow-up if wanted.
+  The bootstrap test checks the tiers: the 5x5 is reachable before steam, the 9x9 only with steam machines (rubber for
+  the hull's cable), the 13x13 only with the blast furnace.
+- *Quests* (the Compact Floors chapter, alongside the others; each size opens with its tier): dense plates (after the
+  forge hammer) → build a 5x5 → *Through the wall*: a machine at work inside on steam from a steam port → build a
+  9x9 (after the assembler) → *Power through the wall* (EU) and *Floors within floors* (one inside another) → build a
+  13x13 (after steel). Two goal kinds serve them (`src/sim/quests.ts`): `inside` counts machines working a recipe at
+  that moment on compact floors whose wall has a port of the machine's kind (steam or EU, or either), switched on and
+  not stalled; `depth` is how deep the deepest compact floor is (1 on the factory floor, 2 inside that). `goalText(g)`
+  says what a goal asks for, for the quest book.
 
 **Autocrafting: the planner.** Crafting on demand, after Applied Energistics 2 and Refined Storage, but items stay in
 the one storage: ask for 16 circuits and the game works out every hand craft and machine run it takes. The first piece

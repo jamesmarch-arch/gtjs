@@ -1,7 +1,9 @@
-// The quest book. The Steam Age chapter walks from an empty floor (a furnace, hand tools) to the first tin cables.
+// The quest book. The Steam Age chapter walks from an empty floor (a furnace, hand tools) to the first tin cables. The
+// Compact Floors chapter runs alongside the others: each size opens with the tier that can afford it.
 import type { QuestDef } from './types';
 
-export const chapters = [{ id: 'steam', name: 'Steam Age' }, { id: 'lv', name: 'LV: Electricity' }, { id: 'ebf', name: 'The Blast Furnace' }];
+export const chapters = [{ id: 'steam', name: 'Steam Age' }, { id: 'lv', name: 'LV: Electricity' }, { id: 'ebf', name: 'The Blast Furnace' },
+  { id: 'compact', name: 'Compact Floors' }];
 
 /** Finishing this quest finishes the slice: MV is unlocked. */
 export const FINAL_QUEST = 'aluminium';
@@ -211,5 +213,41 @@ export const quests: QuestDef[] = [
     id: 'aluminium', chapter: 'ebf', title: 'Aluminium: MV unlocked', after: ['bauxite'],
     text: 'Aluminium needs 1700 K, nearly all the coils can give. With it come MV machine hulls, and the end of this slice.',
     goals: [{ kind: 'made', item: 'aluminium_ingot', count: 1 }], rewards: [{ item: 'aluminium_ingot', count: 4 }],
+  },
+  // ---------- compact floors ----------
+  {
+    id: 'dense_plate', chapter: 'compact', title: 'Dense plates', after: ['forge_hammer'],
+    text: 'Nine bronze plates hammered together make a dense plate, the stuff of walls. Later a bender makes one straight from nine ingots.',
+    goals: [{ kind: 'made', item: 'dense_bronze_plate', count: 1 }], rewards: [{ item: 'bronze_ingot', count: 9 }],
+  },
+  {
+    id: 'compact_floor', chapter: 'compact', title: 'A room of its own', after: ['dense_plate'],
+    text: 'A compact floor is one block on the floor with a 5 by 5 floor inside it: a bronze hull, dense plate walls, bricks and a window. Build one, then open it to step inside.',
+    goals: [{ kind: 'built', machine: 'compact_floor_5', count: 1 }], rewards: [{ item: 'bronze_pipe', count: 8 }],
+  },
+  {
+    id: 'compact_steam', chapter: 'compact', title: 'Through the wall', after: ['compact_floor'],
+    text: 'Inside, place a steam port on the wall and pipe it to a machine; outside, pipe the block to a boiler. Steam goes straight through. Storage is shared, so items need no port.',
+    goals: [{ kind: 'inside', power: 'steam', count: 1 }], rewards: [{ item: 'coal', count: 32 }],
+  },
+  {
+    id: 'compact_9', chapter: 'compact', title: 'Room to grow', after: ['compact_steam', 'assembler'],
+    text: 'The 9 by 9 floor is walled with LV casings and wants four circuits. Room for a proper workshop.',
+    goals: [{ kind: 'built', machine: 'compact_floor_9', count: 1 }], rewards: [{ item: 'tin_cable', count: 16 }],
+  },
+  {
+    id: 'compact_eu', chapter: 'compact', title: 'Power through the wall', after: ['compact_9'],
+    text: 'An EU port joins the cables inside to the net the block sits on outside. Mind the voltage: the wall doesn’t step it down, and an LV machine inside fed MV explodes.',
+    goals: [{ kind: 'inside', power: 'eu', count: 1 }], rewards: [{ item: 'circuit_lv', count: 2 }],
+  },
+  {
+    id: 'compact_nest', chapter: 'compact', title: 'Floors within floors', after: ['compact_9'],
+    text: 'A compact floor can stand on a compact floor. Put one inside another; ports chain, so steam and EU reach the bottom.',
+    goals: [{ kind: 'depth', count: 2 }], rewards: [{ item: 'glass', count: 16 }, { item: 'brick', count: 16 }],
+  },
+  {
+    id: 'compact_13', chapter: 'compact', title: 'The big room', after: ['compact_nest', 'steel'],
+    text: 'The 13 by 13 floor has walls of dense steel, eight circuits and copper cable in the walls. Nearly a second factory.',
+    goals: [{ kind: 'built', machine: 'compact_floor_13', count: 1 }], rewards: [{ item: 'steel_ingot', count: 16 }],
   },
 ];

@@ -10,6 +10,7 @@ export const items: ItemDef[] = [
   { id: 'heat_proof_casing', name: 'Heat Proof Machine Casing' },
   { id: 'steel_ingot', name: 'Steel Ingot' },
   { id: 'steel_plate', name: 'Steel Plate' },
+  { id: 'dense_steel_plate', name: 'Dense Steel Plate' },
   { id: 'bauxite_ore', name: 'Bauxite Ore' },
   { id: 'bauxite_dust', name: 'Bauxite Dust' },
   { id: 'aluminium_dust', name: 'Aluminium Dust' },
@@ -40,10 +41,12 @@ export const recipes: RecipeDef[] = [
   { id: 'ebf_aluminium', machine: 'blast_furnace', ticks: 400, euPerTick: 120, heat: 1700, inputs: [s('aluminium_dust')], outputs: [s('aluminium_ingot')] },
   { id: 'hammer_steel_plate', machine: 'forge_hammer', ticks: 200, steamPerTick: 6, inputs: [s('steel_ingot', 3)], outputs: [s('steel_plate', 2)] },
   { id: 'bend_steel_plate', machine: 'bender', ticks: 100, euPerTick: 8, inputs: [s('steel_ingot')], outputs: [s('steel_plate')] },
+  { id: 'bend_dense_steel_plate', machine: 'bender', ticks: 900, euPerTick: 8, inputs: [s('steel_ingot', 9)], outputs: [s('dense_steel_plate')] },
 ];
 
 export const crafts: CraftDef[] = [
   { id: 'steel_plate', group: 'parts', inputs: [s('steel_ingot', 2)], output: s('steel_plate'), tools: [HAMMER] },
+  { id: 'dense_steel_plate', group: 'parts', inputs: [s('steel_plate', 9)], output: s('dense_steel_plate'), tools: [HAMMER], note: 'a bender makes one from 9 ingots' },
   { id: 'lv_casing_steel', group: 'parts', inputs: [s('steel_plate', 8)], output: s('lv_casing'), note: 'wrench (the GTNH recipe)' },
   { id: 'cupronickel_coil', group: 'parts', inputs: [s('cupronickel_wire', 4), s('tin_plate')], output: s('cupronickel_coil'), note: 'wound on a former' },
   { id: 'heat_proof_casing', group: 'parts', inputs: [s('iron_plate', 6), s('brick', 2)], output: s('heat_proof_casing'), note: 'GTNH uses invar' },

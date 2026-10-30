@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { canCraft, craft, maxCrafts } from './craft';
 import { CRAFTS, GATHERABLE, MACHINES, recipesForMachine } from './data';
-import type { Stack } from './data/types';
+import type { MachineDef, Stack } from './data/types';
 import { count, createWorld, placeMachine, setRecipe, tick, type World } from './world';
 
 const run = (w: World, n: number) => { for (let i = 0; i < n; i++) tick(w); };
@@ -17,19 +17,27 @@ describe('a new game', () => {
   it('can reach a boiler with nothing but hand crafting and the coal furnace, and then every machine', () => {
     // what you can get: gather by hand, then craft, and run the recipes of machines you could have built
     const have = new Set<string>(GATHERABLE);
-    const steps = (allowed: (power: string) => boolean) => [
+    const steps = (allowed: (d: MachineDef) => boolean) => [
       ...[...CRAFTS.values()].map((c) => ({ inputs: [...c.inputs, ...(c.tools ?? []).map((t) => ({ item: t, count: 1 }))], outputs: [c.output] as Stack[] })),
-      ...[...MACHINES.values()].filter((d) => have.has(d.id) && allowed(d.power)).flatMap((d) => recipesForMachine(d)),
+      ...[...MACHINES.values()].filter((d) => have.has(d.id) && allowed(d)).flatMap((d) => recipesForMachine(d)),
     ];
-    const grow = (allowed: (power: string) => boolean) => {
+    const grow = (allowed: (d: MachineDef) => boolean) => {
       for (let grew = true; grew;) {
         grew = false;
         for (const s of steps(allowed)) if (s.inputs.every((i) => have.has(i.item)))
           for (const o of s.outputs) if (!have.has(o.item)) { have.add(o.item); grew = true; }
       }
     };
-    grow((power) => power === 'none'); // before steam: hands, and machines that need no steam or EU
+    grow((d) => d.power === 'none'); // before steam: hands, and machines that need no steam or EU
     expect(have.has('bronze_boiler')).toBe(true);
+    // each compact floor comes with its tier: the 5x5 by hand from bronze and bricks, the 9x9 once steam machines make
+    // rubber for LV, the 13x13 only with steel from the blast furnace
+    expect(have.has('compact_floor_5')).toBe(true);
+    expect(have.has('compact_floor_9')).toBe(false);
+    grow((d) => d.power === 'steam' || d.power === 'none');
+    expect(have.has('compact_floor_9')).toBe(true);
+    grow((d) => d.kind !== 'blast_furnace');
+    expect(have.has('compact_floor_13')).toBe(false);
     grow(() => true);
     expect([...MACHINES.keys()].filter((id) => !have.has(id))).toEqual([]);
   });

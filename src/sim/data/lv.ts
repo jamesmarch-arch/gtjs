@@ -98,6 +98,7 @@ export const recipes: RecipeDef[] = [
   eu('wiremill_copper', 'wiremill', 100, 8, [s('copper_ingot')], [s('copper_wire', 2)]),
   eu('wiremill_tin', 'wiremill', 100, 8, [s('tin_ingot')], [s('tin_wire', 2)]),
   ...['iron', 'copper', 'tin', 'bronze'].map((m) => eu(`bend_${m}_plate`, 'bender', 100, 8, [s(`${m}_ingot`)], [s(`${m}_plate`)])),
+  eu('bend_dense_bronze_plate', 'bender', 900, 8, [s('bronze_ingot', 9)], [s('dense_bronze_plate')]),
   eu('assemble_vacuum_tube', 'assembler', 120, 8, [s('glass_tube'), s('copper_wire', 2)], [s('vacuum_tube')]),
   eu('assemble_resistor', 'assembler', 160, 8, [s('coal'), s('copper_wire', 2)], [s('resistor', 2)]),
   eu('assemble_coated_board', 'assembler', 200, 8, [s('wood_planks'), s('rubber_sheet')], [s('coated_board')]),
