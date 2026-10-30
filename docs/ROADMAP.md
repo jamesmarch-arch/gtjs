@@ -74,6 +74,29 @@ floors). 4 alongside anything. 5 last.
 - **Second wave:** Idea 2 task 2 (terminal) · Idea 1 task 5 (content).
 - **Third wave:** Idea 2 task 3 (execution, across floors) · Idea 2 task 5.
 
+## Idea 3: everything from cobblestone
+
+Decided 2026-10-30. Cobblestone is the only thing you gather by clicking; everything else is made from it, after Ex
+Nihilo and skyblock packs. The more a block has been crushed, the later and rarer its finds, so rarity pays for itself.
+
+- **Crusher:** cobblestone -> gravel -> sand -> dust (the existing Stone Dust), one for one.
+- **Sifter:** one independent roll per item, so a block can give several things or nothing.
+
+  | Block | Finds (chance per block) |
+  |---|---|
+  | Gravel | Coal 30%, Iron ore 30%, Copper ore 30%, Tin ore 20% |
+  | Sand | Bauxite 15%, Redstone 15%, Lapis 8%, Diamond 1% |
+  | Dust | Nickel dust 15%, Gold dust 8%, Ender pearl 1% |
+  | Dirt | Sapling 25% |
+
+- **Soaking barrel** (no power; water comes from the main, as for the ore washer and boilers): dust -> clay, sand -> dirt.
+- **Tree farm** (simulated): holds a sapling, not used up, and slowly grows wood planks and sticky resin.
+- **Tiers:** crusher and sifter come unpowered and slow (built from cobblestone alone), then steam, then LV.
+- **The new gems get a first use:** redstone, lapis, diamond and ender pearl go into a few existing recipes.
+- **Follow-on changes:** the Stone Hammer becomes cobblestone-only; the gather buttons shrink to Cobblestone; the opening
+  quests are rewritten; the planner plans on average yields for chanced outputs, and crafting jobs run a step until
+  they have enough; old saves keep what they hold. The numbers are a first pass, to tune by playing.
+
 ## Later
 
 - Real fluid networks: pipes and tanks for water and creosote (and steam), so fluid ports carry more than steam.
