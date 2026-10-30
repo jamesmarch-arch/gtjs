@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Steam Port</title>
+<script src="cf-head.js"></script></head><body>
+<script src="core.js"></script>
+<script src="gt-bridge.js"></script>
+<script src="gt-parts.js"></script>
+<script src="gt-lv.js"></script>
+<script src="gt-compact.js"></script>
+<script>
+/* Steam Port (gtjs, compact floors): a block of an inner floor's wall with a bronze flange and a valve on it. A pipe on
+   the inner floor that touches it shares its steam with the pipe outside that touches the compact floor's steam flange.
+
+   How it works (truth first)
+   1. The port is one end of a steam line; the other end is the steam flange on the compact floor's outer face. The
+      line runs through the wall block from the flange on its front to the link flange on its back, lagged so it
+      keeps its heat, through a swing check valve that stops a burst on one side from emptying the other.
+   2. Outside the wall a gate valve with a red handwheel opens and shuts the line (the Valve button, or the wheel).
+      Shut, the inner floor's pipes are their own steam net.
+   3. The pressure gauge over the flange reads the steam in the line (0..1 of full). A drain cock under the check
+      valve lets out the water the steam leaves as it cools.
+   4. Past the valve the pipe runs on to the tile's edge and ends in a flange, where the next pipe joins.
+   Where the steam is: outer flange -> link flange -> lagged pipe -> check valve -> flange -> gate valve -> pipe ->
+   the inner floor's pipes (and back, when the inner floor has boilers).
+
+   Parts
+   OUTSIDE  wall block (dark steel, panel seams, bolts) . bronze band round the top . flange plate . flange with six bolts .
+            pipe . gate valve: body, two flanges, bonnet, stem, red handwheel . end flange at the tile's edge . gauge .
+            bronze tag (STEAM PORT) . link flange on the back
+   INSIDE   lagged pipe (two lengths, banded) . swing check valve with its cap . drain cock . link flange
+
+   Contact checks (numbers)
+   - block x 4..74, y 6..94, z 0..80; band z 66..73 on every side.
+   - line on (y 50, z 16): flange r 9 x 74..77; pipe r 4.5 x 77..84; valve body x 84..92, y 43..57, z 9..23 with
+     flanges r 7 at 83..84.5 and 91.5..93; pipe x 93..97; end flange r 7 x 97..100 (the tile's edge).
+   - bonnet r 4.5 z 23..27 at x 88; stem r .9 z 27..37; handwheel r 6.2 at z 37..38.6: 1.4 above the bonnet's top.
+   - gauge r 7 at (y 50, z 43) on the face, 34..50 clear of the flange (top 25) and the tag (52..63).
+   - inside: lagging r 6.5 x 7..34 and 48..74, check valve x 34..48, y 44..56, z 9..23 with cap r 4 to z 27;
+     drain cock from the valve's floor (z 9) down to z 3 at x 41; link flange r 9 x 4..7.
+*/
+const SP = { y: 50, z: 16 };
+const spLag = { l:'#f1e8d2', m:'#d8cba8', d:'#8f8366' };
+const spOpen = st => gtClamp(st.valve || 0) > .5;
+
+function spFront(st){
+  const X = FP.X1;
+  let s = shape(fpOn(rrUV(32, 4, 68, 30, 3)), GT_TRIM.m, 1.3) + gtRivets(PX(X + .35), [[35, 7], [65, 7], [35, 27], [65, 27]], GT_TRIM.d);
+  s += shape(fpOn(rrUV(30, 52, 70, 63, 2), .3), GT_BRZ.l, 1.1) + tx(X + .45, 50, 57.4, 'STEAM PORT', 4.4, INK, 800) + tx(X + .45, 50, 53.4, 'BRONZE  LP', 2.8, INK, 800);
+  return s;
+}
+function spBack(){
+  const X = FP.X0;
+  return shape(on(PX(X - .3), ellUV(50, 16, 9, 9, 24)), GT.BRZD.m, 1.2) + shape(on(PX(X - .4), ellUV(50, 16, 5.5, 5.5, 20)), GT_BRZ.l, .9)
+    + gtRivets(PX(X - .45), [0, 1, 2, 3, 4, 5].map(i => [50 + 7.3*Math.cos(i*Math.PI/3), 16 + 7.3*Math.sin(i*Math.PI/3)]), GT.BRZD.d);
+}
+// the handwheel: a red rim on four spokes, turning with the valve
+function spWheel(st){
+  const x = 88, y = SP.y, z = 37, a = (st.valve || 0)*Math.PI*1.5;
+  let s = cyl(x, y, z, z + 1.6, 6.2, GT.REDW, toneI, 1.1, 24) + fill(pd(on(PZ(z + 1.65), ellUV(x, y, 4.6, 4.6, 20))), GT.REDW.d);
+  let sp = ''; for (let i = 0; i < 4; i++){ const b = a + i*Math.PI/2; sp += pd([[x + 1.2*Math.cos(b), y + 1.2*Math.sin(b), z + 1.7], [x + 4.8*Math.cos(b), y + 4.8*Math.sin(b), z + 1.7]], false); }
+  return s + `<path d="${sp}" fill="none" stroke="${GT.REDW.m}" stroke-width="1.8" stroke-linecap="round"/>` + cyl(x, y, z + 1.4, z + 2.4, 1.4, GT.IRON, toneI, .7, 12);
+}
+function spParts(st, k, fade){
+  const X = FP.X1, { y, z } = SP, B = GT_BRZ, BD = GT.BRZD;
+  const pp = (b, svg) => ({ box: b, svg: fade(svg) });
+  const bolts = facing([1,0,0]) ? gtRivets(PX(X + 3.1), [0, 1, 2, 3, 4, 5].map(i => [y + 7*Math.cos(i*Math.PI/3 + .5), z + 7*Math.sin(i*Math.PI/3 + .5)]), BD.d) : '';
+  return [
+    pp([[X, y - 9, z - 9], [X + 3, y + 9, z + 9]], cylX(X, X + 3, y, z, 9, BD, toneI, 1.2, 24) + bolts),
+    pp([[X + 3, y - 4.5, z - 4.5], [83, y + 4.5, z + 4.5]], cylX(X + 3, 83, y, z, 4.5, B, toneI, 1, 18)),
+    pp([[83, y - 7, z - 7], [84.5, y + 7, z + 7]], cylX(83, 84.5, y, z, 7, BD, toneI, 1, 20)),
+    pp([[84, 43, 9], [92, 57, 23]], box(84, 43, 9, 92, 57, 23, B, toneI, 1.1)),
+    pp([[91.5, y - 7, z - 7], [93, y + 7, z + 7]], cylX(91.5, 93, y, z, 7, BD, toneI, 1, 20)),
+    pp([[93, y - 4.5, z - 4.5], [97, y + 4.5, z + 4.5]], cylX(93, 97, y, z, 4.5, B, toneI, 1, 18)),
+    pp([[97, y - 7, z - 7], [100, y + 7, z + 7]], cylX(97, 100, y, z, 7, BD, toneI, 1, 20)
+      + (facing([1,0,0]) ? fill(pd(on(PX(100.1), ellUV(y, z, 3.4, 3.4, 14))), GT.RECESS) : '')),
+    pp([[83.5, y - 4.5, 23], [92.5, y + 4.5, 27]], cyl(88, y, 23, 27, 4.5, B, toneI, 1, 18)),
+    pp([[87, y - 1, 27], [89, y + 1, 37]], rod([88, y, 27], [88, y, 37], .9, GT.IRON, toneI, .7)),
+    pp([[81.8, y - 6.2, 37], [94.2, y + 6.2, 39.6]], act('valve', spWheel(st))),
+    pp([[X, y - 7, 36], [X + 3, y + 7, 50]], gtGauge(X, y, 43, 7, st.steam || 0)),
+  ];
+}
+function spInside(st){
+  const out = [], put = (b, svg) => out.push({ box: b, svg }), { y, z } = SP, flow = !!st.running;
+  const lag = (x0, x1) => { let s = cylX(x0, x1, y, z, 6.5, spLag, toneI, 1, 20), r = '';
+    for (let x = x0 + 5; x < x1 - 2; x += 7) r += cylX(x, x + .8, y, z, 6.7, { l:'#d9cba5', m:'#c2b38b', d:'#8f8366' }, toneI, .35, 20);
+    return s + r; };
+  put([[FP.X0, y - 9, z - 9], [7, y + 9, z + 9]], cylX(FP.X0, 7, y, z, 9, GT.BRZD, toneI, 1, 24));
+  put([[7, y - 6.8, z - 6.8], [34, y + 6.8, z + 6.8]], lag(7, 34));
+  put([[48, y - 6.8, z - 6.8], [FP.X1, y + 6.8, z + 6.8]], lag(48, FP.X1));
+  // the swing check valve: its body, the cap over the hinged disc, an arrow cast on its side
+  put([[34, 44, 9], [48, 56, 23]], box(34, 44, 9, 48, 56, 23, GT_BRZ, toneI, 1)
+    + (facing([0,1,0]) ? ink(pd([[37, 56.1, 16], [45, 56.1, 16]], false) + pd([[42.5, 56.1, 18], [45, 56.1, 16], [42.5, 56.1, 14]], false), 1) : ''));
+  put([[37, y - 4, 23], [45, y + 4, 27]], cyl(41, y, 23, 27, 4, flow ? matOf('#f0b56a') : GT.BRZD, toneI, 1, 18));
+  // the drain cock under it
+  put([[40, y - 1, 3], [42, y + 1, 9]], rod([41, y, 9], [41, y, 4], .9, GT_BRZ, toneI, .7) + rod([39, y, 5], [43, y, 5], .6, GT.REDW, toneI, .5));
+  return out;
+}
+
+gtPort({
+  fig:'CF5', title:'Steam Port', band: GT_BRZ.m, front: spFront, back: spBack, parts: spParts, inside: spInside, toggleLabel:'Valve',
+  shadowPts: [[100, 50, 16]],
+  emitters: [{ id:'gland', at: () => [88, SP.y, 30], when: st => !!st.running, every: .55, life: 1.5, rise: 10, r0: 1.2 }],
+  stats: st => [{ label:'Steam', value: `${Math.round((st.steam || 0)*100)}%` }, { label:'Valve', value: spOpen(st) ? 'open' : 'shut', small: true }],
+  callouts: st => [
+    ...(facing([1,0,0]) ? [{ at: [FP.X1 + 1.5, SP.y - 9, SP.z], text: 'FLANGE', on: !!st.running }, { at: [FP.X1 + 3, SP.y + 7, 43], text: 'GAUGE', on: !!st.running },
+      { at: [FP.X1, 30, 63], text: 'BRONZE TAG', on: false }] : []),
+    ...(facing([-1,0,0]) ? [{ at: [FP.X0, 50, 25], text: 'LINK FLANGE', on: !!st.running }] : []),
+    { at: [88, SP.y + 6, 38.6], text: 'GATE VALVE', on: spOpen(st) }, { at: [100, SP.y, SP.z + 7], text: 'TO NEXT PIPE', on: !!st.running },
+    { at: [FP.X1, FP.Y1, 73], text: 'BRONZE BAND', on: false }],
+  insideCallouts: st => [{ at: [20, SP.y, SP.z + 6.5], text: 'LAGGED PIPE', on: !!st.running }, { at: [41, SP.y, 27], text: 'CHECK VALVE', on: !!st.running },
+    { at: [41, SP.y, 4], text: 'DRAIN COCK', on: false }, { at: [FP.X0 + 1, SP.y, SP.z + 9], text: 'LINK FLANGE', on: !!st.running }],
+});
+</script>
+<script src="cf-tail.js"></script>
+</body></html>

@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>EU Port</title>
+<script src="cf-head.js"></script></head><body>
+<script src="core.js"></script>
+<script src="gt-bridge.js"></script>
+<script src="gt-parts.js"></script>
+<script src="gt-lv.js"></script>
+<script src="gt-compact.js"></script>
+<script>
+/* EU Port (gtjs, compact floors): a block of an inner floor's wall with a copper terminal on it. A cable on the inner
+   floor that touches it is on the same EU net as the cable outside that touches the compact floor's EU socket.
+
+   How it works (truth first)
+   1. The port is one end of a copper link; the other end is the EU socket on the compact floor's outer face. The
+      link is a bus bar that runs through the wall block from the terminal on its front to the link plate on its back.
+   2. The bus bar stands on two ceramic insulators, runs through a cartridge fuse (it blows before the bar would burn,
+      as a cable does above its rating) and through a knife switch: the breaker. Opened, the blade lifts and the inner
+      floor is off the outer net.
+   3. The cable leaves the terminal's stud, drops to the floor and runs off toward the next tile, like an LV socket's.
+   4. The lamp and the five-step meter beside the terminal show the flow (rate 0..1); the tag says LV, 32 V.
+   Where the power is: outer socket -> link plate -> bus bar -> knife switch -> fuse -> terminal -> cable -> inner floor
+   (and back the other way when the inner floor generates).
+
+   Parts
+   OUTSIDE  wall block (dark steel, panel seams, bolts) . LV-blue band round the top . terminal plate with four bolts .
+            copper terminal: base flange, stud, clamp collar . cable . LV-blue tag (EU PORT, LV 32 V) . lamp . flow meter .
+            link plate on the back
+   INSIDE   bus bar . two ceramic insulators . cartridge fuse with copper caps . knife switch (blade, hinge, jaw, handle) .
+            link plate
+
+   Contact checks (numbers)
+   - block x 4..74, y 6..94, z 0..80; band z 66..73 on every side.
+   - terminal plate y 28..72, z 16..48 on the front; terminal on (y 50, z 32): flange r 10 x 74..77, stud r 6 x 77..82,
+     collar r 4 x 82..84.5; the cable leaves at x 84.5, drops at x 89 to z 3 and runs to x 100.
+   - bus bar y 47..53, z 29..35 from the terminal (x 74) to the link plate (x 4); insulators r 3.5 at x 24 and x 64 from
+     the case floor (z 0) to the bar's underside (z 29).
+   - fuse r 4.5 x 36..48 on the bar's axis; knife switch hinge at x 50, jaw at x 58, blade 8 long, up to 70 deg open.
+   - tag y 30..70, z 52..63; lamp at (y 20, z 40); meter y 76..80, z 18..44 (5 steps).
+*/
+const EP = { y: 50, z: 32, bz: [29, 35], by: [47, 53] };
+const epOn = st => !!st.on, epFlow = st => st.running ? gtClamp(st.rate || 0) : 0;
+
+function epFront(st){
+  const X = FP.X1, flow = epFlow(st);
+  let s = shape(fpOn(rrUV(28, 16, 72, 48, 3)), GT_TRIM.m, 1.3) + gtRivets(PX(X + .35), [[31, 19], [69, 19], [31, 45], [69, 45]], GT_TRIM.d);
+  // the tag: LV blue, as on every LV machine
+  s += shape(fpOn(rrUV(30, 52, 70, 63, 2), .3), GT_LVBLUE, 1.1) + tx(X + .45, 50, 57.4, 'EU PORT', 5, INK, 800) + tx(X + .45, 50, 53.4, 'LV  32 V', 2.8, INK, 800);
+  // the flow meter: five steps, lit from the bottom
+  s += shape(fpOn(rrUV(76, 18, 81, 44, 1), .35), '#14181c', .9);
+  for (let i = 0; i < 5; i++){ const z0 = 19.5 + i*4.8, lit = flow > (i + .5)/5;
+    s += fill(pd(fpOn(rectUV(77, z0, 80, z0 + 3.6), .45)), lit ? (i < 3 ? '#5fd06e' : i < 4 ? '#f4b829' : '#e2483d') : '#323a40'); }
+  return s;
+}
+function epBack(){
+  // the link plate: where the bus bar comes through to the block's other side
+  const X = FP.X0;
+  return shape(on(PX(X - .3), ellUV(50, 32, 11, 11, 24)), GT_TRIM.m, 1.2) + shape(on(PX(X - .4), ellUV(50, 32, 7, 7, 20)), GT.COPPER.m, 1)
+    + gtRivets(PX(X - .45), [0, 1, 2, 3, 4, 5].map(i => [50 + 9*Math.cos(i*Math.PI/3), 32 + 9*Math.sin(i*Math.PI/3)]), GT_TRIM.d);
+}
+
+function epParts(st, k, fade){
+  const X = FP.X1, { y, z } = EP, hot = epFlow(st) > .05;
+  const cu = hot ? { l:'#ffc49a', m: GT.COPPER.l, d: GT.COPPER.m } : GT.COPPER;
+  const p = [[X + 10.5, y, z], [X + 15, y, z], [X + 15, y, 3], [100, y, 3]], d = pd(p, false);
+  return [
+    { box: [[X, y - 10, z - 10], [X + 3, y + 10, z + 10]], svg: fade(cylX(X, X + 3, y, z, 10, GT.COPPER, toneI, 1.2, 28)
+      + (facing([1,0,0]) ? gtRivets(PX(X + 3.1), [0, 1, 2, 3].map(i => [y + 7.5*Math.cos(i*Math.PI/2 + .78), z + 7.5*Math.sin(i*Math.PI/2 + .78)]), GT.COPPER.d) : '')) },
+    { box: [[X + 3, y - 6, z - 6], [X + 8, y + 6, z + 6]], svg: fade(cylX(X + 3, X + 8, y, z, 6, cu, toneI, 1.1, 24)) },
+    { box: [[X + 8, y - 4, z - 4], [X + 10.5, y + 4, z + 4]], svg: fade(cylX(X + 8, X + 10.5, y, z, 4, GT.IRON, toneI, 1, 6)) },
+    { box: [[X + 10.5, y - 3, 0], [100, y + 3, z + 3]], svg: fade(`<path d="${d}" fill="none" stroke="${INK}" stroke-width="5.4" stroke-linejoin="round" stroke-linecap="round"/>`
+      + `<path d="${d}" fill="none" stroke="#3d3935" stroke-width="3.6" stroke-linejoin="round" stroke-linecap="round"/>`
+      + `<path d="${d}" fill="none" stroke="${hot ? '#f6b98a' : GT.COPPER.l}" stroke-width="1" stroke-linejoin="round" stroke-linecap="round"/>`) },
+    { box: [[X, 17.6, 37.6], [X + 2, 22.4, 42.4]], svg: fade(gtLamp(X, 20, 40, st)) },
+  ];
+}
+
+function epInside(st){
+  const out = [], put = (b, svg) => out.push({ box: b, svg }), { y, z, bz, by } = EP, hot = epFlow(st) > .05;
+  const cu = hot ? { l:'#ffc49a', m: GT.COPPER.l, d: GT.COPPER.m } : GT.COPPER;
+  // the link plate inside the back wall, the bus bar in three pieces (round the fuse and the switch)
+  put([[FP.X0, y - 7, z - 7], [FP.X0 + 2, y + 7, z + 7]], cylX(FP.X0, FP.X0 + 2, y, z, 7, GT.COPPER, toneI, 1, 20));
+  put([[FP.X0 + 2, by[0], bz[0]], [36, by[1], bz[1]]], box(FP.X0 + 2, by[0], bz[0], 36, by[1], bz[1], cu, toneI, .9));
+  put([[48, by[0], bz[0]], [50, by[1], bz[1]]], box(48, by[0], bz[0], 50, by[1], bz[1], cu, toneI, .9));
+  put([[58, by[0], bz[0]], [FP.X1, by[1], bz[1]]], box(58, by[0], bz[0], FP.X1, by[1], bz[1], cu, toneI, .9));
+  // two insulators under the bar
+  for (const x of [24, 64]) put([[x - 3.5, y - 3.5, 0], [x + 3.5, y + 3.5, bz[0]]], byDepth([0, 1, 2].map(i => ({ box: [[x - 3.5, y - 3.5, i*9.6], [x + 3.5, y + 3.5, (i + 1)*9.6]],
+    svg: cyl(x, y, i*9.6, (i + 1)*9.6 - 1.2, 3.5, CERAMIC, toneI, .8, 16) + cyl(x, y, (i + 1)*9.6 - 1.2, (i + 1)*9.6, 2.2, CERAMIC, toneI, .6, 12) }))));
+  // the fuse: a ceramic cartridge with copper caps
+  put([[36, y - 4.5, z - 4.5], [48, y + 4.5, z + 4.5]], cylX(36, 38, y, z, 4.5, cu, toneI, .9) + cylX(38, 46, y, z, 4, CERAMIC, toneI, 1) + cylX(46, 48, y, z, 4.5, cu, toneI, .9));
+  // the knife switch: hinge block at x 50, jaw at x 58; the blade lifts with the breaker open
+  const open = 1 - gtClamp(st.valve || 0), a = open*70*Math.PI/180, tip = [50 + 8*Math.cos(a), y, bz[1] + 1 + 8*Math.sin(a)];
+  put([[50, y - 4, bz[1]], [52, y + 4, bz[1] + 3]], box(50, y - 4, bz[0], 52, y + 4, bz[1] + 3, GT_TRIM, toneI, .8));
+  put([[56, y - 4, bz[1]], [58, y + 4, bz[1] + 3]], box(56, y - 4, bz[0], 58, y + 4, bz[1] + 3, GT_TRIM, toneI, .8));
+  put([[50, y - 1, bz[1]], [Math.max(58, tip[0]) + 1, y + 1, tip[2] + 7]], rod([51, y, bz[1] + 1.5], tip, .9, cu, toneI, .8)
+    + rod(tip, [tip[0] + 1, y, tip[2] + 6], 1.4, DARK, toneI, .8));
+  return out;
+}
+
+gtPort({
+  fig:'CF4', title:'EU Port', band: GT_LVBLUE, front: epFront, back: epBack, parts: epParts, inside: epInside, toggleLabel:'Breaker',
+  stats: st => [{ label:'Flow', value: `${Math.round(epFlow(st)*100)}%` }, { label:'Breaker', value: epOn(st) ? 'closed' : 'open', small: true }],
+  callouts: st => [
+    ...(facing([1,0,0]) ? [{ at: [FP.X1 + 8, EP.y, EP.z + 6], text: 'COPPER TERMINAL', on: !!st.running }, { at: [FP.X1, 30, 63], text: 'LV TAG', on: false },
+      { at: [FP.X1, 78, 44], text: 'FLOW METER', on: !!st.running }, { at: [FP.X1 + 1, 20, 42], text: 'LAMP', on: epOn(st) }] : []),
+    ...(facing([-1,0,0]) ? [{ at: [FP.X0, 50, 43], text: 'LINK PLATE', on: !!st.running }] : []),
+    { at: [96, EP.y, 3], text: 'CABLE', on: !!st.running }, { at: [FP.X1, FP.Y1, 73], text: 'LV BAND', on: false }],
+  insideCallouts: st => [{ at: [20, EP.y, EP.bz[1]], text: 'BUS BAR', on: !!st.running }, { at: [24, EP.y + 3.5, 14], text: 'INSULATORS', on: false },
+    { at: [42, EP.y, EP.z + 4], text: 'FUSE', on: !!st.running }, { at: [55, EP.y, EP.bz[1] + 6], text: 'KNIFE SWITCH', on: epOn(st) },
+    { at: [FP.X0 + 1, EP.y, EP.z + 7], text: 'LINK PLATE', on: !!st.running }],
+});
+</script>
+<script src="cf-tail.js"></script>
+</body></html>
