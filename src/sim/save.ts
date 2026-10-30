@@ -1,18 +1,22 @@
 // Saves: JSON with a version number. Loading rebuilds the world through the same placement rules a player uses,
 // so a damaged or hand-edited save can't put two things on one tile or name a machine that doesn't exist.
-import { ITEMS, MACHINES, QUESTS, RECIPES } from './data';
+import { CRAFTS, ITEMS, MACHINES, QUESTS, RECIPES } from './data';
+import type { Job, JobStep } from './jobs';
 import { allMachines, emptyWorld, FLOOR, isInner, levels, placeCable, placeMachine, placePipe, placePort, type Level, type World } from './world';
 
 // 1: M2 (no cables). 2: M3 adds cables. 3: M4 adds stats and quests. 4: M5 adds EU, cable kinds, transformer modes.
 // 5: nested floors: `floors` holds every compact block's inner floor (machines, pipes, cables, ports) by id, and a
 // compact block's machine names its floor in `inner`. A save before 5 has one floor and loads as before.
-export const SAVE_VERSION = 5;
+// 6: crafting jobs: `jobs` (each with its steps and how far they are) and `nextJob`; a machine carries `autocraft` (it
+// is available for autocrafting) and, while lent to a job, `job` (the lease). A save before 6 has no jobs and no
+// machine opted in.
+export const SAVE_VERSION = 6;
 export const SAVE_KEY = 'gtjs.save';
 
 export class SaveError extends Error {}
 
 export function serialize(w: World): string {
-  const { layoutRev: _, events: __, floors: ___, ...rest } = w;
+  const { layoutRev: _, events: __, floors: ___, jobsDone: ____, ...rest } = w;
   // the floors in the order they tick (depth first), so a loaded game saves the same text again
   const floors = Object.fromEntries(levels(w).slice(1).map(({ id }) => [id, w.floors[id]]));
   return JSON.stringify({ version: SAVE_VERSION, world: { ...rest, floors } }, (k, v) => (k === 'lowVolts' || k === 'lastVolts' ? undefined : v));
@@ -36,7 +40,7 @@ export function deserialize(text: string): World {
   try { data = JSON.parse(text); } catch { throw new SaveError('The save is not valid JSON'); }
   const top = obj(data, 'The save');
   const version = top.version;
-  if (version !== 1 && version !== 2 && version !== 3 && version !== 4 && version !== SAVE_VERSION) throw new SaveError(`Unknown save version ${String(version)}`);
+  if (version !== 1 && version !== 2 && version !== 3 && version !== 4 && version !== 5 && version !== SAVE_VERSION) throw new SaveError(`Unknown save version ${String(version)}`);
   const s = obj(top.world, 'world');
 
   const w = emptyWorld();
@@ -51,6 +55,38 @@ export function deserialize(text: string): World {
     const v = num(n, `storage.${item}`);
     if (v > 0) w.storage[item] = v;
   }
+
+  // crafting jobs (format 6), before the machines, so a lent machine's lease can be checked against its job. A job with
+  // a recipe or item this version doesn't know is dropped, and the machines lent to it are handed back.
+  if (version >= 6) {
+    for (const raw of arr(s.jobs, 'jobs')) {
+      const j = obj(raw, 'a job');
+      if (typeof j.id !== 'string' || typeof j.target !== 'string') throw new SaveError('A job has no id or target');
+      const steps = arr(j.steps, `the steps of job ${j.id}`).map((raw, i): JobStep | null => {
+        const st = obj(raw, `a step of job ${j.id}`), runs = num(st.runs, 'step runs', 1);
+        const kind = st.kind === 'craft' ? 'craft' : st.kind === 'machine' ? 'machine' : null;
+        if (!kind) throw new SaveError(`A step of job ${j.id} has an unknown kind`);
+        const known = typeof st.recipe === 'string' && (kind === 'craft' ? CRAFTS.has(st.recipe) : RECIPES.has(st.recipe));
+        const out = obj(st.output, 'step output');
+        const stacks = arr(st.inputs, 'step inputs').map((x) => { const o = obj(x, 'a step input'); return { item: String(o.item), count: num(o.count, 'input count') }; });
+        if (!known || !ITEMS.has(String(out.item)) || stacks.some((x) => !ITEMS.has(x.item))) return null;
+        const after = arr(st.after, 'step after').map((n) => num(n, 'step after'));
+        if (after.some((n) => !Number.isInteger(n) || n >= i)) throw new SaveError(`A step of job ${j.id} waits for a later one`);
+        return {
+          kind, recipe: st.recipe as string, runs, output: { item: String(out.item), count: num(out.count, 'output count') }, inputs: stacks,
+          depth: num(st.depth ?? 0, 'step depth'), after, done: Math.min(runs, num(st.done, 'step done')), wait: typeof st.wait === 'string' ? st.wait : null,
+        };
+      });
+      if (!ITEMS.has(j.target) || steps.some((x) => !x)) continue;
+      w.jobs.push({
+        id: j.id, target: j.target, count: num(j.count, 'job count', 1), cpu: typeof j.cpu === 'string' ? j.cpu : null, steps: steps as JobStep[],
+        paused: typeof j.paused === 'string' ? j.paused : null, started: num(j.started ?? 0, 'job started'),
+      });
+    }
+    if (new Set(w.jobs.map((j) => j.id)).size !== w.jobs.length) throw new SaveError('Two jobs share an id');
+    w.nextJob = Math.max(num(s.nextJob ?? 1, 'nextJob', 1), ...w.jobs.map((j) => (Number(j.id.replace(/^j/, '')) || 0) + 1));
+  }
+  const jobs = new Map<string, Job>(w.jobs.map((j) => [j.id, j]));
 
   // inner floors (format 5), by id; each is loaded once, when the block that holds it is
   const savedFloors = version >= 5 ? obj(s.floors, 'floors') : {}, loaded = new Set<string>();
@@ -74,6 +110,19 @@ export function deserialize(text: string): World {
       placed.eu = Math.min(num(m.eu ?? 0, 'eu'), MACHINES.get(m.def)!.euCapacity ?? 0);
       placed.rate = num(m.rate ?? 0, 'rate');
       placed.mode = m.mode === 'up' ? 'up' : 'down';
+      placed.autocraft = m.autocraft === true;
+      if (version >= 6 && m.job !== undefined) {
+        // lent to a job: keep the lease if its job and step are still there, else hand the machine back as it was
+        const l = obj(m.job, 'a lease'), was = obj(l.was, 'a lease'), job = typeof l.job === 'string' ? jobs.get(l.job) : undefined;
+        const step = job?.steps[num(l.step, 'lease step')], runs = num(l.runs, 'lease runs', 1);
+        if (job && step?.kind === 'machine' && step.recipe === placed.recipe) {
+          placed.job = { job: job.id, step: job.steps.indexOf(step), runs, started: Math.min(runs, num(l.started, 'lease started')),
+            done: Math.min(runs, num(l.done, 'lease done')), was: { recipe: ok(was.recipe) ? (was.recipe as string) : null, enabled: was.enabled === true } };
+        } else {
+          placed.recipe = ok(was.recipe) ? (was.recipe as string) : null;
+          placed.enabled = was.enabled === true;
+        }
+      }
       if (!placed.inner) continue;
       // a compact block: placing it made it a new, empty floor; it takes its saved floor's id and contents instead
       const id = m.inner, inside = `the compact floor at (${placed.x}, ${placed.y}) on ${where}`;

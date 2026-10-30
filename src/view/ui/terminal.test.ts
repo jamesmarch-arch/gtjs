@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { MACHINES } from '../../sim/data';
-import { emptyWorld, placeMachine } from '../../sim/world';
+import { startJob } from '../../sim/jobs';
+import { emptyWorld, placeMachine, tick } from '../../sim/world';
 import { canMake, duration, parseAmount, terminalHtml as withIcons, terminalItems, type TerminalView } from './terminal';
 
 // the terminal's HTML as text: item icons (inline <svg>s) left out, so the tests read the words
@@ -9,7 +10,7 @@ const view = (v: Partial<TerminalView> = {}): TerminalView => ({ query: '', pick
 const tiles = (html: string) => [...html.matchAll(/data-act="pick" data-id="([^"]+)"/g)].map((m) => m[1]);
 // the steps as "number recipe-output", top of the tree first
 const steps = (html: string) => [...html.matchAll(/<li class="step [^"]*" style="--depth:(\d+)">\s*<span class="n">(\d+)<\/span>/g)].map((m) => [+m[1], +m[2]]);
-const craftButton = (html: string) => html.match(/<button data-act="craftnow"[^>]*>[^<]*<\/button>/)?.[0] ?? '';
+const craftButton = (html: string) => html.match(/<button data-act="(craftnow|startjob)"[^>]*>[^<]*<\/button>/)?.[0] ?? '';
 
 describe('the terminal block', () => {
   it('is an LV machine with no recipes that opens the terminal, crafted at the workbench in the LV tier', () => {
@@ -67,7 +68,7 @@ describe('a plan in the terminal', () => {
     expect(terminalHtml(emptyWorld(), view())).toContain('Pick something to craft');
   });
 
-  it('plans a circuit from scratch: a tree of steps, what to gather, and no craft button yet', () => {
+  it('plans a circuit from scratch: a tree of steps, what to gather, and a job that needs a crafting CPU', () => {
     const w = emptyWorld();
     placeMachine(w, 'stone_furnace', 0, 0);
     const html = terminalHtml(w, view({ pick: 'circuit_lv' }));
@@ -78,10 +79,12 @@ describe('a plan in the terminal', () => {
     expect(html).toContain('<h3>To gather</h3>');
     expect(html).toMatch(/30 Copper Ore/);
     expect(html).toContain('term-status wait">Gather first:');
+    expect(html).toContain('A job can start now and wait for them.');
     expect(html).toContain('Furnace, 6 runs, 1 min'); // the coal furnace smelting copper for the circuit's own wire
     expect(html).toMatch(/<h3>Machine time<\/h3>.*Furnace<b>36 runs, 6 min<\/b>/s); // 30 copper, 4 iron, 2 glass
     expect(html).toContain('Stone Hammer <small class="muted">(they stay in storage)');
-    expect(craftButton(html)).toContain('disabled');
+    expect(craftButton(html)).toMatch(/data-act="startjob".*disabled>Craft 1 as a job/);
+    expect(html).toContain('jobs need a Crafting CPU: build one');
   });
 
   it('shows steel blocked without an electric blast furnace, and why', () => {
@@ -107,15 +110,38 @@ describe('a plan in the terminal', () => {
     expect(html).toMatch(/data-act="amount" data-n="64" aria-pressed="true"/);
   });
 
-  it('shows machine steps it could run, with their time, but waits for crafting jobs to run them', () => {
+  it('starts a plan with machine steps as a crafting job when a crafting CPU is free', () => {
     const w = emptyWorld();
     w.storage = { iron_ingot: 3 };
     placeMachine(w, 'steam_forge_hammer', 0, 0);
     const html = terminalHtml(w, view({ pick: 'iron_plate', amount: '2' }));
     expect(html).toContain('Every machine it needs is built: 1 machine run');
-    expect(html).toContain('Running machine jobs comes with crafting jobs');
+    expect(html).toContain('Start it as a crafting job');
     expect(html).toMatch(/<h3>Machine time<\/h3>.*Steam Forge Hammer<b>1 run, /s);
     expect(craftButton(html)).toContain('disabled');
+    placeMachine(w, 'crafting_cpu', 1, 0);
+    const ready = terminalHtml(w, view({ pick: 'iron_plate', amount: '2' }));
+    expect(craftButton(ready)).toBe('<button data-act="startjob" data-id="iron_plate" data-n="2" >Craft 2 as a job</button>');
+    expect(ready).toContain('Crafting jobs <span class="muted">0 of 1 Crafting CPU busy</span>');
+    startJob(w, 'iron_plate', 2);
+    expect(craftButton(terminalHtml(w, view({ pick: 'iron_plate', amount: '2' })))).toContain('disabled');
+  });
+});
+
+describe('crafting jobs in the terminal', () => {
+  it('lists each job with its progress, every step and where it stands, why it is paused, and a cancel button', () => {
+    const w = emptyWorld();
+    w.storage = { iron_ingot: 3 };
+    placeMachine(w, 'steam_forge_hammer', 0, 0); // on no steam net, and not available for autocrafting
+    placeMachine(w, 'crafting_cpu', 1, 0);
+    const job = startJob(w, 'iron_plate', 2);
+    tick(w);
+    const html = terminalHtml(w, view());
+    expect(html).toContain('1 of 1 Crafting CPU busy');
+    expect(html).toMatch(/<b>2 Iron Plate<\/b>\s*<small class="muted">0% · 0.1 s so far<\/small>/);
+    expect(html).toContain('<p class="why">Paused: no Steam Forge Hammer is available for autocrafting: open one and switch it on.</p>');
+    expect(html).toMatch(/<li class="stuck" style="--depth:0"><span class="n">1<\/span><span>Iron Plate\s*<b>0\/1<\/b>/);
+    expect(html).toContain(`<button data-act="cancel" data-id="${job.id}">Cancel</button>`);
   });
 
   it('takes a typed amount, and says what it wants when the amount is no good', () => {

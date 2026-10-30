@@ -281,7 +281,7 @@ describe('crafting a plan now, by hand', () => {
     const w = emptyWorld();
     w.storage = { sand: 1 };
     placeMachine(w, 'stone_furnace', 0, 0);
-    expect(() => craftNow(w, 'glass_tube', 1)).toThrow('It needs machine runs: running them comes with crafting jobs');
+    expect(() => craftNow(w, 'glass_tube', 1)).toThrow('It needs machine runs: start it as a crafting job');
     expect(() => craftNow(w, 'glass_tube', 2)).toThrow('Gather what is missing first');
     expect(() => craftNow(w, 'steel_ingot', 1)).toThrow("One thing in it can't be made now");
     expect(w.storage).toEqual({ sand: 1 });

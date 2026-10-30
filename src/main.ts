@@ -2,6 +2,7 @@
 import { CONDUITS, FINAL_QUEST, GATHERABLE, MACHINES, itemName } from './sim/data';
 import { craft } from './sim/craft';
 import { craftNow } from './sim/autocraft';
+import { cancelJob, startJob } from './sim/jobs';
 import { checkQuests, claimQuest } from './sim/quests';
 import { netSteam, steamCapacity, steamNets } from './sim/nets';
 import { euNets } from './sim/power';
@@ -12,10 +13,10 @@ import {
 import { Floor, type Tool } from './view/floor/floor';
 import { openMachineGui, type MachineGui } from './view/ui/gui';
 import { openOverlay, type Overlay } from './view/ui/overlay';
-import { boilerHiss, closeSound, craftSound, gatherSound, isMuted, openSound, setMuted } from './view/audio';
+import { boilerHiss, closeSound, craftSound, gatherSound, isMuted, jobDoneSound, openSound, setMuted } from './view/audio';
 import { benchView, claimable, endHtml, questBookHtml, workbenchHtml, type BenchView } from './view/ui/sheets';
 import { icon } from './view/ui/icons';
-import { terminalHtml, type TerminalView } from './view/ui/terminal';
+import { duration, terminalHtml, type TerminalView } from './view/ui/terminal';
 
 const AUTOSAVE_MS = 10_000;
 
@@ -193,7 +194,8 @@ function openSheet(which: 'bench' | 'book' | 'terminal') {
       if (el.dataset.id === FINAL_QUEST) showEnd();
     }, sheetClosed);
 }
-// the ME terminal: browse storage, plan a craft, and craft it now when it is all hand crafts
+// the ME terminal: browse storage, plan a craft, and craft it now when it is all hand crafts, or start it as a crafting
+// job when it has machine steps; cancel jobs under way
 function openTerminal(): Overlay {
   term.query = '';
   return openOverlay('ME Terminal', () => terminalHtml(w, term), (el) => {
@@ -206,6 +208,17 @@ function openTerminal(): Overlay {
         craftSound(plan.steps.length);
         toast(`Crafted ${n} ${itemName(id)}: ${plan.totals.handCrafts} hand craft${plan.totals.handCrafts === 1 ? '' : 's'} in ${plan.steps.length} step${plan.steps.length === 1 ? '' : 's'}.`);
       } catch (e) { toast(`Couldn't craft ${itemName(id)}: ${(e as Error).message}.`, true); }
+    } else if (el.dataset.act === 'startjob') {
+      const id = el.dataset.id!, n = +el.dataset.n!;
+      try {
+        const job = startJob(w, id, n);
+        openSound();
+        toast(`Crafting job started: ${n} ${itemName(id)}, ${job.steps.length} step${job.steps.length === 1 ? '' : 's'}.`);
+      } catch (e) { toast(`Couldn't start a job for ${itemName(id)}: ${(e as Error).message}.`, true); }
+    } else if (el.dataset.act === 'cancel') {
+      const job = w.jobs.find((j) => j.id === el.dataset.id);
+      cancelJob(w, el.dataset.id!);
+      if (job) { closeSound(); toast(`Crafting job cancelled: ${job.count} ${itemName(job.target)}. What it made stays in storage.`); }
     }
     refresh();
   }, sheetClosed, {
@@ -346,6 +359,11 @@ function frame(now: number) {
       : `${CONDUITS.get(e.what as 'cable')?.name ?? 'A cable'} at (${e.x}, ${e.y})${where} burned out at ${e.volts} V.`, true);
   }
   w.events.length = 0;
+  for (const job of w.jobsDone) {
+    jobDoneSound();
+    toast(`Crafting job done: ${job.count} ${itemName(job.target)} in ${duration(w.tick - job.started)}.`);
+  }
+  w.jobsDone.length = 0;
   floor.draw(now);
   hearBoilers();
   gui?.sync();

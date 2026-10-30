@@ -178,6 +178,14 @@ export function closeSound() {
   tone(0.06, 470, 460, 0.11, 0.11, 'triangle');
 }
 
+/** A crafting job done: a soft relay click, then three notes going up, the last one ringing on. */
+export function jobDoneSound() {
+  hiss(0, 0.03, 0.15, 'bandpass', 2400, 1800, 2);
+  tone(0.04, 660, 665, 0.16, 0.11, 'triangle');
+  tone(0.13, 880, 885, 0.16, 0.1, 'triangle');
+  tone(0.22, 1320, 1325, 0.5, 0.09, 'triangle');
+}
+
 /** A craft from the terminal: a few quick knocks at the bench (more for a bigger job), then a bright two-note chime. */
 export function craftSound(steps = 1) {
   const knocks = Math.min(4, Math.max(2, steps));

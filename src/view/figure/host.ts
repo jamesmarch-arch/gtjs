@@ -4,6 +4,7 @@ import { MACHINES, RECIPES, itemName, recipesForMachine } from '../../sim/data';
 import type { RecipeDef } from '../../sim/data/types';
 import { steamCapacity } from '../../sim/nets';
 import { euCapacity } from '../../sim/power';
+import { jobOn, jobProgress } from '../../sim/jobs';
 import { asRun, count, setRecipe, type MachineState, type World } from '../../sim/world';
 
 export interface FigureMachine {
@@ -49,6 +50,16 @@ export function figureMachine(w: World, m: MachineState): FigureMachine {
       name: def.name, enabled: m.enabled, active: m.burn > 0, running: m.burn > 0, stalled: m.stalled, progress: 0, steam,
       recipe: null, recipes: [], input: fuel, output: 0, energy: 0, lowVolts: false, fuel,
       burn: m.burnMax ? m.burn / m.burnMax : 0, burning: m.burn > 0, venting: m.burn > 0 && steam > 0.995, rate: 0, mode: m.mode,
+    };
+  }
+  // a crafting CPU runs while it has a job: its storage meter fills with the job's progress, and it blinks busier while
+  // the job is going than while it is paused
+  if (def.cpu) {
+    const job = jobOn(w, m);
+    return {
+      name: def.name, enabled: m.enabled, active: !!job, running: !!job, stalled: !!job?.paused, progress: job ? jobProgress(job) : 0, steam,
+      recipe: null, recipes: [], input: 0, output: 0, energy: 0, lowVolts: false, burn: 0, burning: false, venting: false, fuel: 0,
+      rate: m.rate, mode: m.mode,
     };
   }
   // generators, batteries and transformers have no recipe: they run while EU flows through them

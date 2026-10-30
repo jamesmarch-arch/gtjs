@@ -61,6 +61,7 @@ src/
     data/     items, recipes, machines, quests: plain data, no code
     world.ts  floors (the factory floor and compact floors' inner floors), placed machines, storage
     nets.ts   steam nets (connected components of pipes, across floors through ports); power.ts: EU nets
+    autocraft.ts  the crafting planner; jobs.ts: crafting jobs that carry a plan out on machines
     tick.ts   recipe processing, quest progress
     save.ts   localStorage + JSON export/import
   view/
@@ -267,8 +268,8 @@ a limit: a compact floor can hold compact floors.
 **Autocrafting: the planner.** Crafting on demand, after Applied Energistics 2 and Refined Storage, but items stay in
 the one storage: ask for 16 circuits and the game works out every hand craft and machine run it takes. The first piece
 is the planner, `planCraft(target, count, from, data?)` in `src/sim/autocraft.ts`: pure, it reads `from.storage` and
-the machines on the floor (`from.machines`; a World fits) and changes nothing. The terminal (below) asks it; a job
-runner that carries out machine steps comes next, on top of it. It returns:
+the machines on the floor (`from.machines`; a World fits) and changes nothing. The terminal (below) asks it, and a
+crafting job (further below) carries a plan out. It returns:
 
 - `steps`, in order (run them top to bottom): a hand craft or a machine recipe, its runs, everything it uses and
   makes, the tools it needs, the machine that runs it and its time there (overclocked as it would run), and `depth` in
@@ -291,8 +292,9 @@ cheapest (fewest items taken from storage or gathered, tools included), then qui
 go to hand crafts before machines, then by recipe id, so the same storage always gives the same plan. The choice is
 greedy, one need at a time. A whole EBF with every machine built plans in a few tens of milliseconds.
 
-Not modelled yet: fuel and power (the coal furnace's coal, boilers' steam, EU), machines that are busy, and running
-steps on several machines at once (`totals.ticks` is all machine time, one after another). Steps that make the same
+The planner doesn't model fuel and power (the coal furnace's coal, boilers' steam, EU), machines that are busy, or
+running steps on several machines at once (`totals.ticks` is all machine time, one after another): a job deals with
+those as it runs. Steps that make the same
 thing in different places in the tree stay separate steps; `totals.byRecipe` adds them up.
 
 **Autocrafting: the terminal.** The ME Terminal (`src/sim/data/me.ts`) is a 1 x 1 LV block, crafted at the workbench in
@@ -312,5 +314,48 @@ sample, and the panel needs the width for the plan. `MachineDef.terminal` marks 
   The plan is cached until storage, the machines or the ask change (the panel redraws ten times a second).
 - *Craft now.* When the plan is all hand crafts with nothing missing or blocked, Craft runs it: `craftNow(w, item, n)`
   plans again and runs each step through the workbench's `craft()`, in order, all or nothing (storage and stats go
-  back if a step fails), with a sound and a toast. `whyNotNow(plan)` says why not otherwise. Plans with machine steps
-  show them, with the button off: running machine steps is the crafting jobs task.
+  back if a step fails), with a sound and a toast. `whyNotNow(plan)` says why not otherwise.
+- *Craft as a job.* A plan with machine steps starts as a crafting job instead (below), when nothing in it is blocked
+  and a Crafting CPU is free (`whyNotJob`); it may have things to gather, and waits for them. The jobs under way are
+  listed over the plan: each with its progress bar, time so far, why it is paused, a Cancel button, and every step
+  with its runs done and where it stands (done, after which steps, on which machines, or what holds it up).
+
+**Autocrafting: crafting jobs.** `src/sim/jobs.ts` carries a plan out over time, ticking with the world (after the
+machines, so a machine that finished a run this tick can be handed back and lent again at once).
+- *The Crafting CPU* (`src/sim/data/me.ts`, `MachineDef.cpu`) is a 1 x 1 LV block like the terminal (a placeholder
+  workbench recipe: an LV hull, four circuits, copper wire), on an EU net but drawing nothing. Each CPU on any floor
+  runs one job at a time, so more CPUs run more jobs at once. It is switched on when placed; switched off, it takes no
+  job and its job pauses. A job whose CPU is removed moves to a free one, or pauses until there is one. Its figure runs
+  (blades, fan) while it has a job, its meter is the job's progress, and it blinks busier while the job is going than
+  while it is paused; its lamp on the floor is green while the job is going.
+- *Machines opt in.* Every machine that runs recipes has an "Available for autocrafting" switch under its title in its
+  GUI (figure or plain panel alike), saved as `autocraft`. Jobs borrow only opted-in machines, on any floor; a machine
+  that isn't opted in keeps working for the player whatever a job needs. An opted-in machine is borrowed only when idle
+  (no run under way), so one the player runs is taken between runs.
+- *Steps.* `startJob(w, item, n)` plans afresh and copies the steps, each with `after`: the earlier steps that make
+  something it uses (inputs or tools). A step goes when those are done, so independent branches run side by side, and a
+  step never takes what an earlier step's user still needs (the plan's order guarantees enough once they are done).
+  A hand step crafts as many runs as storage allows at once, and the rest when it can. A machine step lends its runs
+  to the idle opted-in machines that can run its recipe (any machine of the right kind and power, not only the one the
+  plan named) and are powered for it: an EU machine on a net with enough voltage for the recipe as that machine runs
+  it, a steam machine on a net with steam or a lit boiler. The runs are split as evenly as they go across all of them.
+- *A lease* (`MachineState.job`) sets the machine to the step's recipe, switched on, for exactly its runs: it starts no
+  run beyond them. Each run counts towards its step as it finishes, so a machine removed mid-step keeps what it did
+  (its run under way gives its inputs back, as any removal does) and the rest of its runs go back to the step. Then it
+  is handed back with the recipe and switch the player left it with. A player who changes its recipe or switches it off
+  takes it back: the lease ends there.
+- *Pausing.* Each step says why its runs can't go out (`wait`): no machine of its kind is available for autocrafting,
+  every one is busy, the idle one has no power or too low a voltage, or inputs are short ("2 more Iron Ore (gather
+  it)"). A job with nothing going this tick is paused with the first step's reason, and goes on by itself when it can.
+  Nothing is reserved: another job or the player can take what a job planned on, and the job waits for more.
+- *Cancel* hands every borrowed machine back (a run under way is given up and its inputs returned) and drops the job;
+  what it made stays in storage. A finished job makes a toast and a three-note chime.
+- *Saves* are format 6: `jobs` (each step with `after`, runs done and its reason) and `nextJob`, a machine's
+  `autocraft`, and a lent machine's lease. A lease whose job is gone (dropped on load because this version doesn't know
+  one of its recipes or items) hands the machine back. Format 5 and older load with no jobs and no machine opted in.
+- Tests: `src/sim/jobs.test.ts` (ore macerated then smelted on two machines, a step split across machines, waiting for
+  a busy machine, a machine not opted in left alone, a pause for a missing input that resumes, a machine on an inner
+  floor, hand steps, cancel, CPUs, save and load mid-job), the format 6 cases in `src/sim/save.test.ts`, and the jobs
+  list in `src/view/ui/terminal.test.ts`.
+- Not yet: the terminal and CPUs draw no power; jobs have no priority over each other; a job is not re-planned when
+  storage changes under it (it waits instead).
