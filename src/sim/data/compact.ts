@@ -4,9 +4,9 @@
 import type { CraftDef, ItemDef, MachineDef, Stack } from './types';
 
 const SIZES = [
-  { size: 5, tier: 'steam' },
-  { size: 9, tier: 'lv' },
-  { size: 13, tier: 'mv' },
+  { size: 5, tier: 'steam', figure: 'compact_floor_small' },
+  { size: 9, tier: 'lv', figure: 'compact_floor_medium' },
+  { size: 13, tier: 'mv', figure: 'compact_floor_large' },
 ] as const;
 
 const id = (size: number) => `compact_floor_${size}`;
@@ -14,8 +14,8 @@ const name = (size: number) => `Compact Floor (${size}×${size})`;
 
 export const items: ItemDef[] = SIZES.map(({ size }) => ({ id: id(size), name: name(size) }));
 
-export const machines: MachineDef[] = SIZES.map(({ size }) => ({
-  id: id(size), name: name(size), short: `COMPACT ${size}`, kind: 'compact_floor', power: 'none', footprint: [1, 1], compact: { size },
+export const machines: MachineDef[] = SIZES.map(({ size, figure }) => ({
+  id: id(size), name: name(size), short: `COMPACT ${size}`, kind: 'compact_floor', power: 'none', footprint: [1, 1], compact: { size }, figure,
 }));
 
 const s = (item: string, count = 1): Stack => ({ item, count });

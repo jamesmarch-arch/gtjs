@@ -452,7 +452,7 @@ export class Floor {
       for (let x = -1; x <= lv.floor.w; x++) for (let y = -1; y <= lv.floor.h; y++) {
         if (onFloor(lv, x, y)) continue;
         const port = ports.get(`${x},${y}`);
-        items.push({ depth: tileDepth(x, y), draw: () => (port ? this.drawPort(port) : this.drawWall(x, y)) });
+        items.push({ depth: tileDepth(x, y), draw: () => (port ? this.drawPort(port, portTurn(lv, port)) : this.drawWall(x, y)) });
       }
     }
     const ghost = this.ghost(w, lv);
@@ -522,7 +522,7 @@ export class Floor {
     if (isPort(t.what)) { // a port: in the wall tile it would go in, when it can
       if (canBuild(w, t.what, x, y, lv)) return null;
       const port: PortState = { x, y, carries: t.what === 'steam_port' ? 'steam' : 'eu' }, [u, v] = this.rot(x + 0.5, y + 0.5);
-      return { depth: u + v + 0.01, draw: () => { this.ctx.globalAlpha = 0.6; this.drawPort(port); this.ctx.globalAlpha = 1; } };
+      return { depth: u + v + 0.01, draw: () => { this.ctx.globalAlpha = 0.6; this.drawPort(port, isInner(lv) ? portTurn(lv, port) : 0); this.ctx.globalAlpha = 1; } };
     }
     const def = MACHINES.get(t.what)!;
     const fake: MachineState = { uid: 'ghost', def: def.id, x, y, recipe: null, enabled: false, active: null, progress: 0, stalled: false, steam: 0, burn: 0, burnMax: 0, eu: 0, rate: 0, mode: 'down' };
@@ -532,8 +532,9 @@ export class Floor {
 
   /** The figure's sprite for the current view, once it has loaded. A figure's first sprite brings the other three
    * sides after it, so turning the camera doesn't show plain boxes while they load. */
-  private spriteFor(figure: string): Sprite | null {
-    const keyOf = (v: number) => (v ? `${figure}@${v}` : figure), key = keyOf(this.view);
+  private spriteFor(figure: string, turn = 0): Sprite | null {
+    // a thing turned `turn` quarter turns (its front from +x toward +y) is seen from the side the view sees, less its turn
+    const keyOf = (v: number) => (v ? `${figure}@${v}` : figure), key = keyOf((((this.view - turn) % 4) + 4) % 4);
     const load = (k: string) => { this.sprites.set(k, null); return loadSprite(k).then((s) => this.sprites.set(k, s)); };
     if (!this.sprites.has(key)) void load(key).then(() => { for (let v = 0; v < 4; v++) if (!this.sprites.has(keyOf(v))) void load(keyOf(v)); });
     return this.sprites.get(key)!;
@@ -541,8 +542,14 @@ export class Floor {
 
   /** Where a sprite goes: on its tile at rest; between views, upright as in the nearest view (bending it onto the
    * turned tile would shear it sideways), moved to where the middle of its tile is now. */
-  private placeSprite(sprite: Sprite, x: number, y: number, fw: number, fh: number): DOMMatrix {
-    const onTile = () => spriteTransform(sprite, this.iso(x, y), this.iso(x + fw, y), this.iso(x, y + fh));
+  private placeSprite(sprite: Sprite, x: number, y: number, fw: number, fh: number, turn = 0): DOMMatrix {
+    // the sprite's corners (0, 0), (1, 0) and (0, 1) of its own tile, turned with it about the middle of the tile
+    const corner = (a: number, b: number) => {
+      let [p, q] = [a - 0.5, b - 0.5];
+      for (let i = 0; i < turn; i++) [p, q] = [-q, p];
+      return this.iso(x + (p + 0.5) * fw, y + (q + 0.5) * fh);
+    };
+    const onTile = () => spriteTransform(sprite, corner(0, 0), corner(1, 0), corner(0, 1));
     const a = this.angle, r = Math.round(a);
     if (a === r) return onTile();
     const now = this.iso(x + fw / 2, y + fh / 2);
@@ -581,8 +588,20 @@ export class Floor {
     this.drawSolid(this.tileRect(x, y), WALL_H, WALL, '', 0, false);
   }
 
-  /** A port in the wall, a little taller than the wall: bronze for steam, steel with a yellow band for EU. */
-  private drawPort(p: PortState) {
+  /** A port in the wall, facing into its floor: its figure's sprite, or (until that loads) a plain block a little
+   * taller than the wall, bronze for steam, steel with a yellow band for EU. */
+  private drawPort(p: PortState, turn: number) {
+    const sprite = this.spriteFor(p.carries === 'steam' ? 'floor_port_steam' : 'floor_port_eu', turn);
+    if (sprite) {
+      const ctx = this.ctx;
+      ctx.save();
+      ctx.setTransform(ctx.getTransform().multiply(this.placeSprite(sprite, p.x, p.y, 1, 1, turn)));
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(sprite.img, 0, 0);
+      ctx.restore();
+      return;
+    }
     const steam = p.carries === 'steam', rect = this.tileRect(p.x, p.y), i = 0.08;
     this.drawSolid(rect, PORT_H, steam ? BRONZE : STEEL, steam ? 'STEAM' : 'EU', i, false);
     if (steam) return;
@@ -743,6 +762,11 @@ export class Floor {
 
 // on the floor itself (not on an inner floor's wall)
 const onFloor = (lv: Level, x: number, y: number) => x >= 0 && y >= 0 && x < lv.floor.w && y < lv.floor.h;
+
+// which way a port faces: into its floor, from the wall it is in (quarter turns from +x toward +y)
+function portTurn(lv: Level, p: PortState): number {
+  return p.x < 0 ? 0 : p.y < 0 ? 1 : p.x >= lv.floor.w ? 2 : 3;
+}
 
 export function machineStatus(m: MachineState): 'off' | 'working' | 'burning' | 'stalled' | 'idle' {
   const def = MACHINES.get(m.def)!;

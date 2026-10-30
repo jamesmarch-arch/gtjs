@@ -68,8 +68,7 @@ describe('machine art', () => {
     const files = new Set(Object.keys(import.meta.glob(['/public/figures/*.html', '/public/sprites/*'])).map((p) => p.replace('/public/', '')));
     const has = (path: string) => files.has(path);
     const sprites = (f: string) => ['', '@1', '@2', '@3'].flatMap((v) => [`sprites/${f}${v}.png`, `sprites/${f}${v}.json`]);
-    // compact floors draw as plain boxes until their figures are made (the roadmap's art task)
-    const missing = machines.filter((m) => !m.compact).filter((m) => !m.figure || ![`figures/${m.figure}.html`, ...sprites(m.figure)].every(has));
+    const missing = machines.filter((m) => !m.figure || ![`figures/${m.figure}.html`, ...sprites(m.figure)].every(has));
     expect(missing.map((m) => m.id)).toEqual([]);
   });
 });
