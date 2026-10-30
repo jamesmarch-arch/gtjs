@@ -5,7 +5,7 @@
 // with each step's progress, why a job is paused, and a button to cancel it.
 import { CRAFTS, ITEMS, MACHINES, RECIPES, itemName } from '../../sim/data';
 import type { Stack } from '../../sim/data/types';
-import { planFor, whyNotNow, type CraftPlan, type PlanStep } from '../../sim/autocraft';
+import { planFor, planState, whyNotNow, type CraftPlan, type PlanStep } from '../../sim/autocraft';
 import { jobProgress, lentTo, stepDone, stepName, whyNotJob, type Job, type JobStep } from '../../sim/jobs';
 import { TICKS_PER_SECOND, allMachines, count, type World } from '../../sim/world';
 import { icon } from './icons';
@@ -56,7 +56,7 @@ export function duration(ticks: number): string {
 // the planner is quick, but the panel redraws ten times a second: plan again only when something it reads changes
 let memo: { key: string; plan: CraftPlan } | null = null;
 function planOf(w: World, item: string, n: number): CraftPlan {
-  const key = `${item}|${n}|${JSON.stringify(w.storage)}|${allMachines(w).map((m) => `${m.def}:${m.holding ?? ''}`).sort().join()}`;
+  const key = `${item}|${n}|${JSON.stringify(w.storage)}|${planState(w)}`;
   if (memo?.key !== key) memo = { key, plan: planFor(w, item, n) };
   return memo.plan;
 }
@@ -93,7 +93,8 @@ function stepRow(s: PlanStep, i: number): string {
       <span class="n">${i + 1}</span>
       <div><div class="makes">${icon(s.output.item)}<b>${num(s.output.count)} ${esc(itemName(s.output.item))}</b> <span class="how">${how}</span></div>
         <div class="uses muted">${uses ? `from ${uses}` : ''}</div>
-        ${s.blocked ? `<div class="why">Blocked: ${esc(s.blocked)}</div>` : ''}</div>
+        ${s.blocked ? `<div class="why">Blocked: ${esc(s.blocked)}</div>` : ''}
+        ${s.idle ? `<div class="why">A job can't use it yet: ${esc(s.idle)}</div>` : ''}</div>
     </li>`;
 }
 
@@ -103,6 +104,8 @@ function verdict(plan: CraftPlan): { cls: string; text: string } {
   const gather = (plan.average ? 'about ' : '') + plan.missing.map((s) => `${num(s.count)} ${itemName(s.item)}`).join(', ');
   if (plan.missing.length && !machines) return { cls: 'wait', text: `Gather first: ${gather}.` };
   if (plan.missing.length) return { cls: 'wait', text: `Gather first: ${gather}. A job can start now and wait for them.` };
+  const idle = [...new Set(plan.steps.flatMap((s) => s.idle ?? []))];
+  if (idle.length) return { cls: 'wait', text: `Every machine it needs is built, but a job can’t use ${idle.length === 1 ? 'one' : `${idle.length}`} yet: ${idle.join('; ')}.` };
   if (machines) return { cls: 'ok', text: `Every machine it needs is built: ${plan.totals.machineRuns} machine run${plan.totals.machineRuns === 1 ? '' : 's'}, ${duration(plan.totals.ticks)} of machine time. Start it as a crafting job: machines available for autocrafting run its steps.${plan.average ? ' Some steps rest on chance, so these are averages: a job runs them until it has enough.' : ''}` };
   return { cls: 'ok', text: `Ready: ${plan.totals.handCrafts} hand craft${plan.totals.handCrafts === 1 ? '' : 's'}, all from storage.` };
 }

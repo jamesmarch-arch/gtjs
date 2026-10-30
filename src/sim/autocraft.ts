@@ -1,17 +1,24 @@
 // Autocrafting: plan how to make N of an item from what storage holds, hand crafts and the machines on the floor.
 // Planning is pure: planCraft changes nothing. The terminal shows a plan; craftNow runs one made of hand crafts only, and
 // a crafting job (src/sim/jobs.ts) carries out one with machine steps over time.
-import { CRAFTS, GATHERABLE, MACHINES, RECIPES, itemName, recipePower } from './data';
+import { CRAFTS, GATHERABLE, MACHINES, RECIPES, itemName, recipePower, recipesForMachine } from './data';
 import type { CraftDef, MachineDef, RecipeDef, Stack } from './data/types';
 import { craft } from './craft';
+import { netOf, netSteam } from './nets';
+import { euNets } from './power';
 import { overclock } from './tiers';
-import { allMachines, type World } from './world';
+import { allMachines, asRun, type MachineState, type World } from './world';
 
 /** What the plan starts from: a World fits. Only machines on the floor count as built (not ones in storage). */
 export interface PlanFrom {
   storage: Record<string, number>;
-  machines: readonly { def: string; holding?: string }[];
+  machines: readonly PlanMachine[];
+  /** What stands between a built machine and a crafting job running this recipe on it, or null when nothing does. Left
+   *  out, every built machine can be used. */
+  idle?: (m: PlanMachine, r: RecipeDef) => string | null;
 }
+
+export interface PlanMachine { def: string; holding?: string; autocraft?: boolean }
 
 /** The game data the planner reads; tests swap in their own. Defaults to the game's. */
 export interface PlanData {
@@ -37,6 +44,7 @@ export interface PlanStep {
   until?: Stack[]; // average steps: what the plan needs out of it, whole items (a job stops when it has them all)
   depth: number; // 0 for the step that makes the target; an ingredient's step is one deeper than its user's
   blocked?: string; // why it can't run now (its machine isn't built)
+  idle?: string; // why a crafting job can't use its machine yet (built, but not available for autocrafting, or no power)
 }
 
 /** Something the plan can't make now, and why. The plan carries on as if it were there. */
@@ -82,6 +90,7 @@ interface Way {
   machine?: MachineDef;
   ticksPerRun: number;
   blocked?: string;
+  idle?: string;
 }
 
 /** Mirrors `recipesForMachine` for any data: the machine's kind, on its kind of power, hot enough. */
@@ -89,36 +98,64 @@ function canRun(def: MachineDef, r: RecipeDef): boolean {
   return r.machine === def.kind && recipePower(r) === def.power && (r.heat ?? 0) <= (def.heat ?? 0);
 }
 
+/** Recipes with the same key are the same work on different tiers: the stone, steam and LV crusher's gravel. */
+export const sameWork = (r: RecipeDef) => JSON.stringify([r.machine, r.inputs, r.outputs, r.holds, r.heat ?? 0]);
+
+/** What a machine lacks to run a recipe now: power at a high enough voltage, or steam. Null when it has it. */
+export function unpowered(w: World, m: MachineState, r: RecipeDef): string | null {
+  if (r.euPerTick !== undefined) {
+    const net = euNets(w).find((n) => n.machines.includes(m)), volts = net?.voltage || m.lastVolts || 0, need = asRun(m, r).perTick;
+    if (!volts) return 'no power';
+    if (volts < need) return `${volts} V, and it needs ${need} V`;
+  } else if (r.steamPerTick !== undefined) {
+    const net = netOf(w, m);
+    if (!net || !(netSteam(net) >= r.steamPerTick || net.machines.some((b) => MACHINES.get(b.def)!.boiler && b.enabled))) return 'no steam';
+  }
+  return null;
+}
+
+/** Why a crafting job can't use this machine for this recipe yet, in words that say what to do, or null when it can. */
+function whyIdle(w: World, m: MachineState, r: RecipeDef): string | null {
+  const name = MACHINES.get(m.def)!.name, power = unpowered(w, m, r);
+  if (m.autocraft) return power && `the ${name} has ${power}`;
+  return `open the ${name} and switch on Available for autocrafting${power ? `; it also has ${power}` : ''}`;
+}
+
 const ticksOn = (def: MachineDef, r: RecipeDef) => (r.euPerTick === undefined ? r.ticks : overclock(r.euPerTick, r.ticks, def.tier ?? 'LV').ticks);
 
 /** Every way to make each item, hand crafts first, then machine recipes, each by id. Where an item has ways that are
  *  sure (a hand craft, or a recipe's guaranteed main output), those are its ways. Where it has none, it comes by chance:
  *  any recipe with it as a chanced output is a way, planned on its average yield. The same recipe on different tiers (the
- *  stone, steam and LV crusher's) is one way, on the fastest machine built, so tiers don't multiply the plan's trials. */
+ *  stone, steam and LV crusher's) is one way, so tiers don't multiply the plan's trials. It goes on the fastest machine a
+ *  crafting job can use; failing that, the fastest built, opted-in ones first, with what to switch on. */
 function waysToMake(data: PlanData, from: PlanFrom): { ways: Map<string, Way[]>; besides: Map<string, string[]> } {
   const sure = new Map<string, Way[]>(), chance = new Map<string, Way[]>(), besides = new Map<string, string[]>(); // item -> recipes it comes from as a bonus
   const add = (to: Map<string, Way[]>, w: Way) => to.set(w.item, [...(to.get(w.item) ?? []), w]);
   for (const c of [...data.crafts].sort((a, b) => a.id.localeCompare(b.id)))
     add(sure, { kind: 'craft', id: c.id, item: c.output.item, per: c.output.count, inputs: c.inputs, tools: c.tools ?? [], extras: [], ticksPerRun: 0 });
-  const machines = [...data.machines], built = new Set(from.machines.map((m) => m.def)), held = new Set(from.machines.map((m) => m.holding));
+  const machines = [...data.machines], held = new Set(from.machines.map((m) => m.holding));
   const families = new Map<string, RecipeDef[]>();
   for (const r of [...data.recipes].sort((a, b) => a.id.localeCompare(b.id))) {
-    const key = JSON.stringify([r.machine, r.inputs, r.outputs, r.holds, r.heat ?? 0]);
+    const key = sameWork(r);
     families.set(key, [...(families.get(key) ?? []), r]);
   }
   for (const family of families.values()) {
     const options = family.flatMap((r) => machines.filter((d) => canRun(d, r)).map((d) => ({ r, d, ticks: ticksOn(d, r) })));
-    // quickest first, of the machines built; with none built, the tier to build first: the slowest, then the next
-    const ready = options.filter((o) => built.has(o.d.id)).sort((a, b) => a.ticks - b.ticks || a.d.id.localeCompare(b.d.id));
+    // of the machines built: those a job can use, then those opted in, then the rest, quickest first
+    const ready = options.flatMap((o) => from.machines.filter((m) => m.def === o.d.id).map((m) => {
+      const idle = from.idle?.(m, o.r) ?? undefined;
+      return { ...o, idle, rank: !idle ? 0 : m.autocraft ? 1 : 2 };
+    })).sort((a, b) => a.rank - b.rank || a.ticks - b.ticks || a.d.id.localeCompare(b.d.id));
+    // with none built, the tier to build first: the slowest, then the next
     options.sort((a, b) => b.ticks - a.ticks || a.d.id.localeCompare(b.d.id));
-    const best = ready[0] ?? options[0];
+    const best = ready[0] ?? options[0], idle = ready[0]?.idle;
     const r = best?.r ?? family[0], [main] = r.outputs;
     const blocked = ready.length ? undefined
       : options.length ? `needs ${options.map(({ d }) => `${/^([AEIOU]|LV|MV)/.test(d.name) ? 'an' : 'a'} ${d.name}`).join(' or ')}, and none is built`
       : `no machine can run ${r.id}`;
     const way = (o: Stack): Way => ({
       kind: 'machine', id: r.id, item: o.item, per: o.count * (o.chance ?? 1), ...(o.chance !== undefined || o !== main ? { average: true } : {}), inputs: r.inputs,
-      tools: r.holds && !held.has(r.holds) ? [r.holds] : [], extras: r.outputs.filter((x) => x !== o), machine: best?.d, ticksPerRun: best?.ticks ?? r.ticks, blocked,
+      tools: r.holds && !held.has(r.holds) ? [r.holds] : [], extras: r.outputs.filter((x) => x !== o), machine: best?.d, ticksPerRun: best?.ticks ?? r.ticks, blocked, ...(idle ? { idle } : {}),
     });
     if (main && main.chance === undefined) add(sure, way(main));
     for (const o of r.outputs) if (o.chance !== undefined) add(chance, way(o));
@@ -144,6 +181,7 @@ class Ledger {
   blocked: Blocked[] = [];
   tools = new Set<string>();
   chancy = new Set<string>(); // what the made pool holds by chance, on average (not sure to be there)
+  idle = 0; // steps on machines a crafting job can't use yet
   cost = 0; // items taken from storage plus raw items to gather: what "cheapest" compares
   ticks = 0;
   crafts = 0;
@@ -174,15 +212,16 @@ class Ledger {
     p.blocked.push(...this.blocked);
     for (const t of this.tools) p.tools.add(t);
     for (const c of this.chancy) p.chancy.add(c);
+    p.idle += this.idle;
     p.cost += this.cost;
     p.ticks += this.ticks;
     p.crafts += this.crafts;
   }
 
-  /** How good this trial is, lowest first: fewest blocked, then doable without gathering, then cheapest, then
-   *  quickest, then fewest hand crafts. */
+  /** How good this trial is, lowest first: fewest blocked, then doable without gathering, then fewest steps a job couldn't
+   *  run yet, then cheapest, then quickest, then fewest hand crafts. */
   score(): number[] {
-    return [this.blocked.length, this.missing.size ? 1 : 0, this.cost, this.ticks, this.crafts];
+    return [this.blocked.length, this.missing.size ? 1 : 0, this.idle, this.cost, this.ticks, this.crafts];
   }
 }
 
@@ -228,7 +267,8 @@ function setGoals(steps: PlanStep[], storage: Record<string, number>, target: st
  * - Tools a step needs are made once if storage has none, and never used up.
  * - Where there are several ways, it takes the one that can be done now, then the cheapest (fewest items from storage
  *   and from gathering), then the quickest; ties go to hand crafts before machines, then by recipe id.
- * - Machine recipes count only on machines built on the floor; others are planned but marked blocked, with why.
+ * - Machine recipes count only on machines built on the floor; others are planned but marked blocked, with why. A step
+ *   goes on a machine a job can use where it can; where none can, it says what to switch on (`idle`).
  * - Gatherable items are never made: what storage lacks of them is missing. A recipe cycle is blocked, never looped.
  */
 export function planCraft(target: string, count: number, from: PlanFrom, data: Partial<PlanData> = {}): CraftPlan {
@@ -298,8 +338,9 @@ export function planCraft(target: string, count: number, from: PlanFrom, data: P
       kind: way.kind, recipe: way.id, runs, output: { item: way.item, count: way.per * runs }, inputs: way.inputs.map(all), tools: way.tools,
       ...(way.machine ? { machine: way.machine.id } : {}), ticks: way.ticksPerRun * runs,
       byproducts: way.extras.filter((s) => s.chance === undefined).map(all), chanced: way.extras.filter((s) => s.chance !== undefined).map(all),
-      depth, ...(way.blocked ? { blocked: way.blocked } : {}), ...(way.average ? { average: true } : {}),
+      depth, ...(way.blocked ? { blocked: way.blocked } : {}), ...(way.average ? { average: true } : {}), ...(way.idle ? { idle: way.idle } : {}),
     });
+    if (way.idle) l.idle++;
     if (way.blocked) l.blocked.push({ item: way.item, count: n, why: way.blocked, recipe: way.id });
     put(l, way.item, way.per * runs);
     // a step that rests on chance runs anyway, and what else it finds is counted too, or two finds of one sifter would
@@ -342,6 +383,8 @@ export function planCraft(target: string, count: number, from: PlanFrom, data: P
       m.ticks += s.ticks;
     }
   }
+  byproducts.delete(target); // the target is what it asked for, not something made besides
+  chanced.delete(target);
   return {
     target, count, ok: !root.missing.size && !root.blocked.length, steps: root.steps, missing: stacks(root.missing), blocked: root.blocked,
     fromStorage: stacks(fromStorage), leftovers: stacks(leftovers), tools: [...root.tools].sort(),
@@ -351,7 +394,12 @@ export function planCraft(target: string, count: number, from: PlanFrom, data: P
 
 /** The plan for `count` more of `target` from what this world holds, with every machine built on any floor. */
 export function planFor(w: World, target: string, count: number): CraftPlan {
-  return planCraft(target, count, { storage: w.storage, machines: allMachines(w) });
+  return planCraft(target, count, { storage: w.storage, machines: allMachines(w), idle: (m, r) => whyIdle(w, m as MachineState, r) });
+}
+
+/** Changes whenever a plan from this world might: what the machines hold, and which recipes jobs can run on which. */
+export function planState(w: World): string {
+  return allMachines(w).map((m) => `${m.def}:${m.holding ?? ''}:${m.autocraft ? recipesForMachine(MACHINES.get(m.def)!).map((r) => (unpowered(w, m, r) ? 0 : 1)).join('') : '-'}`).sort().join();
 }
 
 /** Why a plan can't be crafted now, all at once by hand, or null when it can. Machine steps run as a crafting job. */

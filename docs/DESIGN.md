@@ -344,7 +344,10 @@ in the pool for later steps too (or the two finds of one sifter would each pay f
 half as much gravel again as it does), and a walk over the finished steps (`setGoals`) says in whole items what the plan
 needs out of each average step (`until`). The same recipe on several tiers is one way, on the fastest machine built (with
 none built, the tier to build first, all of them named when it is blocked), so tiers don't multiply the trials below.
-A guaranteed extra is still no way to make something (creosote, only ever beside coke). A recipe that `holds`
+A step goes on a machine a crafting job can use (`planFor` passes `idle`: opted in, with power or a net that can run the
+recipe), the fastest of those; only where none can does it fall back to a machine that is built, opted-in ones first, and
+say what to switch on (`PlanStep.idle`, shown by the step and in the summary). Ways that would sit idle lose to other ways
+of making the thing that need no more gathering. A guaranteed extra is still no way to make something (creosote, only ever beside coke). A recipe that `holds`
 something asks for one as a tool, unless a machine built already holds it. Gatherable items are never made, only gathered. A hand tool a step needs is made
 once if storage has none, and stays. The target is always made, not taken from storage. A machine recipe counts on a
 built machine (any that `recipesForMachine` says can run it, the fastest); without one it is still planned, but
@@ -413,6 +416,10 @@ machines, so a machine that finished a run this tick can be handed back and lent
   in turn, down to "3 more Cobblestone (gather it)". A job's progress counts an average step by what it has found. The
   terminal shows it as finds so far of finds wanted. A recipe that `holds` something only goes to a machine that has one
   or can take one from storage.
+- *Moving tier.* A step runs on the tier the plan chose. If nothing there can take it any more (no machine opted in or with
+  power) and no machine lent to it still has power, it moves to the quickest other tier that does the same work and has one
+  (`moveTier`; `sameWork` says which recipes those are): runs done stay done, a run under way on a machine that lost its power gives
+  its inputs back. It stays on its tier while that tier has a usable machine, even a busy one, so it isn't split onto a slower one.
 - *A lease* (`MachineState.job`) sets the machine to the step's recipe, switched on, for exactly its runs: it starts no
   run beyond them. Each run counts towards its step as it finishes, so a machine removed mid-step keeps what it did
   (its run under way gives its inputs back, as any removal does) and the rest of its runs go back to the step. Then it
@@ -434,5 +441,4 @@ machines, so a machine that finished a run this tick can be handed back and lent
   floor, hand steps, cancel, CPUs, save and load mid-job), the format 6 cases in `src/sim/save.test.ts`, and the jobs
   list in `src/view/ui/terminal.test.ts`.
 - Not yet: the terminal and CPUs draw no power; jobs have no priority over each other; a job is not re-planned when
-  storage changes under it (it waits, or asks its earlier steps for more). A step that rests on chance runs on the tier
-  the plan chose, not any tier of the machine.
+  storage changes under it (it waits, or asks its earlier steps for more).

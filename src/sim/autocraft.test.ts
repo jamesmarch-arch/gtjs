@@ -3,7 +3,7 @@ import { craftNow, planCraft, planFor, whyNotNow, type CraftPlan, type PlanData 
 import { craft } from './craft';
 import { MACHINES, RECIPES, recipesForMachine } from './data';
 import type { CraftDef, RecipeDef, Stack } from './data/types';
-import { count, emptyWorld, placeMachine } from './world';
+import { count, emptyWorld, placeMachine, placePipe } from './world';
 
 const on = (storage: Record<string, number>, ...machines: string[]) => ({ storage, machines: machines.map((def) => ({ def })) });
 const asRecord = (stacks: Stack[]) => Object.fromEntries(stacks.map((s) => [s.item, s.count]));
@@ -281,7 +281,7 @@ describe('planning on chance', () => {
     expect(recipes(p)).toEqual(['sift_gravel x5']);
     const q = planCraft('iron_ore', 1, on({ gravel: 20 }, 'stone_sifter'));
     expect(recipes(q)).toEqual(['sift_gravel x4']);
-    expect(asRecord(q.chanced)).toMatchObject({ iron_ore: 0.2 });
+    expect(asRecord(q.chanced)).toEqual({ coal: 1.2, copper_ore: 1.2, tin_ore: 0.8 }); // what else, and not the target itself
     expect(q.leftovers).toEqual([]); // not sure to be there, so not a leftover
   });
 
@@ -316,6 +316,12 @@ describe('planning on chance', () => {
     expect(planCraft('gravel', 1, on({ cobblestone: 1 })).blocked).toEqual([expect.objectContaining({ why: 'needs a Stone Crusher or a Steam Crusher or an LV Crusher, and none is built' })]);
   });
 
+  it('never lists the target among what is made besides', () => {
+    const p = planCraft('iron_ore', 8, on({ gravel: 40 }, 'stone_sifter'));
+    expect(p.chanced.map((c) => c.item)).not.toContain('iron_ore');
+    expect(p.chanced.length).toBeGreaterThan(0);
+  });
+
   it('asks for a sapling once for a tree farm that holds none, and none for one that does', () => {
     const empty = planCraft('wood_planks', 4, on({ dirt: 8 }, 'tree_farm', 'stone_sifter'));
     expect(recipes(empty)).toEqual(['sift_dirt x4', 'grow_tree x2']);
@@ -336,6 +342,57 @@ describe('planning on chance', () => {
 const s = (item: string, count = 1): Stack => ({ item, count });
 const craftDef = (id: string, inputs: Stack[], output: Stack): CraftDef => ({ id, group: 'parts', inputs, output });
 const recipe = (id: string, machine: string, inputs: Stack[], outputs: Stack[]): RecipeDef => ({ id, machine, inputs, outputs, ticks: 100, steamPerTick: 2 });
+
+describe('planning for the machines a job can use', () => {
+  // a boiler piped to opted-in steam tiers, and LV tiers with no power that aren't opted in
+  function steamAndDeadLv() {
+    const w = emptyWorld();
+    w.storage = { cobblestone: 200 };
+    placeMachine(w, 'bronze_boiler', 0, 0).enabled = true;
+    placePipe(w, 1, 0);
+    const crusher = placeMachine(w, 'steam_crusher', 1, 1), sifter = placeMachine(w, 'steam_sifter', 2, 0);
+    placeMachine(w, 'lv_crusher', 10, 0);
+    placeMachine(w, 'lv_sifter', 12, 0);
+    crusher.autocraft = sifter.autocraft = true;
+    return { w, crusher, sifter };
+  }
+
+  it('picks the tier a job can run, not the fastest one built', () => {
+    const { w } = steamAndDeadLv();
+    const p = planFor(w, 'iron_ore', 8);
+    expect(p.steps.map((s) => [s.recipe, s.machine])).toEqual([['steam_crush_cobblestone', 'steam_crusher'], ['steam_sift_gravel', 'steam_sifter']]);
+    expect(p.steps.some((s) => s.idle)).toBe(false);
+  });
+
+  it('falls back to a machine built, saying what to switch on, when no tier can be used', () => {
+    const { w, crusher } = steamAndDeadLv();
+    crusher.autocraft = false;
+    const p = planFor(w, 'gravel', 1);
+    expect(p.blocked).toEqual([]);
+    expect(p.steps[0].idle).toMatch(/open the .* Crusher and switch on Available for autocrafting/);
+    const lv = planFor(w, 'gravel', 1);
+    expect(lv).toEqual(p); // the same every time
+  });
+
+  it('puts an opted-in machine without power before one not opted in, and says what it lacks', () => {
+    const { w, crusher } = steamAndDeadLv();
+    w.machines.find((m) => m.def === 'bronze_boiler')!.enabled = false;
+    expect(crusher.autocraft).toBe(true);
+    expect(planFor(w, 'gravel', 1).steps[0]).toMatchObject({ machine: 'steam_crusher', idle: 'the Steam Crusher has no steam' });
+  });
+
+  it('prefers another way to make it over a machine no job can use', () => {
+    const w = emptyWorld();
+    w.storage = { iron_ingot: 10, stone_hammer: 1 };
+    placeMachine(w, 'steam_forge_hammer', 0, 0); // cheaper than by hand, but not opted in
+    expect(planFor(w, 'iron_plate', 2).steps.map((s) => s.recipe)).toEqual(['iron_plate']);
+    expect(whyNotNow(planFor(w, 'iron_plate', 2))).toBeNull();
+  });
+
+  it('counts every built machine as usable when it is not told otherwise', () => {
+    expect(planCraft('gravel', 1, on({ cobblestone: 1 }, 'stone_crusher', 'lv_crusher')).steps[0]).toMatchObject({ recipe: 'lv_crush_cobblestone' });
+  });
+});
 
 describe('crafting a plan now, by hand', () => {
   it('hammers a stack of plates, using the hammer it already has', () => {

@@ -7,15 +7,16 @@
 // job pauses, saying why, when nothing in it can go on (something is missing, no machine can take a step, its CPU is
 // gone), and goes on by itself when it can. Items stay in the one storage: a job reserves nothing.
 //
+// A step runs on the tier the plan chose, one a job can use where there is one. If that tier goes away while the job
+// runs (switched out of autocrafting, its power lost), the step moves to another tier that does the same work.
+//
 // A step that rests on chance (a sifter's finds) isn't done after so many runs: it runs, one run at a time on each
 // machine, until it has found what the plan needs out of it (`until`), however the dice fall. If that takes more than
 // the plan's average, it uses up what was made for it, and the steps before it make more.
 import { CRAFTS, GATHERABLE, MACHINES, RECIPES, itemName, recipePower } from './data';
 import type { MachineDef, RecipeDef, Stack } from './data/types';
-import { planFor, type CraftPlan } from './autocraft';
+import { planFor, sameWork, unpowered, type CraftPlan } from './autocraft';
 import { canCraft, craft, maxCrafts } from './craft';
-import { netOf, netSteam } from './nets';
-import { euNets } from './power';
 import { add, allMachines, asRun, count, type MachineState, type World } from './world';
 
 export interface JobStep {
@@ -135,19 +136,6 @@ export function cancelJob(w: World, id: string): void {
 
 const canRun = (def: MachineDef, r: RecipeDef) => r.machine === def.kind && recipePower(r) === def.power && (r.heat ?? 0) <= (def.heat ?? 0);
 
-/** What a machine lacks to run a recipe now: power at a high enough voltage, or steam. Null when it has it. */
-function unpowered(w: World, m: MachineState, r: RecipeDef): string | null {
-  if (r.euPerTick !== undefined) {
-    const net = euNets(w).find((n) => n.machines.includes(m)), volts = net?.voltage || m.lastVolts || 0, need = asRun(m, r).perTick;
-    if (!volts) return 'no power';
-    if (volts < need) return `${volts} V, and it needs ${need} V`;
-  } else if (r.steamPerTick !== undefined) {
-    const net = netOf(w, m);
-    if (!net || !(netSteam(net) >= r.steamPerTick || net.machines.some((b) => MACHINES.get(b.def)!.boiler && b.enabled))) return 'no steam';
-  }
-  return null;
-}
-
 /** What is short for `runs` runs of these inputs, as people say it: "2 more Iron Ore (gather it)". */
 function short(w: World, inputs: Stack[], runs: number): string {
   return inputs.filter((s) => count(w, s.item) < s.count * runs)
@@ -168,6 +156,23 @@ function lend(m: MachineState, job: Job, step: number, runs: number): void {
   m.job = { job: job.id, step, runs, started: 0, done: 0, was: { recipe: m.recipe, enabled: m.enabled } };
   m.recipe = job.steps[step].recipe;
   m.enabled = true;
+}
+
+// The machines a job could lend this recipe to now, busy or not.
+const usableFor = (w: World, machines: MachineState[], r: RecipeDef) => machines.filter((m) => m.autocraft && canRun(MACHINES.get(m.def)!, r) && !unpowered(w, m, r));
+
+// The tier a step's on has nothing a job can use (none opted in, or none with power), and no machine lent to it still has
+// power: move the step to the quickest other tier that does the same work and has one. What it has done so far stays
+// done; a run under way on a machine that lost its power is given up, its inputs returned. Null when there is nowhere to go.
+function moveTier(w: World, machines: MachineState[], s: JobStep, r: RecipeDef, lent: MachineState[]): RecipeDef | null {
+  if (usableFor(w, machines, r).length || lent.some((m) => !unpowered(w, m, r))) return null;
+  const key = sameWork(r), speed = (x: RecipeDef) => asRun(usableFor(w, machines, x)[0], x).ticks;
+  const other = [...RECIPES.values()].filter((x) => x.id !== r.id && sameWork(x) === key && usableFor(w, machines, x).length)
+    .sort((a, b) => speed(a) - speed(b) || a.id.localeCompare(b.id))[0];
+  if (!other) return null;
+  for (const m of lent) handBack(w, m);
+  s.recipe = other.id;
+  return other;
 }
 
 // how many runs a step has left, on average when it rests on chance
@@ -236,7 +241,9 @@ export function tickJobs(w: World): void {
           s.wait = (canCraft(w, s.recipe, s.runs - s.done) ?? '').replace(/^Needs/, 'needs');
         return;
       }
-      const r = RECIPES.get(s.recipe)!, lent = machines.filter((m) => m.job?.job === job.id && m.job.step === i);
+      let r = RECIPES.get(s.recipe)!, lent = machines.filter((m) => m.job?.job === job.id && m.job.step === i);
+      const moved = moveTier(w, machines, s, r, lent);
+      if (moved) { r = moved; lent = []; }
       if (lent.some((m) => m.active && !m.stalled)) going = true;
       else if (lent.every((m) => !m.active) && r.inputs.some((x) => count(w, x.item) < x.count)
         && makeMore(job, i, r.inputs.map((x) => ({ ...x, count: x.count * runsLeft(s, r) })), w)) return;

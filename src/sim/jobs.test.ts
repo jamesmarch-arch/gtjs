@@ -3,7 +3,7 @@ import { workshop } from './fixtures';
 import { cancelJob, jobOn, jobProgress, startJob, whyNotJob } from './jobs';
 import { planFor } from './autocraft';
 import { deserialize, serialize } from './save';
-import { count, emptyWorld, placeMachine, setRecipe, tick, type MachineState, type World } from './world';
+import { count, emptyWorld, placeMachine, placePipe, setRecipe, tick, type MachineState, type World } from './world';
 
 const run = (w: World, n: number) => { for (let i = 0; i < n; i++) tick(w); };
 const until = (w: World, done: () => boolean, most = 20_000) => { for (let i = 0; i < most && !done(); i++) tick(w); return done(); };
@@ -203,6 +203,80 @@ describe('crafting jobs', () => {
       expect(back.jobs[0].steps[0].until![0].got).toBe(w.jobs[0].steps[0].until![0].got);
       expect(until(back, () => !back.jobs.length)).toBe(true);
       expect(count(back, 'iron_ore')).toBeGreaterThanOrEqual(3);
+    });
+  });
+
+  describe('with machines of several tiers', () => {
+    function tiers() {
+      const w = emptyWorld();
+      w.storage = { cobblestone: 200 };
+      placeMachine(w, 'crafting_cpu', 20, 20);
+      placeMachine(w, 'bronze_boiler', 0, 0).enabled = true;
+      placePipe(w, 1, 0);
+      const crusher = placeMachine(w, 'steam_crusher', 1, 1), sifter = placeMachine(w, 'steam_sifter', 2, 0);
+      const stone = placeMachine(w, 'stone_crusher', 6, 0), stoneSifter = placeMachine(w, 'stone_sifter', 8, 0);
+      placeMachine(w, 'lv_crusher', 10, 0);
+      placeMachine(w, 'lv_sifter', 12, 0);
+      crusher.autocraft = sifter.autocraft = true;
+      return { w, crusher, sifter, stone, stoneSifter };
+    }
+
+    it('run on the steam tier when the faster LV one has no power and is not opted in', () => {
+      const { w, crusher } = tiers();
+      w.storage.coal = 10;
+      const job = startJob(w, 'iron_ore', 8);
+      expect(job.steps.map((s) => s.recipe)).toEqual(['steam_crush_cobblestone', 'steam_sift_gravel']);
+      run(w, 50);
+      expect(crusher.job).toBeDefined();
+      expect(job.paused).toBeNull();
+      expect(until(w, () => !w.jobs.length, 100_000)).toBe(true);
+      expect(count(w, 'iron_ore')).toBeGreaterThanOrEqual(8);
+    });
+
+    it('move a step to another tier when its own is switched out of autocrafting', () => {
+      const { w, crusher, stone, sifter, stoneSifter } = tiers();
+      w.storage.coal = 10;
+      stone.autocraft = stoneSifter.autocraft = true;
+      const job = startJob(w, 'gravel', 4);
+      expect(job.steps[0].recipe).toBe('steam_crush_cobblestone');
+      crusher.autocraft = sifter.autocraft = false; // before it has lent a run
+      tick(w);
+      expect(job.steps[0].recipe).toBe('crush_cobblestone');
+      expect(stone.job).toBeDefined();
+      expect(crusher.job).toBeUndefined();
+      expect(until(w, () => !w.jobs.length)).toBe(true);
+      expect(count(w, 'gravel')).toBe(4);
+    });
+
+    it('move a step off a machine that lost its power, giving up the run and keeping what it did', () => {
+      const { w, crusher, stone } = tiers();
+      w.storage.coal = 1;
+      stone.autocraft = true;
+      const job = startJob(w, 'gravel', 8);
+      expect(until(w, () => job.steps[0].done >= 1)).toBe(true);
+      const boiler = w.machines.find((m) => m.def === 'bronze_boiler')!;
+      boiler.enabled = false; // no boiler to come, and the steam already there let out
+      for (const m of [boiler, crusher, ...w.machines.filter((x) => x.def === 'steam_sifter')]) m.steam = 0;
+      for (const p of w.pipes) p.steam = 0;
+      boiler.burn = 0;
+      tick(w);
+      expect(job.steps[0].recipe).toBe('crush_cobblestone');
+      expect(crusher.job).toBeUndefined();
+      expect(crusher.active).toBeNull();
+      expect(until(w, () => !w.jobs.length)).toBe(true);
+      expect(count(w, 'gravel')).toBe(8);
+      expect(count(w, 'cobblestone')).toBe(192); // nothing lost
+    });
+
+    it('stay and say so when no tier can take it', () => {
+      const { w, crusher, sifter } = tiers();
+      w.storage.coal = 10;
+      crusher.autocraft = sifter.autocraft = false;
+      const job = startJob(w, 'gravel', 1);
+      run(w, 5);
+      expect(job.paused).toMatch(/available for autocrafting: open one and switch it on/);
+      crusher.autocraft = true;
+      expect(until(w, () => !w.jobs.length)).toBe(true);
     });
   });
 

@@ -116,7 +116,12 @@ describe('a plan in the terminal', () => {
   it('starts a plan with machine steps as a crafting job when a crafting CPU is free', () => {
     const w = emptyWorld();
     w.storage = { iron_ingot: 3 };
-    placeMachine(w, 'steam_forge_hammer', 0, 0);
+    const hammer = placeMachine(w, 'steam_forge_hammer', 0, 0);
+    const off = terminalHtml(w, view({ pick: 'iron_plate', amount: '2' }));
+    expect(off).toContain('term-status wait">Every machine it needs is built, but a job can’t use one yet: open the Steam Forge Hammer and switch on Available for autocrafting; it also has no steam.');
+    expect(off).toContain("A job can't use it yet: open the Steam Forge Hammer");
+    hammer.autocraft = true;
+    placeMachine(w, 'bronze_boiler', 0, 1).enabled = true;
     const html = terminalHtml(w, view({ pick: 'iron_plate', amount: '2' }));
     expect(html).toContain('Every machine it needs is built: 1 machine run');
     expect(html).toContain('Start it as a crafting job');
