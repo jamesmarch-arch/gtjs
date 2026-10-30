@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { RECIPES } from './data';
 import { euNets } from './power';
+import { deserialize, serialize } from './save';
 import { asRun, count, emptyWorld, occupant, placeCable, placeMachine, setRecipe, tick, type World } from './world';
 
 const run = (w: World, n: number) => { for (let i = 0; i < n; i++) tick(w); };
@@ -39,6 +40,37 @@ describe('generators', () => {
     run(w, 2);
     expect(count(w, 'creosote')).toBe(2);
     expect(w.stats.eu).toBe(64);
+  });
+
+  it('keep a full net powered after a load, with nothing to make', () => {
+    // a full net makes no EU, and the voltage machines fall back on isn't saved: a switched-on generator holding EU
+    // feeds the net, as a battery does
+    const w = emptyWorld();
+    w.storage = { creosote: 1000, iron_ore: 1 };
+    const g = placeMachine(w, 'lv_semifluid_generator', 0, 0);
+    g.enabled = true;
+    placeCable(w, 1, 0);
+    placeMachine(w, 'lv_macerator', 2, 0);
+    run(w, 200);
+    expect(g.rate).toBe(0); // full: less room left than a litre of creosote makes
+    const loaded = deserialize(serialize(w)), o = occupant(loaded, 2, 0);
+    if (o?.kind !== 'machine') throw new Error('no macerator');
+    setRecipe(o.m, 'lv_macerate_iron_ore').enabled = true;
+    run(loaded, 100);
+    expect(o.m.lowVolts).toBe(false);
+    expect(count(loaded, 'crushed_iron')).toBe(2);
+  });
+
+  it('a switched-off generator holding EU feeds nothing', () => {
+    const w = emptyWorld();
+    const g = placeMachine(w, 'lv_semifluid_generator', 0, 0);
+    g.eu = 1000;
+    placeCable(w, 1, 0);
+    tick(w);
+    expect(euNets(w)[0].voltage).toBe(0);
+    g.enabled = true;
+    tick(w);
+    expect(euNets(w)[0].voltage).toBe(32);
   });
 
   it('stay off until switched on', () => {

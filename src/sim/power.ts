@@ -146,7 +146,8 @@ export function tickPower(w: World, consume: (m: MachineState, tank: Tank, volts
     let v = 0;
     for (const m of net.machines) {
       const d = defOf(m);
-      if ((d.generator && m.rate > 0) || (d.battery && m.eu > 0)) v = Math.max(v, tierVolts(d.tier));
+      // a switched-on generator holding EU feeds the net even when it is full and makes nothing, as a battery does
+      if ((d.generator && (m.rate > 0 || (m.enabled && m.eu > 0))) || (d.battery && m.eu > 0)) v = Math.max(v, tierVolts(d.tier));
     }
     for (const t of net.highOf) if (t.mode === 'up' && (tanks.get(netOfSide(t, 'lowOf')!)?.stored ?? 0) > 0) v = Math.max(v, tierVolts(defOf(t).transformer!.high));
     for (const t of net.lowOf) if (t.mode === 'down' && (tanks.get(netOfSide(t, 'highOf')!)?.stored ?? 0) > 0) v = Math.max(v, tierVolts(defOf(t).transformer!.low));
