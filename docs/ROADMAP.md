@@ -58,7 +58,9 @@ craft and machine job it takes, runs them, and tells you what is missing.
 3. **Execution.** A crafting job runs the plan: hand crafts happen at once, machine steps are given to machines of the
    right kind that opt in (an "available for autocrafting" switch, on any floor), which switch to that recipe, run it,
    and are handed back. Jobs show progress, can be cancelled, and pause when something is missing. Probably an
-   unlock: a crafting CPU block (how many jobs at once) and a terminal block. Tests.
+   unlock: a crafting CPU block (how many jobs at once) and a terminal block. Tests. **Done:** the Crafting CPU block
+   (one job each), the autocrafting switch in every machine's GUI, the job runner (`src/sim/jobs.ts`), jobs in the
+   terminal with progress per step, pause reasons and cancel, save format 6 (see DESIGN, "Autocrafting: crafting jobs").
 4. **Art.** Figures for the terminal and the crafting CPU (and a pattern / interface block if the design wants one).
 5. **Content.** Recipes and unlock tier, quests.
 

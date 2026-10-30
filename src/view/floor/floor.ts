@@ -525,7 +525,7 @@ export class Floor {
       return { depth: u + v + 0.01, draw: () => { this.ctx.globalAlpha = 0.6; this.drawPort(port, isInner(lv) ? portTurn(lv, port) : 0); this.ctx.globalAlpha = 1; } };
     }
     const def = MACHINES.get(t.what)!;
-    const fake: MachineState = { uid: 'ghost', def: def.id, x, y, recipe: null, enabled: false, active: null, progress: 0, stalled: false, steam: 0, burn: 0, burnMax: 0, eu: 0, rate: 0, mode: 'down' };
+    const fake: MachineState = { uid: 'ghost', def: def.id, x, y, recipe: null, enabled: false, active: null, progress: 0, stalled: false, steam: 0, burn: 0, burnMax: 0, eu: 0, rate: 0, mode: 'down', autocraft: false };
     const ok = !canBuild(w, t.what, x, y, lv);
     return { depth: this.depth(fake) + 0.01, draw: () => { this.ctx.globalAlpha = ok ? 0.55 : 0.3; this.drawMachine(fake); this.ctx.globalAlpha = 1; } };
   }
@@ -773,6 +773,7 @@ export function machineStatus(m: MachineState): 'off' | 'working' | 'burning' | 
   if (def.boiler) return m.burn > 0 ? 'burning' : m.enabled ? (m.stalled ? 'stalled' : 'idle') : 'off';
   if (def.battery) return m.eu > 0 ? 'working' : 'idle';
   if (def.generator || def.transformer) return !m.enabled ? 'off' : m.rate > 0 ? 'working' : 'idle';
+  if (def.cpu) return !m.enabled ? 'off' : m.rate > 0 ? 'working' : 'idle'; // working while it runs a crafting job
   if (!m.enabled) return 'off';
   return m.active && !m.stalled ? 'working' : 'stalled';
 }

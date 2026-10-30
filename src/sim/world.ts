@@ -7,6 +7,8 @@
 import { CONDUITS, MACHINES, RECIPES, itemName, recipesForMachine } from './data';
 import type { RecipeDef } from './data/types';
 import type { Stack } from './data/types';
+import type { Job } from './jobs';
+import { tickJobs } from './jobs';
 import { footprint, netSteam, spreadSteam, steamNets } from './nets';
 import { tickPower } from './power';
 import { overclock } from './tiers';
@@ -32,6 +34,18 @@ export interface MachineState {
   rate: number; // last tick: EU made (generators), used (machines) or moved (transformers)
   mode: 'up' | 'down'; // transformers: step-up (LV -> MV) or step-down (MV -> LV)
   inner?: string; // compact floor blocks: the id of the floor inside it, in w.floors
+  autocraft: boolean; // available for autocrafting: crafting jobs may borrow it when it is idle
+  job?: Lease; // lent to a crafting job: set to the job's recipe for `runs` runs, then handed back as it `was`
+}
+
+/** A machine lent to a crafting job for one of its steps (see src/sim/jobs.ts). */
+export interface Lease {
+  job: string; // Job.id
+  step: number; // the index of the step in the job
+  runs: number; // runs it is lent for
+  started: number; // runs it has taken the inputs for
+  done: number; // runs finished
+  was: { recipe: string | null; enabled: boolean }; // how the player left it
 }
 
 export interface PipeState {
@@ -94,15 +108,18 @@ export interface World extends Level {
   seed: number;
   stats: { made: Record<string, number>; burned: number; eu: number }; // totals, for the quest book
   quests: Record<string, 'complete' | 'claimed'>;
+  jobs: Job[]; // crafting jobs under way, in the order they started
+  nextJob: number;
   layoutRev: number; // bumped on every layout change (not saved)
   events: WorldEvent[]; // what broke, for the view to show and clear (not saved)
+  jobsDone: Job[]; // crafting jobs that finished, for the view to show and clear (not saved)
 }
 
 /** The floor every new game gets, in tiles. Older, smaller floors grow to it when they load. */
 export const FLOOR = { w: 32, h: 32 };
 
 export function emptyWorld(): World {
-  return { tick: 0, floor: { ...FLOOR }, storage: {}, machines: [], pipes: [], cables: [], floors: {}, nextUid: 1, seed: 1, stats: { made: {}, burned: 0, eu: 0 }, quests: {}, layoutRev: 0, events: [] };
+  return { tick: 0, floor: { ...FLOOR }, storage: {}, machines: [], pipes: [], cables: [], floors: {}, nextUid: 1, seed: 1, stats: { made: {}, burned: 0, eu: 0 }, quests: {}, jobs: [], nextJob: 1, layoutRev: 0, events: [], jobsDone: [] };
 }
 
 /* ---------- floors ---------- */
@@ -244,8 +261,9 @@ export function placeMachine(w: World, def: string, x: number, y: number, on: Le
   if (!d) throw new Error(`Unknown machine ${def}`);
   const m: MachineState = {
     uid: `m${w.nextUid}`, def, x, y, recipe: null, enabled: false, active: null, progress: 0, stalled: false, steam: 0, burn: 0, burnMax: 0,
-    eu: 0, rate: 0, mode: 'down',
+    eu: 0, rate: 0, mode: 'down', autocraft: false,
   };
+  if (d.cpu) m.enabled = true; // a crafting CPU is ready for jobs as soon as it is placed
   check(whyNotFree(on, footprint(m)));
   if (d.compact) {
     let n = w.nextUid;
@@ -409,11 +427,13 @@ export function tickMachine(w: World, m: MachineState, tank: Tank | null, volts 
   m.rate = 0;
   if (!m.enabled) return;
   if (!m.active) {
+    if (m.job && m.job.started >= m.job.runs) return; // every run it was lent for is under way: it waits to be handed back
     const r = m.recipe ? RECIPES.get(m.recipe) : undefined;
     if (!r || !hasAll(w, r.inputs)) { m.stalled = true; return; }
     for (const s of r.inputs) add(w, s.item, -s.count);
     m.active = r.id;
     m.progress = 0;
+    if (m.job) m.job.started++;
   }
   const r = RECIPES.get(m.active)!, { ticks, perTick: need } = asRun(m, r);
   if (need > 0) {
@@ -436,6 +456,12 @@ export function tickMachine(w: World, m: MachineState, tank: Tank | null, volts 
   }
   if (++m.progress < ticks) return;
   for (const s of r.outputs) if (s.chance === undefined || nextRandom(w) < s.chance) { add(w, s.item, s.count); noteMade(w, s.item, s.count); }
+  // a run for a crafting job counts towards its step as it finishes, so a machine removed later keeps what it did
+  if (m.job && m.job.started > m.job.done) {
+    m.job.done++;
+    const step = w.jobs.find((j) => j.id === m.job!.job)?.steps[m.job.step];
+    if (step) step.done++;
+  }
   m.active = null;
   m.progress = 0;
 }
@@ -471,5 +497,6 @@ export function tick(w: World): void {
   tickPower(w, (m, tank, volts) => { tickMachine(w, m, tank, volts); done.add(m); }, (o, volts) => destroy(w, o, volts));
   // the coke oven and the coal furnace, on every floor (a compact block does no work of its own)
   for (const m of allMachines(w)) if (!done.has(m) && MACHINES.get(m.def)!.power === 'none' && !MACHINES.get(m.def)!.compact) tickMachine(w, m, null);
+  tickJobs(w); // after the machines: a machine that finished a run this tick is idle, and can be handed back or lent
   w.tick++;
 }

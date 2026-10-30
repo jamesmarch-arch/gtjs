@@ -1,6 +1,6 @@
 // Autocrafting: plan how to make N of an item from what storage holds, hand crafts and the machines on the floor.
 // Planning is pure: planCraft changes nothing. The terminal shows a plan; craftNow runs one made of hand crafts only, and
-// a job runner (to come) will carry out machine steps too.
+// a crafting job (src/sim/jobs.ts) carries out one with machine steps over time.
 import { CRAFTS, GATHERABLE, MACHINES, RECIPES, itemName, recipePower } from './data';
 import type { CraftDef, MachineDef, RecipeDef, Stack } from './data/types';
 import { craft } from './craft';
@@ -295,11 +295,11 @@ export function planFor(w: World, target: string, count: number): CraftPlan {
   return planCraft(target, count, { storage: w.storage, machines: allMachines(w) });
 }
 
-/** Why a plan can't be crafted now, all at once by hand, or null when it can. Machine steps wait for crafting jobs. */
+/** Why a plan can't be crafted now, all at once by hand, or null when it can. Machine steps run as a crafting job. */
 export function whyNotNow(plan: CraftPlan): string | null {
   if (plan.blocked.length) return `${plan.blocked.length === 1 ? 'One thing' : `${plan.blocked.length} things`} in it can't be made now`;
   if (plan.missing.length) return 'Gather what is missing first';
-  if (plan.steps.some((s) => s.kind === 'machine')) return 'It needs machine runs: running them comes with crafting jobs';
+  if (plan.steps.some((s) => s.kind === 'machine')) return 'It needs machine runs: start it as a crafting job';
   return null;
 }
 

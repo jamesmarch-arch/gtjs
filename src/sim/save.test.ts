@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { deserialize, loadFrom, SaveError, saveTo, serialize, type KeyValueStore } from './save';
-import { placeCable, placeMachine, tick, type World } from './world';
+import { startJob } from './jobs';
+import { placeCable, placeMachine, setRecipe, tick, type World } from './world';
 import { workshop } from './fixtures';
 
 const run = (w: World, n: number) => { for (let i = 0; i < n; i++) tick(w); };
@@ -138,5 +139,48 @@ describe('save version 4', () => {
     const w = workshop();
     placeCable(w, 10, 6);
     expect(() => deserialize(edit(w, (s) => { s.world.cables[0].kind = 'cable_gold'; }))).toThrow(/Unknown cable/);
+  });
+});
+
+describe('save version 6', () => {
+  const midJob = () => {
+    const w = workshop();
+    placeMachine(w, 'crafting_cpu', 10, 10);
+    const mac = w.machines.find((m) => m.def === 'steam_macerator')!;
+    mac.autocraft = true;
+    setRecipe(mac, 'macerate_copper_ore');
+    startJob(w, 'crushed_iron', 3);
+    run(w, 500);
+    return w;
+  };
+
+  it('keeps crafting jobs, leases and who is available for autocrafting', () => {
+    const w = midJob(), loaded = deserialize(serialize(w));
+    expect(loaded.jobs).toEqual(w.jobs);
+    expect(loaded.nextJob).toBe(2);
+    const mac = loaded.machines.find((m) => m.def === 'steam_macerator')!;
+    expect(mac.autocraft).toBe(true);
+    expect(mac.job).toEqual({ job: 'j1', step: 0, runs: 3, started: 2, done: 1, was: { recipe: 'macerate_copper_ore', enabled: false } });
+  });
+
+  it('loads a version 5 save with no jobs and no machine available for autocrafting', () => {
+    const v5 = edit(workshop(), (s) => { s.version = 5; delete s.world.jobs; delete s.world.nextJob; for (const m of s.world.machines) delete m.autocraft; });
+    const loaded = deserialize(v5);
+    expect(loaded.jobs).toEqual([]);
+    expect(loaded.nextJob).toBe(1);
+    expect(loaded.machines.every((m) => m.autocraft === false && !m.job)).toBe(true);
+  });
+
+  it('drops a job with a recipe this version does not know, and hands its machines back', () => {
+    const loaded = deserialize(edit(midJob(), (s) => { s.world.jobs[0].steps[0].recipe = 'macerate_mithril_ore'; }));
+    expect(loaded.jobs).toEqual([]);
+    const mac = loaded.machines.find((m) => m.def === 'steam_macerator')!;
+    expect(mac.job).toBeUndefined();
+    expect(mac.recipe).toBe('macerate_copper_ore');
+    expect(mac.enabled).toBe(false);
+  });
+
+  it('refuses a step that waits for a later one', () => {
+    expect(() => deserialize(edit(midJob(), (s) => { s.world.jobs[0].steps[0].after = [0]; }))).toThrow(/later one/);
   });
 });

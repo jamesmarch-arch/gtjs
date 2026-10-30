@@ -44,6 +44,7 @@ export interface MachineDef {
   transformer?: { low: Tier; high: Tier; amps: number };
   compact?: { size: number }; // a compact floor: a block with a size x size floor inside it (see world.ts)
   terminal?: boolean; // the ME terminal: opening it shows the crafting terminal panel instead of its figure
+  cpu?: boolean; // a crafting CPU: runs one crafting job at a time (see src/sim/jobs.ts)
   figure?: string; // public/figures/<figure>.html
 }
 

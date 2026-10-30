@@ -1,9 +1,12 @@
 // The ME terminal, as HTML for openOverlay(): browse and search storage, pick anything that can be made, choose how
 // many, and see the plan (src/sim/autocraft.ts): its steps as a tree, what it takes from storage, what is missing or
-// blocked and why, what is left over and the machine time. A plan of hand crafts only can be crafted at once.
+// blocked and why, what is left over and the machine time. A plan of hand crafts only can be crafted at once; one with
+// machine steps starts as a crafting job (src/sim/jobs.ts) on a free crafting CPU. The jobs under way are listed on top,
+// with each step's progress, why a job is paused, and a button to cancel it.
 import { CRAFTS, ITEMS, MACHINES, RECIPES, itemName } from '../../sim/data';
 import type { Stack } from '../../sim/data/types';
 import { planFor, whyNotNow, type CraftPlan, type PlanStep } from '../../sim/autocraft';
+import { jobProgress, lentTo, stepName, whyNotJob, type Job, type JobStep } from '../../sim/jobs';
 import { TICKS_PER_SECOND, allMachines, count, type World } from '../../sim/world';
 import { icon } from './icons';
 
@@ -97,8 +100,10 @@ function stepRow(s: PlanStep, i: number): string {
 function verdict(plan: CraftPlan): { cls: string; text: string } {
   const machines = plan.steps.filter((s) => s.kind === 'machine').length;
   if (plan.blocked.length) return { cls: 'bad', text: `Blocked: ${plan.blocked.length === 1 ? 'one thing' : `${plan.blocked.length} things`} in it can’t be made now (below).` };
-  if (plan.missing.length) return { cls: 'wait', text: `Gather first: ${plan.missing.map((s) => `${num(s.count)} ${itemName(s.item)}`).join(', ')}.` };
-  if (machines) return { cls: 'wait', text: `Every machine it needs is built: ${plan.totals.machineRuns} machine run${plan.totals.machineRuns === 1 ? '' : 's'}, ${duration(plan.totals.ticks)} of machine time. Running machine jobs comes with crafting jobs; until then, set those recipes on the machines yourself.` };
+  const gather = plan.missing.map((s) => `${num(s.count)} ${itemName(s.item)}`).join(', ');
+  if (plan.missing.length && !machines) return { cls: 'wait', text: `Gather first: ${gather}.` };
+  if (plan.missing.length) return { cls: 'wait', text: `Gather first: ${gather}. A job can start now and wait for them.` };
+  if (machines) return { cls: 'ok', text: `Every machine it needs is built: ${plan.totals.machineRuns} machine run${plan.totals.machineRuns === 1 ? '' : 's'}, ${duration(plan.totals.ticks)} of machine time. Start it as a crafting job: machines available for autocrafting run its steps.` };
   return { cls: 'ok', text: `Ready: ${plan.totals.handCrafts} hand craft${plan.totals.handCrafts === 1 ? '' : 's'}, all from storage.` };
 }
 
@@ -110,13 +115,14 @@ function planHtml(w: World, v: TerminalView): string {
     <div class="row amount"><span class="muted">How many</span>${amounts}
       <input data-act="typed" type="text" inputmode="numeric" autocomplete="off" aria-label="How many to craft" value="${esc(v.amount)}"></div>`;
   if (n === null) return `${head}<p class="term-status bad">Type a whole number from 1 to ${MOST.toLocaleString()}.</p>`;
-  const plan = planOf(w, id, n), why = whyNotNow(plan), vd = verdict(plan);
+  // hand crafts only: craft it at once; with machine steps: start a crafting job
+  const plan = planOf(w, id, n), asJob = plan.steps.some((s) => s.kind === 'machine'), why = asJob ? whyNotJob(w, plan) : whyNotNow(plan), vd = verdict(plan);
   const section = (title: string, body: string) => (body ? `<h3>${title}</h3>${body}` : '');
   const byMachine = Object.entries(plan.totals.byMachine).map(([m, t]) => `<li>${icon(m)}${esc(machineName(m))}<b>${t.runs} run${t.runs === 1 ? '' : 's'}, ${duration(t.ticks)}</b></li>`).join('');
   const extras = [...plan.byproducts, ...plan.chanced];
   return `${head}
     <p class="term-status ${vd.cls}">${esc(vd.text)}</p>
-    <div class="row craft-now"><button data-act="craftnow" data-id="${id}" data-n="${n}" ${why ? 'disabled' : ''}>Craft ${n.toLocaleString()}</button>
+    <div class="row craft-now"><button data-act="${asJob ? 'startjob' : 'craftnow'}" data-id="${id}" data-n="${n}" ${why ? 'disabled' : ''}>Craft ${n.toLocaleString()}${asJob ? ' as a job' : ''}</button>
       ${why ? `<small class="muted">${esc(why)}.</small>` : ''}</div>
     <h3>Steps <span class="muted">${plan.steps.length} · the target on top, what goes into each step under it · numbered in the order they run</span></h3>
     <ol class="steps">${plan.steps.map(stepRow).reverse().join('')}</ol>
@@ -129,6 +135,42 @@ function planHtml(w: World, v: TerminalView): string {
     ${section('Machine time', byMachine ? `<ul class="list">${byMachine}<li class="total">Total, one after another<b>${duration(plan.totals.ticks)}</b></li></ul>` : '')}`;
 }
 
+// how a step of a job stands: done, waiting for the steps before it, under way (on which machines), or stuck and why
+function jobStepState(w: World, job: Job, s: JobStep, i: number): { cls: string; text: string } {
+  if (s.done >= s.runs) return { cls: 'done', text: 'done' };
+  const before = s.after.filter((j) => job.steps[j].done < job.steps[j].runs);
+  if (before.length) return { cls: 'later', text: `after step${before.length === 1 ? '' : 's'} ${before.map((j) => j + 1).join(', ')}` };
+  const on = lentTo(w, job, i).map((m) => `${MACHINES.get(m.def)!.name} at (${m.x}, ${m.y})`);
+  const where = on.length > 2 ? `on ${on.length} machines` : on.length ? `on ${on.join(' and ')}` : s.kind === 'craft' ? 'by hand' : '';
+  // waiting its turn for a busy machine is no trouble; anything else that holds a step up is
+  if (s.wait) return { cls: /^waiting for .* to free up$/.test(s.wait) ? 'queued' : 'stuck', text: `${where ? `${where}; ` : ''}${s.wait}` };
+  return { cls: 'going', text: where || 'starting' };
+}
+
+function jobHtml(w: World, job: Job): string {
+  const p = jobProgress(job), steps = job.steps.map((s, i) => {
+    const st = jobStepState(w, job, s, i);
+    return `<li class="${st.cls}" style="--depth:${s.depth}"><span class="n">${i + 1}</span>${icon(s.output.item)}<span>${esc(stepName(s))}
+      <b>${s.done}/${s.runs}</b> <small>${esc(st.text)}</small></span></li>`;
+  }).join('');
+  return `<li class="job${job.paused ? ' paused' : ''}">
+      <div class="job-head">${icon(job.target, 'ic big')}<div><b>${job.count.toLocaleString()} ${esc(itemName(job.target))}</b>
+        <small class="muted">${Math.round(p * 100)}% · ${duration(w.tick - job.started)} so far</small></div>
+        <button data-act="cancel" data-id="${job.id}">Cancel</button></div>
+      <div class="bar"><i style="width:${(100 * p).toFixed(1)}%"></i></div>
+      ${job.paused ? `<p class="why">Paused: ${esc(job.paused)}.</p>` : ''}
+      <ol class="job-steps">${steps}</ol>
+    </li>`;
+}
+
+// the crafting jobs under way, and how many CPUs there are for them
+function jobsHtml(w: World): string {
+  const cpus = allMachines(w).filter((m) => MACHINES.get(m.def)!.cpu).length;
+  if (!cpus && !w.jobs.length) return '';
+  return `<section class="term-jobs"><h3>Crafting jobs <span class="muted">${w.jobs.length} of ${cpus} Crafting CPU${cpus === 1 ? '' : 's'} busy</span></h3>
+    ${w.jobs.length ? `<ul class="jobs">${w.jobs.map((j) => jobHtml(w, j)).join('')}</ul>` : '<p class="muted">None under way.</p>'}</section>`;
+}
+
 export function terminalHtml(w: World, v: TerminalView): string {
-  return `<div class="term"><section class="term-items">${itemsHtml(w, v)}</section><section class="term-plan">${planHtml(w, v)}</section></div>`;
+  return `<div class="term"><section class="term-items">${itemsHtml(w, v)}</section><section class="term-plan">${jobsHtml(w)}${planHtml(w, v)}</section></div>`;
 }

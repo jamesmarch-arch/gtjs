@@ -105,6 +105,11 @@ button[aria-pressed='true'] { background: var(--ink); color: var(--paper); }
 .gui header h2 { margin: 0; font-size: 14px; letter-spacing: 0; text-transform: none; color: var(--ink); }
 .gui .figure-frame { height: min(760px, calc(100vh - 110px)); }
 .gui .panel { margin: 24px auto; }
+/* the autocrafting switch under a machine's title */
+.gui-auto { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; padding: 6px 14px; border-bottom: 1px solid var(--rule); background: #fbf7ea; }
+.gui-auto label { font-weight: 700; display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.gui-auto input { accent-color: var(--ink); width: 15px; height: 15px; }
+.gui-auto + .gui-body .figure-frame { height: min(760px, calc(100vh - 142px)); }
 
 /* workbench and quest book */
 .row.big { margin: 4px 0 12px; }
@@ -221,4 +226,24 @@ button.danger { background: #e2483d; color: #fff; }
 .term .blocked-list { list-style: none; margin: 0; padding: 0; }
 .term .blocked-list li { padding: 3px 0; }
 .term .list .total { border-top: 1px solid var(--rule); font-weight: 700; }
+/* crafting jobs under way, over the plan */
+.term-jobs { margin-bottom: 14px; padding-bottom: 4px; border-bottom: 1.5px solid var(--ink); }
+.term .jobs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.term .job { border: 1.5px solid var(--ink); border-radius: 10px; padding: 8px 10px; background: #fbf7ea; }
+.term .job.paused { background: #fff6d6; }
+.term .job-head { display: flex; align-items: center; gap: 10px; }
+.term .job-head > div { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.term .job .bar i { background: #43c25c; transition: width .2s; }
+.term .job.paused .bar i { background: var(--bronze); }
+.term .job .why { margin: 6px 0 0; }
+.term .job-steps { list-style: none; margin: 6px 0 0; padding: 0; font-size: 12px; }
+.term .job-steps li { display: flex; align-items: center; gap: 6px; padding: 2px 0 2px calc(var(--depth) * 14px); }
+.term .job-steps .n { flex: none; min-width: 18px; height: 16px; border: 1px solid var(--ink); border-radius: 999px; font-size: 10px; line-height: 14px; text-align: center; }
+.term .job-steps .done { color: var(--muted); }
+.term .job-steps .done .n { background: #d9f2d6; }
+.term .job-steps .going .n { background: #cfe9f0; }
+.term .job-steps .stuck .n { background: #ffd2c8; }
+.term .job-steps .stuck small { color: #b8372d; }
+.term .job-steps .later small, .term .job-steps .done small, .term .job-steps .queued small { color: var(--muted); }
+.term .job-steps .queued .n { background: #fff1bf; }
 @media (max-width: 760px) { .term { grid-template-columns: 1fr; } .term-items { position: static; } }

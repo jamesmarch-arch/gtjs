@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { netOf, steamNets } from './nets';
 import { euNets } from './power';
-import { deserialize, serialize } from './save';
+import { deserialize, SAVE_VERSION, serialize } from './save';
 import {
   allMachines, blockOf, build, canBuild, count, demolish, emptyWorld, FACTORY, floorPath, levels, occupant, placeCable, placeMachine, placePipe,
   placePort, setRecipe, tick, type InnerFloor, type World,
@@ -224,7 +224,7 @@ describe('saves with compact floors', () => {
 
   it('round-trip every floor exactly, and carry on as the original would', () => {
     const a = nested(), text = serialize(a);
-    expect(JSON.parse(text).version).toBe(5);
+    expect(JSON.parse(text).version).toBe(SAVE_VERSION);
     expect(Object.keys(JSON.parse(text).world.floors)).toHaveLength(3);
     const b = deserialize(text);
     expect(serialize(b)).toBe(text);
