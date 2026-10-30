@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { CRAFTS, CRAFT_TIERS } from '../../sim/data';
+import { CRAFTS, CRAFT_TIERS, QUESTS } from '../../sim/data';
+import { goalText } from '../../sim/quests';
 import { emptyWorld } from '../../sim/world';
-import { BENCH_GROUPS, benchView, searchCrafts, workbenchHtml as withIcons, type BenchView } from './sheets';
+import { BENCH_GROUPS, benchView, questBookHtml, searchCrafts, workbenchHtml as withIcons, type BenchView } from './sheets';
 
 // the workbench's HTML as text: item icons (inline <svg>s) left out, so the tests read the words
 const workbenchHtml = (...a: Parameters<typeof withIcons>) => withIcons(...a).replace(/<svg class="ic[^"]*"[^>]*><use [^>]*\/><\/svg>/g, '');
@@ -109,5 +110,14 @@ describe('the workbench search', () => {
     const html = workbenchHtml(emptyWorld(), { group: 'parts', tier: 'steam' }, '<b>zz');
     expect(html).toContain('No recipes for “&lt;b&gt;zz”');
     expect(craftIds(html)).toEqual([]);
+  });
+});
+
+describe('the quest book', () => {
+  it('names every goal as the quests do, new kinds of goal included', () => {
+    const w = emptyWorld();
+    for (const id of QUESTS.keys()) w.quests[id] = 'claimed'; // every quest open, so every goal shows
+    const html = questBookHtml(w), esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    for (const q of QUESTS.values()) for (const g of q.goals) expect(html, q.id).toContain(esc(goalText(g)));
   });
 });

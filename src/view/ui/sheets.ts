@@ -1,8 +1,8 @@
 // The workbench and the quest book, as HTML for openOverlay().
 import { CHAPTERS, CRAFT_TIERS, CRAFTS, QUESTS, itemName } from '../../sim/data';
-import type { CraftDef, CraftTier, Goal } from '../../sim/data/types';
+import type { CraftDef, CraftTier } from '../../sim/data/types';
 import { maxCrafts } from '../../sim/craft';
-import { goalProgress, questState } from '../../sim/quests';
+import { goalProgress, goalText, questState } from '../../sim/quests';
 import { TICKS_PER_SECOND, allMachines, count, type World } from '../../sim/world';
 import { icon } from './icons';
 
@@ -78,9 +78,6 @@ export function workbenchHtml(w: World, view: BenchView, query = ''): string {
     <div class="tabs sub" role="tablist" aria-label="Tier">${subtabs}</div>
     <ul class="crafts" role="tabpanel">${rows}</ul>`;
 }
-
-const goalText = (g: Goal) => g.kind === 'made' ? `Make ${itemName(g.item)}` : g.kind === 'have' ? `Have ${itemName(g.item)}`
-  : g.kind === 'built' ? `Build ${itemName(g.machine)}` : 'Burn fuel in a boiler';
 
 export function questBookHtml(w: World): string {
   return CHAPTERS.map((ch) => {
